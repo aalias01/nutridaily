@@ -1,5 +1,7 @@
-/* NutriDaily service worker — app-shell caching for installable/offline use. */
-const CACHE = "nutridaily-v39";
+/* NutriDaily service worker — app-shell caching for installable/offline use.
+ * Bump CACHE to force-refresh cached assets after a deploy.
+ */
+const CACHE = "nutridaily-v40";
 const SHELL = [
   ".", "index.html", "css/style.css", "manifest.webmanifest",
   "js/config.js", "js/data-foods.js", "js/foodmatch.js", "js/parse.js", "js/foods.js",
@@ -24,6 +26,7 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
+  if (url.pathname.indexOf("/api/") === 0) return; // auth: network only
   e.respondWith(
     caches.match(e.request).then((cached) => {
       const fresh = fetch(e.request)

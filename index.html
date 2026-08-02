@@ -256,6 +256,7 @@
         <label class="set-label">AI estimate prompt</label>
         <p class="muted small">Works with ChatGPT, Claude, or any LLM that returns a NUTRI v1 block.</p>
         <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy AI prompt</button>
+        <button id="btn-settings-share-prompt" class="btn ghost full" type="button" hidden>Share to AI</button>
 
         <label class="set-label">Data</label>
         <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
@@ -419,6 +420,8 @@
       <label class="small muted" for="ai-notes">Notes (optional)</label>
       <textarea id="ai-notes" rows="2" maxlength="500"></textarea>
       <button id="btn-copy-phase-prompt" class="btn full" type="button" disabled>Copy AI targets prompt</button>
+      <button id="btn-share-phase-prompt" class="btn ghost full" type="button" disabled hidden>Share to AI</button>
+      <p class="muted small" data-prompt-share-hint hidden style="margin-top:8px">Opens your share sheet. Choose Claude or ChatGPT — paste into a new chat if the app doesn’t fill it.</p>
       <p class="muted small" style="margin-top:12px">Paste the AI reply (PHASE v1 block), then choose an option to fill your targets. You still tap Save phase.</p>
       <textarea id="ai-phase-paste" rows="6" placeholder="Paste the PHASE v1 … END reply here"></textarea>
       <button id="btn-parse-phase" class="btn ghost full" type="button">Parse recommendations</button>
@@ -451,8 +454,10 @@
       </div>
 
       <div id="gap-step-prompt" hidden>
-        <p class="muted small" id="gap-prompt-hint">Copy the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply with 2–3 options. Optional <code>NUTRI v1</code> blocks refine Reference catalog foods or add brand-new dishes.</p>
+        <p class="muted small" id="gap-prompt-hint">Copy or share the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply with 2–3 options. Optional <code>NUTRI v1</code> blocks refine Reference catalog foods or add brand-new dishes.</p>
         <button id="btn-gap-copy-prompt" class="btn full" type="button">Copy gap prompt</button>
+        <button id="btn-gap-share-prompt" class="btn ghost full" type="button" hidden>Share to AI</button>
+        <p class="muted small" data-prompt-share-hint hidden>Opens your share sheet. Choose Claude or ChatGPT — paste into a new chat if the app doesn’t fill it.</p>
         <textarea id="gap-paste" rows="7" placeholder="Paste the GAP v1 … END reply here (plus optional NUTRI v1 blocks)"></textarea>
         <div class="col-actions">
           <button id="btn-gap-parse" class="btn full" type="button">Parse options</button>
@@ -536,8 +541,10 @@
       <div class="sheet-grab"></div>
       <h3 id="paste-title">Add food from AI paste</h3>
       <div id="paste-step-prompt">
-        <p class="muted small">Copy this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.</p>
+        <p class="muted small">Copy or share this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.</p>
         <button id="btn-copy-prompt" class="btn ghost full" type="button">Copy AI prompt</button>
+        <button id="btn-share-prompt" class="btn ghost full" type="button" hidden>Share to AI</button>
+        <p class="muted small" data-prompt-share-hint hidden>Opens your share sheet. Choose Claude or ChatGPT — paste into a new chat if the app doesn’t fill it.</p>
         <details id="prompt-fallback" class="example-details" hidden>
           <summary class="muted small">Select prompt manually</summary>
           <textarea id="prompt-fallback-text" rows="6" readonly></textarea>

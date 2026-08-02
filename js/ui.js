@@ -635,6 +635,7 @@ const UI = (() => {
         ${countRepair}
         <button type="button" class="btn ghost full" data-action="update-food" data-id="${esc(food.id)}">${prov.kind === "ref" ? "Refine with AI paste" : "Update from AI paste"}</button>
         <button type="button" class="btn ghost full" data-action="copy-update-prompt" data-id="${esc(food.id)}">${prov.kind === "ref" ? "Copy refine prompt" : "Copy update prompt"}</button>
+        ${typeof navigator.share === "function" ? `<button type="button" class="btn ghost full" data-action="share-update-prompt" data-id="${esc(food.id)}">Share to AI</button>` : ""}
         <button type="button" class="btn ghost full danger" data-action="delete-food" data-id="${esc(food.id)}">Delete</button>
       </div>`;
   }

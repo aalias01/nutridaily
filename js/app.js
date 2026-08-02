@@ -185,6 +185,47 @@ const App = (() => {
     }
   }
 
+  /** Share an AI prompt as plain text only (no url) so LLM apps get the body. */
+  async function sharePromptText(text, { okToast = "Prompt copied", onClipboardFail } = {}) {
+    try {
+      if (navigator.share) {
+        await navigator.share({ text });
+        return "shared";
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") return "cancelled";
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      UI.toast(okToast);
+      return "copied";
+    } catch (_) {
+      if (typeof onClipboardFail === "function") onClipboardFail(text);
+      else window.prompt("Select all and copy (Cmd/Ctrl+C):", text);
+      return "fallback";
+    }
+  }
+
+  function canSharePrompt() {
+    return typeof navigator.share === "function";
+  }
+
+  function refreshPromptShareButtons() {
+    const show = canSharePrompt();
+    [
+      "#btn-share-prompt",
+      "#btn-settings-share-prompt",
+      "#btn-share-phase-prompt",
+      "#btn-gap-share-prompt",
+    ].forEach((sel) => {
+      const el = UI.$(sel);
+      if (el) el.hidden = !show;
+    });
+    document.querySelectorAll("[data-prompt-share-hint]").forEach((el) => {
+      el.hidden = !show;
+    });
+  }
+
   function refreshInstallCard() {
     const root = UI.$("#install-card");
     if (!root) return;
@@ -272,17 +313,7 @@ const App = (() => {
       refreshSettingsTabNudge();
     });
     const recon = UI.$("#banner-reconnect");
-    if (recon) recon.addEventListener("click", async () => {
-      try {
-        await Sync.connect();
-        localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
-        UI.toast("Drive reconnected");
-      } catch (e) {
-        UI.toast(e.message || "Could not reconnect");
-      }
-      refreshDriveStatus();
-      refreshInfoBanner();
-    });
+    if (recon) recon.addEventListener("click", () => connectDrive());
     const go = UI.$("#banner-settings");
     if (go) go.addEventListener("click", () => switchView("settings"));
   }
@@ -769,6 +800,14 @@ const App = (() => {
     const text = buildGapPromptText();
     navigator.clipboard.writeText(text).then(() => UI.toast("Gap prompt copied — paste back here when ready")).catch(() => {
       window.prompt("Select all and copy (Cmd/Ctrl+C):", text);
+    });
+  }
+
+  async function shareGapPrompt() {
+    persistGapDraft("prompt");
+    const text = buildGapPromptText();
+    await sharePromptText(text, {
+      okToast: "Gap prompt copied — paste back here when ready",
     });
   }
 
@@ -1447,15 +1486,31 @@ const App = (() => {
     UI.openSheet("sheet-paste");
   }
 
-  function copyPrompt() {
+  function currentNutriPromptText() {
     let text = NutriParse.PROMPT;
     if (state.updateFoodId) {
       const f = findFood(state.updateFoodId);
       if (f) text = NutriParse.foodUpdatePrompt(f);
     }
+    return text;
+  }
+
+  function copyPrompt() {
+    const text = currentNutriPromptText();
     navigator.clipboard.writeText(text).then(() => UI.toast("Prompt copied")).catch(() => {
       UI.showPromptFallback(text);
       UI.toast("Select the prompt below, then copy");
+    });
+  }
+
+  async function sharePrompt() {
+    const text = currentNutriPromptText();
+    await sharePromptText(text, {
+      okToast: "Prompt copied",
+      onClipboardFail: (t) => {
+        UI.showPromptFallback(t);
+        UI.toast("Select the prompt below, then copy");
+      },
     });
   }
 
@@ -1752,8 +1807,9 @@ const App = (() => {
 
   function refreshAiCopyGate() {
     const btn = UI.$("#btn-copy-phase-prompt");
+    const shareBtn = UI.$("#btn-share-phase-prompt");
     const hint = UI.$("#ai-missing-hint");
-    if (!btn) return;
+    if (!btn && !shareBtn) return;
     const height = Number(UI.$("#ai-height") && UI.$("#ai-height").value);
     const profile = Phases.normalizeProfile({
       dob: (UI.$("#ai-dob") && UI.$("#ai-dob").value) || "",
@@ -1767,14 +1823,31 @@ const App = (() => {
       { ...state.settings, profile },
       { todayKey: Ledger.todayKey(), weightKg: sheetWeightKg() }
     );
-    btn.disabled = !ready.ok;
-    btn.setAttribute("aria-disabled", ready.ok ? "false" : "true");
+    [btn, shareBtn].forEach((el) => {
+      if (!el) return;
+      el.disabled = !ready.ok;
+      el.setAttribute("aria-disabled", ready.ok ? "false" : "true");
+    });
     if (hint) {
       hint.textContent = ready.ok
-        ? "Ready to copy. Paste into ChatGPT or Claude, then paste the PHASE reply below."
+        ? "Ready to copy or share. Paste into ChatGPT or Claude, then paste the PHASE reply below."
         : `Copy is disabled until you add: ${ready.missing.join(", ")}.`;
     }
     return ready;
+  }
+
+  function buildPhasePromptFromSheet() {
+    const ready = refreshAiCopyGate();
+    if (!ready || !ready.ok) return null;
+    saveProfileFromAiSheet();
+    return PhasePrompt.buildTargetPrompt({
+      kind: selectedPhaseKind(),
+      age: ready.age,
+      profile: ready.profile,
+      weightKg: ready.weightKg,
+      weightUnit: bodyWeightUnit(),
+      notes: (UI.$("#ai-notes") && UI.$("#ai-notes").value) || "",
+    });
   }
 
   function openAiTargetsSheet() {
@@ -2084,6 +2157,9 @@ const App = (() => {
     if (UI.$("#btn-gap-copy-prompt")) {
       UI.$("#btn-gap-copy-prompt").addEventListener("click", copyGapPrompt);
     }
+    if (UI.$("#btn-gap-share-prompt")) {
+      UI.$("#btn-gap-share-prompt").addEventListener("click", () => { shareGapPrompt(); });
+    }
     if (UI.$("#btn-gap-parse")) {
       UI.$("#btn-gap-parse").addEventListener("click", importGapPaste);
     }
@@ -2340,23 +2416,24 @@ const App = (() => {
     }
     if (UI.$("#btn-copy-phase-prompt")) {
       UI.$("#btn-copy-phase-prompt").addEventListener("click", () => {
-        const ready = refreshAiCopyGate();
-        if (!ready || !ready.ok) {
+        const text = buildPhasePromptFromSheet();
+        if (!text) {
           UI.toast("Fill the required profile fields first");
           return;
         }
-        saveProfileFromAiSheet();
-        const text = PhasePrompt.buildTargetPrompt({
-          kind: selectedPhaseKind(),
-          age: ready.age,
-          profile: ready.profile,
-          weightKg: ready.weightKg,
-          weightUnit: bodyWeightUnit(),
-          notes: (UI.$("#ai-notes") && UI.$("#ai-notes").value) || "",
-        });
         navigator.clipboard.writeText(text).then(() => UI.toast("AI targets prompt copied")).catch(() => {
           window.prompt("Select all and copy (Cmd/Ctrl+C):", text);
         });
+      });
+    }
+    if (UI.$("#btn-share-phase-prompt")) {
+      UI.$("#btn-share-phase-prompt").addEventListener("click", async () => {
+        const text = buildPhasePromptFromSheet();
+        if (!text) {
+          UI.toast("Fill the required profile fields first");
+          return;
+        }
+        await sharePromptText(text, { okToast: "AI targets prompt copied" });
       });
     }
     if (UI.$("#btn-parse-phase")) {
@@ -2583,11 +2660,19 @@ const App = (() => {
     }
 
     UI.$("#btn-copy-prompt").addEventListener("click", copyPrompt);
+    if (UI.$("#btn-share-prompt")) {
+      UI.$("#btn-share-prompt").addEventListener("click", () => { sharePrompt(); });
+    }
     UI.$("#btn-settings-copy-prompt").addEventListener("click", () => {
       navigator.clipboard.writeText(NutriParse.PROMPT).then(() => UI.toast("Prompt copied")).catch(() => {
         window.prompt("Select all and copy (Cmd/Ctrl+C):", NutriParse.PROMPT);
       });
     });
+    if (UI.$("#btn-settings-share-prompt")) {
+      UI.$("#btn-settings-share-prompt").addEventListener("click", () => {
+        sharePromptText(NutriParse.PROMPT, { okToast: "Prompt copied" });
+      });
+    }
     UI.$("#btn-clipboard").addEventListener("click", async () => {
       try {
         const t = await navigator.clipboard.readText();
@@ -2803,6 +2888,19 @@ const App = (() => {
           openPaste({ updateId: id, intent: "library" });
           UI.showPromptFallback(text);
           UI.toast("Select the prompt below, then copy");
+        });
+      } else if (action === "share-update-prompt") {
+        const f = findFood(id);
+        if (!f) return;
+        const text = NutriParse.foodUpdatePrompt(f);
+        sharePromptText(text, {
+          okToast: "Update prompt copied",
+          onClipboardFail: (t) => {
+            UI.closeSheet("sheet-detail");
+            openPaste({ updateId: id, intent: "library" });
+            UI.showPromptFallback(t);
+            UI.toast("Select the prompt below, then copy");
+          },
         });
       } else if (action === "delete-food") {
         if (!confirm("Delete this food from your library? Past logs stay as they are.")) return;
@@ -3061,6 +3159,7 @@ const App = (() => {
   function boot() {
     loadState();
     wire();
+    refreshPromptShareButtons();
     window.addEventListener("beforeinstallprompt", (ev) => {
       ev.preventDefault();
       deferredInstall = ev;
