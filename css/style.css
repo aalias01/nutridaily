@@ -301,7 +301,26 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .goals-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .goals-grid span { display: block; margin-bottom: 3px; }
 .phase-card { margin-top: 4px; }
+.phase-title-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin-bottom: 6px;
+}
+.phase-title-row strong { font-size: 16px; letter-spacing: -0.02em; }
+.phase-kind-seg { display: flex; width: 100%; margin: 10px 0 12px; }
+.phase-kind-seg button { flex: 1; }
 .phase-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.phase-revision-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 16px; max-height: 50vh; overflow: auto; }
+.rev-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
+}
+.rev-main { min-width: 0; }
+.rev-label { font-weight: 650; font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rev-badge {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accent-ink); border: 1px solid rgba(61, 153, 112, 0.35);
+  padding: 2px 7px; border-radius: 999px;
+}
 .phase-meta-grid {
   display: grid;
   grid-template-columns: 1.6fr 1fr;

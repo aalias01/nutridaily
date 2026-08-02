@@ -161,27 +161,33 @@ console.log("\n[7] Phases / goalsForDay");
   ok(Phases.goalsForDay("2026-07-15", settings).kcal === 2200, "past day unchanged after revision");
   ok(Phases.goalsForDay("2026-08-01", settings).kcal === 2800, "today uses new revision");
   ok(settings.phases[0].revisions.length === 2, "append adds a revision");
+  ok(settings.phases[0].name === "Maintain v2.0", "kcal +600 bumps major to Maintain v2.0");
+
+  // same-day second save should replace latest same-day row and bump again
+  Phases.appendRevision(settings, { ...settings.goals, kcal: 2850, protein: 160 }, "2026-08-01");
+  ok(settings.phases[0].revisions.length === 2, "same-day re-save replaces instead of stacking");
+  ok(Phases.goalsForDay("2026-08-01", settings).kcal === 2850, "same-day re-save keeps latest numbers");
+  ok(settings.phases[0].name === "Maintain v2.1", "small same-day tweak bumps minor");
 
   settings.dayGoals["2026-08-01"] = { bumps: { kcal: 200, protein: 20 }, updatedAt: 200 };
-  ok(Phases.goalsForDay("2026-08-01", settings).kcal === 3000, "day bump adds to phase kcal (2800+200)");
+  ok(Phases.goalsForDay("2026-08-01", settings).kcal === 3050, "day bump adds to phase kcal (2850+200)");
   ok(Phases.goalsForDay("2026-08-01", settings).protein === 180, "day bump adds to phase protein (160+20)");
   ok(Phases.goalsForDay("2026-08-01", settings)._bumps.kcal === 200, "resolved goals expose _bumps");
 
-  settings.dayGoals["2026-08-02"] = { kcal: 3000, updatedAt: 210 }; // legacy absolute
-  // phase for 08-02 still 2800/160 from revision
-  ok(Phases.goalsForDay("2026-08-02", settings).kcal === 3000, "legacy absolute dayGoals still resolve");
+  settings.dayGoals["2026-08-02"] = { kcal: 3050, updatedAt: 210 }; // legacy absolute
+  // phase for 08-02 still 2850/160 from revision
+  ok(Phases.goalsForDay("2026-08-02", settings).kcal === 3050, "legacy absolute dayGoals still resolve");
   ok(Phases.goalsForDay("2026-08-02", settings)._bumps.kcal === 200, "legacy absolute converts to bump vs phase");
 
   Phases.startPhase(settings, {
-    name: "Summer bulk",
     kind: "bulk",
     startDay: "2026-08-10",
     copyGoals: true,
   });
   ok(settings.phases.length === 2, "startPhase adds a phase");
   ok(settings.phases[0].endDay === "2026-08-09", "previous phase ends day before");
-  ok(Phases.activePhase(settings.phases).name === "Summer bulk", "new phase is active");
-  ok(Phases.goalsForDay("2026-08-05", settings).kcal === 2800, "days in old phase keep old revision");
+  ok(Phases.activePhase(settings.phases).name === "Bulk v1.0", "new phase is Bulk v1.0");
+  ok(Phases.goalsForDay("2026-08-05", settings).kcal === 2850, "days in old phase keep old revision");
 
   const ended = settings.phases[0];
   const endedKeys = Phases.phaseDayKeys(ended, "2026-08-15");
@@ -190,7 +196,19 @@ console.log("\n[7] Phases / goalsForDay");
   ok(!endedKeys.includes("2026-08-10"), "completed phase keys exclude later active phase days");
   const hist = Phases.phaseHistoryRows(settings, "2026-08-15", () => ({ count: 0 }));
   ok(hist.length === 2, "phaseHistoryRows lists both phases");
-  ok(hist[0].active === true && hist[0].name === "Summer bulk", "history lists active phase first among newest");
+  ok(hist[0].active === true && hist[0].name === "Bulk v1.0", "history lists active phase first among newest");
+
+  const revRows = Phases.revisionHistoryRows(Phases.activePhase(settings.phases));
+  ok(revRows.length === 1 && revRows[0].current, "new phase has one current target version");
+  delete settings.dayGoals["2026-08-01"];
+  const oldRevId = settings.phases[0].revisions[1].id;
+  const del = Phases.deleteRevision(settings, settings.phases[0].id, oldRevId, "2026-08-15");
+  ok(del.ok, "can delete a past target version");
+  ok(settings.phases[0].revisions.length === 1, "deleteRevision removes one");
+  ok(Phases.goalsForDay("2026-08-01", settings).kcal === 2200, "after delete, day falls back to earlier revision");
+
+  Phases.appendRevision(settings, { ...Phases.activePhase(settings.phases).revisions[0].goals, kcal: 3500 }, "2026-08-15", "", { kind: "bulk" });
+  ok(Phases.activePhase(settings.phases).name === "Bulk v2.0", "large kcal change forces major version");
 
   const scored = Phases.scoreDayTotals(
     { count: 1, kcal: { mean: 2200 }, p: { mean: 100 }, c: { mean: 250 }, f: { mean: 70 }, fb: { mean: 28 }, na: { mean: 2000 } },

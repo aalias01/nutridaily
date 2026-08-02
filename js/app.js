@@ -871,6 +871,50 @@ const App = (() => {
     UI.openSheet("sheet-detail");
   }
 
+  function selectedPhaseKind() {
+    const on = UI.$("#phase-kind-seg button.on");
+    return Phases.normalizeKind(on && on.dataset.phaseKind);
+  }
+
+  function selectedNewPhaseKind() {
+    const on = UI.$("#np-kind-seg button.on");
+    return Phases.normalizeKind(on && on.dataset.npKind);
+  }
+
+  function setKindSeg(segSel, kind, dataAttr) {
+    const k = Phases.normalizeKind(kind);
+    UI.$$(`${segSel} button`).forEach((b) => {
+      const val = dataAttr === "np" ? b.dataset.npKind : b.dataset.phaseKind;
+      b.classList.toggle("on", val === k);
+    });
+  }
+
+  function renderPhaseRevisionList() {
+    const list = UI.$("#phase-revision-list");
+    if (!list) return;
+    const phase = Phases.activePhase(state.settings.phases);
+    const rows = Phases.revisionHistoryRows(phase);
+    if (!rows.length) {
+      list.innerHTML = `<p class="muted small">No target versions yet.</p>`;
+      return;
+    }
+    const canDelete = rows.length > 1;
+    list.innerHTML = rows.map((r) => {
+      const when = r.effectiveFrom ? Phases.shortDate(r.effectiveFrom) : "";
+      const cur = r.current ? `<span class="rev-badge">current</span>` : "";
+      const del = canDelete
+        ? `<button type="button" class="linkbtn danger rev-del" data-rev-id="${r.id}">Delete</button>`
+        : "";
+      return `<div class="rev-row" data-rev-id="${r.id}">
+        <div class="rev-main">
+          <div class="rev-label">${r.label || "Version"} ${cur}</div>
+          <div class="muted small">${when} · ${r.summary}</div>
+        </div>
+        ${del}
+      </div>`;
+    }).join("");
+  }
+
   function syncSettingsForm() {
     Phases.ensureMigrated(state.settings, Phases.earliestDayFromEvents(Ledger.allEvents()), Ledger.todayKey());
     const phase = Phases.activePhase(state.settings.phases);
@@ -881,16 +925,19 @@ const App = (() => {
     UI.$("#set-fat").value = g.fat;
     UI.$("#set-fiber").value = g.fiber;
     if (UI.$("#set-sodium")) UI.$("#set-sodium").value = g.sodium != null ? g.sodium : DEFAULT_GOALS.sodium;
-    if (UI.$("#set-phase-name")) UI.$("#set-phase-name").value = phase ? phase.name : "My goals";
-    if (UI.$("#set-phase-kind")) UI.$("#set-phase-kind").value = phase ? phase.kind : "maintain";
-    const hint = UI.$("#phase-save-hint");
-    if (hint && phase) {
-      const rev = Phases.revisionForDay(phase, Ledger.todayKey());
-      const n = (phase.revisions || []).length;
-      hint.textContent = n > 1 || (rev && rev.effectiveFrom !== phase.startDay)
-        ? `${phase.name} · ${Phases.KIND_LABEL[phase.kind] || phase.kind} · ${n} target versions. Saving changed numbers starts a new version from today.`
-        : "Saving changed targets starts a new version from today. Past days keep the old targets in Insights.";
+    if (phase) {
+      Phases.applyPhaseLabel(phase);
+      setKindSeg("#phase-kind-seg", phase.kind, "phase");
+      if (UI.$("#phase-current-label")) UI.$("#phase-current-label").textContent = phase.name;
+      const hint = UI.$("#phase-save-hint");
+      if (hint) {
+        const n = (phase.revisions || []).length;
+        hint.textContent = n > 1
+          ? `${n} target versions on file. Open Target history to review or delete.`
+          : "Pick Cut, Maintain, or Bulk. Saving changed numbers bumps the version from today.";
+      }
     }
+    if (UI.$("#set-phase-major")) UI.$("#set-phase-major").checked = false;
     UI.$("#set-imperial").checked = !!state.settings.imperial;
     UI.$("#set-gclient").value = localStorage.getItem("nd_gclient") || "";
     const theme = state.settings.theme || "light";
@@ -1073,10 +1120,6 @@ const App = (() => {
     UI.$("#btn-save-settings").addEventListener("click", () => {
       const today = Ledger.todayKey();
       Phases.ensureMigrated(state.settings, Phases.earliestDayFromEvents(Ledger.allEvents()), today);
-      Phases.updatePhaseMeta(state.settings, {
-        name: UI.$("#set-phase-name") ? UI.$("#set-phase-name").value : null,
-        kind: UI.$("#set-phase-kind") ? UI.$("#set-phase-kind").value : null,
-      });
       const nextGoals = {
         kcal: Number(UI.$("#set-kcal").value) || DEFAULT_GOALS.kcal,
         protein: Number(UI.$("#set-protein").value) || 0,
@@ -1085,18 +1128,62 @@ const App = (() => {
         fiber: Number(UI.$("#set-fiber").value) || 0,
         sodium: Number(UI.$("#set-sodium") && UI.$("#set-sodium").value) || 0,
       };
-      const changed = Phases.appendRevision(state.settings, nextGoals, today);
+      const forceMajor = !!(UI.$("#set-phase-major") && UI.$("#set-phase-major").checked);
+      const result = Phases.appendRevision(state.settings, nextGoals, today, "", {
+        kind: selectedPhaseKind(),
+        magnitude: forceMajor ? "major" : undefined,
+      });
       saveSettings();
       Sync.schedulePush();
       refreshAll();
       syncSettingsForm();
-      UI.toast(changed ? "Targets updated from today" : "Phase saved");
+      if (!result) UI.toast("No changes");
+      else if (result.changed) UI.toast(`Saved ${result.label}`);
+      else UI.toast(`Updated to ${result.label}`);
     });
+
+    if (UI.$("#phase-kind-seg")) {
+      UI.$("#phase-kind-seg").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-phase-kind]");
+        if (!btn) return;
+        setKindSeg("#phase-kind-seg", btn.dataset.phaseKind, "phase");
+      });
+    }
+
+    if (UI.$("#btn-phase-history")) {
+      UI.$("#btn-phase-history").addEventListener("click", () => {
+        renderPhaseRevisionList();
+        UI.openSheet("sheet-phase-revisions");
+      });
+    }
+    if (UI.$("#rev-close")) {
+      UI.$("#rev-close").addEventListener("click", () => UI.closeSheet("sheet-phase-revisions"));
+    }
+    if (UI.$("#phase-revision-list")) {
+      UI.$("#phase-revision-list").addEventListener("click", (e) => {
+        const btn = e.target.closest(".rev-del");
+        if (!btn) return;
+        const phase = Phases.activePhase(state.settings.phases);
+        if (!phase) return;
+        if (!confirm("Delete this target version? Days that used it will fall back to the previous version.")) return;
+        const res = Phases.deleteRevision(state.settings, phase.id, btn.dataset.revId, Ledger.todayKey());
+        if (!res.ok) {
+          UI.toast(res.reason === "last" ? "Keep at least one version" : "Could not delete");
+          return;
+        }
+        saveSettings();
+        Sync.schedulePush();
+        refreshAll();
+        syncSettingsForm();
+        renderPhaseRevisionList();
+        UI.toast("Version deleted");
+      });
+    }
 
     UI.$("#btn-start-phase").addEventListener("click", () => {
       const g = state.settings.goals;
-      UI.$("#np-name").value = "";
-      UI.$("#np-kind").value = "bulk";
+      const phase = Phases.activePhase(state.settings.phases);
+      setKindSeg("#np-kind-seg", phase && phase.kind === "cut" ? "bulk" : phase && phase.kind === "bulk" ? "cut" : "bulk", "np");
       UI.$("#np-copy").checked = true;
       UI.$("#np-kcal").value = g.kcal;
       UI.$("#np-protein").value = g.protein;
@@ -1106,8 +1193,14 @@ const App = (() => {
       UI.$("#np-sodium").value = g.sodium;
       UI.$("#np-goals").hidden = true;
       UI.openSheet("sheet-new-phase");
-      setTimeout(() => { const el = UI.$("#np-name"); if (el) el.focus(); }, 50);
     });
+    if (UI.$("#np-kind-seg")) {
+      UI.$("#np-kind-seg").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-np-kind]");
+        if (!btn) return;
+        setKindSeg("#np-kind-seg", btn.dataset.npKind, "np");
+      });
+    }
     UI.$("#np-copy").addEventListener("change", () => {
       UI.$("#np-goals").hidden = UI.$("#np-copy").checked;
     });
@@ -1125,9 +1218,8 @@ const App = (() => {
         fiber: Number(UI.$("#np-fiber").value) || 0,
         sodium: Number(UI.$("#np-sodium").value) || 0,
       };
-      Phases.startPhase(state.settings, {
-        name: UI.$("#np-name").value.trim() || undefined,
-        kind: UI.$("#np-kind").value,
+      const started = Phases.startPhase(state.settings, {
+        kind: selectedNewPhaseKind(),
         goals,
         startDay: today,
         copyGoals: copy,
@@ -1137,7 +1229,7 @@ const App = (() => {
       UI.closeSheet("sheet-new-phase");
       refreshAll();
       syncSettingsForm();
-      UI.toast("New phase started");
+      UI.toast(`Started ${started.name}`);
     });
 
     UI.$("#btn-weight-save").addEventListener("click", saveWeightFromField);

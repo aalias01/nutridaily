@@ -4,8 +4,11 @@
  */
 const Phases = (() => {
   const DEFAULT_GOALS = { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 };
-  const KINDS = ["cut", "bulk", "maintain", "custom"];
+  /** User-facing kinds (pills). Legacy "custom" still resolves in data. */
+  const KINDS = ["cut", "maintain", "bulk"];
   const KIND_LABEL = { cut: "Cut", bulk: "Bulk", maintain: "Maintain", custom: "Custom" };
+  const MAJOR_KCAL_DELTA = 200;
+  const MAJOR_PROTEIN_DELTA = 25;
 
   /** Per-nutrient hit bands (v1 global). */
   const BANDS = {
@@ -86,18 +89,83 @@ const Phases = (() => {
     return list.find((p) => p && p.endDay == null && !p.archived) || null;
   }
 
-  function revisionForDay(phase, day) {
-    if (!phase || !Array.isArray(phase.revisions) || !phase.revisions.length) return null;
-    const sorted = [...phase.revisions].sort((a, b) =>
+  function sortRevisions(revisions) {
+    return [...(revisions || [])].sort((a, b) =>
       String(a.effectiveFrom).localeCompare(String(b.effectiveFrom)) ||
+      (a.createdAt || 0) - (b.createdAt || 0) ||
       String(a.id).localeCompare(String(b.id))
     );
+  }
+
+  function revisionForDay(phase, day) {
+    if (!phase || !Array.isArray(phase.revisions) || !phase.revisions.length) return null;
+    const sorted = sortRevisions(phase.revisions);
     let pick = null;
     for (const r of sorted) {
       if (r.effectiveFrom <= day) pick = r;
       else break;
     }
     return pick || sorted[0];
+  }
+
+  function normalizeKind(kind) {
+    if (kind === "cut" || kind === "bulk" || kind === "maintain") return kind;
+    return "maintain";
+  }
+
+  function formatPhaseName(kind, major, minor) {
+    const label = KIND_LABEL[normalizeKind(kind)] || "Maintain";
+    return `${label} v${major}.${minor}`;
+  }
+
+  function ensurePhaseVersion(phase) {
+    if (!phase) return { major: 1, minor: 0 };
+    let major = Number(phase.versionMajor);
+    let minor = Number(phase.versionMinor);
+    if (!Number.isFinite(major) || major < 1 || !Number.isFinite(minor) || minor < 0) {
+      const m = String(phase.name || "").match(/v(\d+)\.(\d+)/i);
+      if (m) {
+        major = Math.max(1, Number(m[1]));
+        minor = Math.max(0, Number(m[2]));
+      } else {
+        const n = Math.max(1, (phase.revisions || []).length);
+        major = 1;
+        minor = Math.max(0, n - 1);
+      }
+      phase.versionMajor = major;
+      phase.versionMinor = minor;
+    }
+    return { major, minor };
+  }
+
+  function applyPhaseLabel(phase) {
+    const v = ensurePhaseVersion(phase);
+    phase.kind = normalizeKind(phase.kind);
+    phase.name = formatPhaseName(phase.kind, v.major, v.minor);
+    return phase.name;
+  }
+
+  /** Major if kind changes, kcal jumps ≥200, or protein jumps ≥25; else minor. */
+  function detectMagnitude(prevGoals, nextGoals, prevKind, nextKind) {
+    if (normalizeKind(prevKind) !== normalizeKind(nextKind)) return "major";
+    const a = normalizeGoals(prevGoals);
+    const b = normalizeGoals(nextGoals);
+    if (Math.abs(a.kcal - b.kcal) >= MAJOR_KCAL_DELTA) return "major";
+    if (Math.abs(a.protein - b.protein) >= MAJOR_PROTEIN_DELTA) return "major";
+    return "minor";
+  }
+
+  function bumpVersion(phase, magnitude) {
+    const v = ensurePhaseVersion(phase);
+    if (magnitude === "major") {
+      phase.versionMajor = v.major + 1;
+      phase.versionMinor = 0;
+    } else {
+      phase.versionMajor = v.major;
+      phase.versionMinor = v.minor + 1;
+    }
+    applyPhaseLabel(phase);
+    return { major: phase.versionMajor, minor: phase.versionMinor, label: phase.name };
   }
 
   /** Resolve targets for a calendar day. phase revision + day bumps (legacy absolute still works). */
@@ -150,6 +218,12 @@ const Phases = (() => {
     if (!settings.dayGoals || typeof settings.dayGoals !== "object") settings.dayGoals = {};
     if (!settings.weights || typeof settings.weights !== "object") settings.weights = {};
     if (Array.isArray(settings.phases) && settings.phases.length) {
+      for (const p of settings.phases) {
+        if (!p) continue;
+        p.kind = normalizeKind(p.kind === "custom" ? "maintain" : p.kind);
+        ensurePhaseVersion(p);
+        applyPhaseLabel(p);
+      }
       mirrorActiveGoals(Object.assign(settings, { _todayKey: todayKey }));
       delete settings._todayKey;
       return settings;
@@ -159,8 +233,10 @@ const Phases = (() => {
     const now = settings.goalsUpdatedAt || Date.now();
     settings.phases = [{
       id: uid("ph"),
-      name: "My goals",
+      name: formatPhaseName("maintain", 1, 0),
       kind: "maintain",
+      versionMajor: 1,
+      versionMinor: 0,
       startDay: start,
       endDay: null,
       createdAt: now,
@@ -172,6 +248,8 @@ const Phases = (() => {
         goals,
         createdAt: now,
         note: "Migrated from settings",
+        version: "1.0",
+        label: formatPhaseName("maintain", 1, 0),
       }],
     }];
     settings.goals = goals;
@@ -187,43 +265,92 @@ const Phases = (() => {
     return `${y}-${m}-${day}`;
   }
 
-  /** Append a revision effective today (re-scores today). Returns false if unchanged. */
-  function appendRevision(settings, goals, effectiveFrom, note) {
+  /**
+   * Save active phase targets (and optional kind). Bumps version label.
+   * Same-day revisions: replace the latest same-day row so Insights stay stable
+   * and the form does not flip back to an older same-day id-ordered snapshot.
+   * Returns { changed, bumped, label } or false if nothing to do.
+   */
+  function appendRevision(settings, goals, effectiveFrom, note, opts) {
     ensureMigrated(settings, effectiveFrom, effectiveFrom);
     const phase = activePhase(settings.phases);
     if (!phase) return false;
+    const options = opts || {};
+    const nextKind = options.kind != null ? normalizeKind(options.kind) : normalizeKind(phase.kind);
     const next = normalizeGoals(goals);
     const cur = revisionForDay(phase, effectiveFrom);
-    if (cur && goalsEqual(cur.goals, next)) {
+    const goalsChanged = !(cur && goalsEqual(cur.goals, next));
+    const kindChanged = nextKind !== normalizeKind(phase.kind);
+
+    if (!goalsChanged && !kindChanged) {
       mirrorActiveGoals(Object.assign(settings, { _todayKey: effectiveFrom }));
       delete settings._todayKey;
+      applyPhaseLabel(phase);
       return false;
     }
+
+    let magnitude = options.magnitude === "major" || options.magnitude === "minor"
+      ? options.magnitude
+      : detectMagnitude(cur ? cur.goals : next, next, phase.kind, nextKind);
+
+    // Kind-only change with identical numbers: still bump label, no new revision row.
+    if (!goalsChanged && kindChanged) {
+      phase.kind = nextKind;
+      const bumped = bumpVersion(phase, "major");
+      phase.updatedAt = Date.now();
+      mirrorActiveGoals(Object.assign(settings, { _todayKey: effectiveFrom }));
+      delete settings._todayKey;
+      return { changed: false, bumped: true, label: bumped.label, magnitude: "major" };
+    }
+
+    phase.kind = nextKind;
+    const bumped = bumpVersion(phase, magnitude);
     phase.revisions = phase.revisions || [];
-    phase.revisions.push({
-      id: uid("rv"),
-      effectiveFrom,
-      goals: next,
-      createdAt: Date.now(),
-      note: note || "",
-    });
+
+    // Same calendar day: update the latest same-day row if one already exists
+    // beyond the phase's first revision (keeps an original snapshot + avoids id races).
+    const sortedRevs = sortRevisions(phase.revisions);
+    const last = sortedRevs[sortedRevs.length - 1];
+    const replace = last &&
+      last.effectiveFrom === effectiveFrom &&
+      sortedRevs.length > 1 &&
+      last.id !== sortedRevs[0].id
+      ? last
+      : null;
+    if (replace) {
+      replace.goals = next;
+      replace.createdAt = Date.now();
+      replace.note = note || replace.note || "";
+      replace.version = `${bumped.major}.${bumped.minor}`;
+      replace.label = bumped.label;
+    } else {
+      phase.revisions.push({
+        id: uid("rv"),
+        effectiveFrom,
+        goals: next,
+        createdAt: Date.now(),
+        note: note || "",
+        version: `${bumped.major}.${bumped.minor}`,
+        label: bumped.label,
+      });
+    }
     phase.updatedAt = Date.now();
     settings.goals = next;
     settings.goalsUpdatedAt = Date.now();
-    return true;
+    return { changed: true, bumped: true, label: bumped.label, magnitude };
   }
 
-  function updatePhaseMeta(settings, { name, kind }) {
+  function updatePhaseMeta(settings, { kind }) {
     ensureMigrated(settings, null, null);
     const phase = activePhase(settings.phases);
     if (!phase) return;
-    if (name != null && String(name).trim()) phase.name = String(name).trim().slice(0, 48);
-    if (kind && KINDS.includes(kind)) phase.kind = kind;
+    if (kind) phase.kind = normalizeKind(kind);
+    applyPhaseLabel(phase);
     phase.updatedAt = Date.now();
   }
 
-  /** End active phase yesterday (relative to startDay) and open a new one. */
-  function startPhase(settings, { name, kind, goals, startDay, copyGoals }) {
+  /** End active phase yesterday (relative to startDay) and open a new one at Kind v1.0. */
+  function startPhase(settings, { kind, goals, startDay, copyGoals }) {
     ensureMigrated(settings, startDay, startDay);
     const prev = activePhase(settings.phases);
     const start = startDay;
@@ -233,14 +360,18 @@ const Phases = (() => {
       else prev.endDay = prev.startDay;
       prev.updatedAt = Date.now();
     }
+    const k = normalizeKind(kind);
     const g = copyGoals && prev
       ? normalizeGoals((revisionForDay(prev, start) || {}).goals || settings.goals)
       : normalizeGoals(goals || settings.goals);
     const now = Date.now();
+    const label = formatPhaseName(k, 1, 0);
     const phase = {
       id: uid("ph"),
-      name: (name && String(name).trim()) || KIND_LABEL[kind] || "Phase",
-      kind: KINDS.includes(kind) ? kind : "custom",
+      name: label,
+      kind: k,
+      versionMajor: 1,
+      versionMinor: 0,
       startDay: start,
       endDay: null,
       createdAt: now,
@@ -252,12 +383,62 @@ const Phases = (() => {
         goals: g,
         createdAt: now,
         note: "",
+        version: "1.0",
+        label,
       }],
     };
     settings.phases.push(phase);
     settings.goals = g;
     settings.goalsUpdatedAt = now;
     return phase;
+  }
+
+  /** Delete a target version from a phase. Keeps at least one revision. */
+  function deleteRevision(settings, phaseId, revisionId, todayKey) {
+    ensureMigrated(settings, todayKey, todayKey);
+    const phase = (settings.phases || []).find((p) => p && p.id === phaseId);
+    if (!phase || !Array.isArray(phase.revisions)) return { ok: false, reason: "missing" };
+    if (phase.revisions.length <= 1) return { ok: false, reason: "last" };
+    const idx = phase.revisions.findIndex((r) => r && r.id === revisionId);
+    if (idx < 0) return { ok: false, reason: "missing" };
+    phase.revisions.splice(idx, 1);
+    phase.updatedAt = Date.now();
+
+    // Sync phase label to the latest remaining revision when possible.
+    const latest = sortRevisions(phase.revisions).slice(-1)[0];
+    if (latest && latest.version && /^\d+\.\d+$/.test(String(latest.version))) {
+      const [maj, min] = String(latest.version).split(".").map(Number);
+      phase.versionMajor = maj;
+      phase.versionMinor = min;
+      if (latest.label) phase.name = latest.label;
+      else applyPhaseLabel(phase);
+    } else {
+      applyPhaseLabel(phase);
+    }
+    mirrorActiveGoals(Object.assign(settings, { _todayKey: todayKey || phase.startDay }));
+    delete settings._todayKey;
+    return { ok: true, label: phase.name };
+  }
+
+  /** Target versions for the phase history sheet (newest first). */
+  function revisionHistoryRows(phase) {
+    if (!phase) return [];
+    const sorted = sortRevisions(phase.revisions).reverse();
+    return sorted.map((r, i) => {
+      const g = normalizeGoals(r.goals);
+      const version = r.version || "";
+      const label = r.label || (version ? formatPhaseName(phase.kind, ...version.split(".").map(Number)) : phase.name);
+      return {
+        id: r.id,
+        version,
+        label,
+        effectiveFrom: r.effectiveFrom,
+        createdAt: r.createdAt || 0,
+        goals: g,
+        summary: `${Math.round(g.kcal)} kcal · P${Math.round(g.protein)} C${Math.round(g.carbs)} F${Math.round(g.fat)}`,
+        current: i === 0,
+      };
+    });
   }
 
   function classify(actual, target, band) {
@@ -402,7 +583,6 @@ const Phases = (() => {
   function phaseContext(settings, todayKey, phaseOpt) {
     const phase = phaseOpt || activePhase(settings.phases);
     if (!phase) return "";
-    const kind = KIND_LABEL[phase.kind] || phase.kind;
     const end = phase.endDay || todayKey;
     const rev = revisionForDay(phase, end);
     const goals = rev ? normalizeGoals(rev.goals) : normalizeGoals(settings.goals);
@@ -413,10 +593,10 @@ const Phases = (() => {
       const since = rev && rev.effectiveFrom !== phase.startDay
         ? ` · targets since ${rev.effectiveFrom.slice(5)}`
         : "";
-      return `${phase.name} · ${kind} · day ${dayNum} · ${Math.round(goals.kcal)} kcal${since}`;
+      return `${phase.name} · day ${dayNum} · ${Math.round(goals.kcal)} kcal${since}`;
     }
     const days = phaseDayKeys(phase, todayKey).length;
-    return `${phase.name} · ${kind} · ${days} day${days === 1 ? "" : "s"} · ${shortDate(phase.startDay)} – ${shortDate(phase.endDay)} · ${Math.round(goals.kcal)} kcal`;
+    return `${phase.name} · ${days} day${days === 1 ? "" : "s"} · ${shortDate(phase.startDay)} – ${shortDate(phase.endDay)} · ${Math.round(goals.kcal)} kcal`;
   }
 
   /** Compact rows for Insights phase history (newest first). */
@@ -488,6 +668,7 @@ const Phases = (() => {
       }
       const revisions = [...revMap.values()].sort((x, y) =>
         String(x.effectiveFrom).localeCompare(String(y.effectiveFrom)) ||
+        (x.createdAt || 0) - (y.createdAt || 0) ||
         String(x.id).localeCompare(String(y.id))
       );
       map.set(p.id, {
@@ -570,6 +751,13 @@ const Phases = (() => {
     appendRevision,
     updatePhaseMeta,
     startPhase,
+    deleteRevision,
+    revisionHistoryRows,
+    formatPhaseName,
+    detectMagnitude,
+    applyPhaseLabel,
+    ensurePhaseVersion,
+    normalizeKind,
     dayBefore,
     scoreDayTotals,
     scoreRange,

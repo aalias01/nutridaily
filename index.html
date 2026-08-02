@@ -170,21 +170,15 @@
 
         <label class="set-label">Active phase</label>
         <div class="card-block phase-card">
-          <p class="muted small" id="phase-save-hint">Saving changed targets starts a new version from today. Past days keep the old targets in Insights.</p>
-          <div class="phase-meta-grid">
-            <div class="phase-field">
-              <label class="small muted" for="set-phase-name">Name</label>
-              <input id="set-phase-name" type="text" maxlength="48" placeholder="e.g. Spring cut">
-            </div>
-            <div class="phase-field">
-              <label class="small muted" for="set-phase-kind">Kind</label>
-              <select id="set-phase-kind" aria-label="Phase kind">
-                <option value="maintain">Maintain</option>
-                <option value="cut">Cut</option>
-                <option value="bulk">Bulk</option>
-                <option value="custom">Custom</option>
-              </select>
-            </div>
+          <div class="phase-title-row">
+            <strong id="phase-current-label">Maintain v1.0</strong>
+            <button id="btn-phase-history" class="linkbtn" type="button">Target history</button>
+          </div>
+          <p class="muted small" id="phase-save-hint">Pick Cut, Maintain, or Bulk. Saving numbers bumps the version (v1.1 minor, v2.0 if kind or calories shift a lot).</p>
+          <div class="phase-kind-seg seg" id="phase-kind-seg" role="group" aria-label="Phase kind">
+            <button type="button" data-phase-kind="cut">Cut</button>
+            <button type="button" data-phase-kind="maintain" class="on">Maintain</button>
+            <button type="button" data-phase-kind="bulk">Bulk</button>
           </div>
           <div class="goals-grid">
             <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="800" step="50"></div>
@@ -194,6 +188,7 @@
             <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
             <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
           </div>
+          <label class="check-row"><input id="set-phase-major" type="checkbox"> Force major version (vN.0)</label>
           <div class="phase-actions">
             <button id="btn-save-settings" class="btn full" type="button">Save phase</button>
             <button id="btn-start-phase" class="btn ghost full" type="button">Start new phase…</button>
@@ -282,16 +277,13 @@
     <div class="sheet-card">
       <div class="sheet-grab"></div>
       <h3>Start new phase</h3>
-      <p class="muted small">Ends the current phase yesterday. Past Insights keep their old targets.</p>
-      <label>Name<input id="np-name" type="text" maxlength="48" placeholder="e.g. Summer bulk"></label>
-      <label>Kind
-        <select id="np-kind">
-          <option value="bulk">Bulk</option>
-          <option value="cut">Cut</option>
-          <option value="maintain">Maintain</option>
-          <option value="custom">Custom</option>
-        </select>
-      </label>
+      <p class="muted small">Ends the current phase yesterday and starts Kind v1.0 today. Past Insights keep their old targets.</p>
+      <label class="small muted">Kind</label>
+      <div class="phase-kind-seg seg" id="np-kind-seg" role="group" aria-label="New phase kind">
+        <button type="button" data-np-kind="cut">Cut</button>
+        <button type="button" data-np-kind="maintain">Maintain</button>
+        <button type="button" data-np-kind="bulk" class="on">Bulk</button>
+      </div>
       <label class="check-row"><input id="np-copy" type="checkbox" checked> Copy targets from current phase</label>
       <div class="goals-grid" id="np-goals">
         <div><span class="small muted">Calories</span><input id="np-kcal" type="number" min="800" step="50"></div>
@@ -304,6 +296,20 @@
       <div class="row end">
         <button id="np-cancel" class="btn ghost" type="button">Cancel</button>
         <button id="np-save" class="btn" type="button">Start phase</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Target version history -->
+  <div id="sheet-phase-revisions" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-phase-revisions"></div>
+    <div class="sheet-card">
+      <div class="sheet-grab"></div>
+      <h3>Target history</h3>
+      <p class="muted small">Each save that changes numbers (or kind) is listed here. Delete leftovers you do not need. Past days still use the version that was active then.</p>
+      <div id="phase-revision-list" class="phase-revision-list"></div>
+      <div class="row end">
+        <button id="rev-close" class="btn ghost" type="button">Close</button>
       </div>
     </div>
   </div>
