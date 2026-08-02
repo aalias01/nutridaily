@@ -6,10 +6,18 @@ const App = (() => {
   const FIRST_SEEN_KEY = "nd_first_seen_at";
   const SIGNIN_SEEN_KEY = "nd_signin_banner_seen";
   const RECONNECT_HIDE_DAY_KEY = "nd_reconnect_hide_day";
-  const DEFAULT_GOALS = { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 };
+  const DEFAULT_GOALS = Phases.DEFAULT_GOALS;
 
   const state = {
-    settings: { goals: { ...DEFAULT_GOALS }, goalsUpdatedAt: 0, imperial: false, theme: "light", dayGoals: {} },
+    settings: {
+      goals: { ...DEFAULT_GOALS },
+      goalsUpdatedAt: 0,
+      imperial: false,
+      theme: "light",
+      dayGoals: {},
+      phases: [],
+      weights: {},
+    },
     personalFoods: [],
     viewDay: null, // YYYY-MM-DD
     pickFood: null,
@@ -20,7 +28,7 @@ const App = (() => {
     updateFoodId: null,
     saveAsNew: false,
     editFoodDirect: false, // opened review without AI paste step
-    insightDays: 14,
+    insightDays: 14, // number or "phase"
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
     yesterdayKey: null,
   };
@@ -91,10 +99,20 @@ const App = (() => {
     state.settings.goals = { ...DEFAULT_GOALS, ...(state.settings.goals || {}) };
     if (!state.settings.theme) state.settings.theme = "light";
     if (!state.settings.dayGoals || typeof state.settings.dayGoals !== "object") state.settings.dayGoals = {};
+    if (!state.settings.weights || typeof state.settings.weights !== "object") state.settings.weights = {};
     try { state.personalFoods = JSON.parse(localStorage.getItem(PERSONAL_KEY) || "[]"); }
     catch (e) { state.personalFoods = []; }
     state.viewDay = Ledger.todayKey();
     state.lastCalendarToday = state.viewDay;
+    const hadPhases = Array.isArray(state.settings.phases) && state.settings.phases.length;
+    Phases.ensureMigrated(
+      state.settings,
+      Phases.earliestDayFromEvents(Ledger.allEvents()),
+      state.viewDay
+    );
+    if (!hadPhases && state.settings.phases && state.settings.phases.length) {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+    }
     if (!localStorage.getItem(FIRST_SEEN_KEY)) localStorage.setItem(FIRST_SEEN_KEY, String(Date.now()));
     applyTheme();
   }
@@ -250,18 +268,57 @@ const App = (() => {
     Sync.schedulePush();
   };
 
+  /** Mirror only (Drive apply / import). Does not append a phase revision. */
   function setGoals(goals, updatedAt) {
-    state.settings.goals = { ...DEFAULT_GOALS, ...goals };
+    state.settings.goals = Phases.normalizeGoals(goals);
     state.settings.goalsUpdatedAt = updatedAt || Date.now();
     saveSettings();
   }
 
   function goalsForView() {
-    const base = { ...DEFAULT_GOALS, ...(state.settings.goals || {}) };
-    const ov = dayGoalOverride();
-    if (!ov) return base;
-    const { updatedAt: _u, cleared: _c, ...rest } = ov;
-    return { ...base, ...rest };
+    return Phases.goalsForDay(state.viewDay, state.settings);
+  }
+
+  function refreshInsights() {
+    if (!document.querySelector("#view-insights.active")) return;
+    UI.renderTrends({
+      daysBack: state.insightDays,
+      settings: state.settings,
+      todayKey: Ledger.todayKey(),
+      goalsForDay: (day) => Phases.goalsForDay(day, state.settings),
+    });
+  }
+
+  function syncWeightField() {
+    const input = UI.$("#day-weight");
+    const unit = UI.$("#weight-unit");
+    if (!input) return;
+    const kg = Phases.weightForDay(state.settings, state.viewDay);
+    const imperial = !!state.settings.imperial;
+    if (unit) unit.textContent = imperial ? "lb" : "kg";
+    if (kg == null) { input.value = ""; return; }
+    input.value = imperial ? (kg / 0.45359237).toFixed(1) : String(Math.round(kg * 10) / 10);
+  }
+
+  function saveWeightFromField() {
+    const raw = UI.$("#day-weight").value.trim();
+    if (!state.settings.weights) state.settings.weights = {};
+    if (raw === "") {
+      state.settings.weights[state.viewDay] = { cleared: true, updatedAt: Date.now() };
+      saveSettings();
+      Sync.schedulePush();
+      UI.toast("Weight cleared");
+      return;
+    }
+    let n = parseAmount(raw);
+    if (!Number.isFinite(n) || n <= 0) { UI.toast("Enter a valid weight"); return; }
+    if (state.settings.imperial) n = n * 0.45359237; // lb → kg
+    if (n < 25 || n > 400) { UI.toast("Weight looks out of range"); return; }
+    state.settings.weights[state.viewDay] = { kg: Math.round(n * 100) / 100, updatedAt: Date.now() };
+    saveSettings();
+    Sync.schedulePush();
+    UI.toast("Weight saved");
+    refreshInsights();
   }
 
   function isToday() { return state.viewDay === Ledger.todayKey(); }
@@ -280,6 +337,7 @@ const App = (() => {
   function refreshDay() {
     refreshHUD();
     refreshDayGoalsLink();
+    syncWeightField();
     UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
   }
 
@@ -290,16 +348,14 @@ const App = (() => {
   function refreshAll() {
     refreshDay();
     refreshFoods();
-    if (document.querySelector("#view-insights.active")) {
-      UI.renderTrends({ ...DEFAULT_GOALS, ...(state.settings.goals || {}) }, state.insightDays);
-    }
+    refreshInsights();
   }
 
   function switchView(name) {
     document.querySelectorAll(".bottom-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
     document.querySelectorAll("main .view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
     if (name === "foods") refreshFoods();
-    if (name === "insights") UI.renderTrends({ ...DEFAULT_GOALS, ...(state.settings.goals || {}) }, state.insightDays);
+    if (name === "insights") refreshInsights();
     if (name === "today") refreshDay();
   }
 
@@ -794,6 +850,8 @@ const App = (() => {
   }
 
   function syncSettingsForm() {
+    Phases.ensureMigrated(state.settings, Phases.earliestDayFromEvents(Ledger.allEvents()), Ledger.todayKey());
+    const phase = Phases.activePhase(state.settings.phases);
     const g = state.settings.goals;
     UI.$("#set-kcal").value = g.kcal;
     UI.$("#set-protein").value = g.protein;
@@ -801,6 +859,16 @@ const App = (() => {
     UI.$("#set-fat").value = g.fat;
     UI.$("#set-fiber").value = g.fiber;
     if (UI.$("#set-sodium")) UI.$("#set-sodium").value = g.sodium != null ? g.sodium : DEFAULT_GOALS.sodium;
+    if (UI.$("#set-phase-name")) UI.$("#set-phase-name").value = phase ? phase.name : "My goals";
+    if (UI.$("#set-phase-kind")) UI.$("#set-phase-kind").value = phase ? phase.kind : "maintain";
+    const hint = UI.$("#phase-save-hint");
+    if (hint && phase) {
+      const rev = Phases.revisionForDay(phase, Ledger.todayKey());
+      const n = (phase.revisions || []).length;
+      hint.textContent = n > 1 || (rev && rev.effectiveFrom !== phase.startDay)
+        ? `${phase.name} · ${Phases.KIND_LABEL[phase.kind] || phase.kind} · ${n} target versions. Saving changed numbers starts a new version from today.`
+        : "Saving changed targets starts a new version from today. Past days keep the old targets in Insights.";
+    }
     UI.$("#set-imperial").checked = !!state.settings.imperial;
     UI.$("#set-gclient").value = localStorage.getItem("nd_gclient") || "";
     const theme = state.settings.theme || "light";
@@ -880,7 +948,7 @@ const App = (() => {
 
   function exportData() {
     const blob = new Blob([JSON.stringify({
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       resetAt: Sync.getResetAt(),
       settings: state.settings,
@@ -912,6 +980,12 @@ const App = (() => {
           delete state.settings.key;
           delete state.settings.model;
           state.settings.goals = { ...DEFAULT_GOALS, ...(state.settings.goals || {}) };
+          if (!state.settings.weights || typeof state.settings.weights !== "object") state.settings.weights = {};
+          Phases.ensureMigrated(
+            state.settings,
+            Phases.earliestDayFromEvents(Ledger.allEvents()),
+            Ledger.todayKey()
+          );
         }
         saveSettings();
         savePersonal();
@@ -954,23 +1028,78 @@ const App = (() => {
       UI.toast("Override cleared");
     });
     UI.$("#btn-save-settings").addEventListener("click", () => {
-      setGoals({
+      const today = Ledger.todayKey();
+      Phases.ensureMigrated(state.settings, Phases.earliestDayFromEvents(Ledger.allEvents()), today);
+      Phases.updatePhaseMeta(state.settings, {
+        name: UI.$("#set-phase-name") ? UI.$("#set-phase-name").value : null,
+        kind: UI.$("#set-phase-kind") ? UI.$("#set-phase-kind").value : null,
+      });
+      const nextGoals = {
         kcal: Number(UI.$("#set-kcal").value) || DEFAULT_GOALS.kcal,
         protein: Number(UI.$("#set-protein").value) || 0,
         carbs: Number(UI.$("#set-carbs").value) || 0,
         fat: Number(UI.$("#set-fat").value) || 0,
         fiber: Number(UI.$("#set-fiber").value) || 0,
         sodium: Number(UI.$("#set-sodium") && UI.$("#set-sodium").value) || 0,
-      });
+      };
+      const changed = Phases.appendRevision(state.settings, nextGoals, today);
       state.settings.imperial = UI.$("#set-imperial").checked;
       const gc = UI.$("#set-gclient").value.trim();
       if (gc) localStorage.setItem("nd_gclient", gc);
       else localStorage.removeItem("nd_gclient");
       saveSettings();
+      Sync.schedulePush();
       applyTheme();
       UI.$("#settings-modal").classList.remove("open");
-      refreshHUD();
-      UI.toast("Saved");
+      refreshAll();
+      UI.toast(changed ? "Targets updated from today" : "Saved");
+    });
+
+    UI.$("#btn-start-phase").addEventListener("click", () => {
+      const g = state.settings.goals;
+      UI.$("#np-name").value = "";
+      UI.$("#np-kind").value = "bulk";
+      UI.$("#np-copy").checked = true;
+      UI.$("#np-kcal").value = g.kcal;
+      UI.$("#np-protein").value = g.protein;
+      UI.$("#np-carbs").value = g.carbs;
+      UI.$("#np-fat").value = g.fat;
+      UI.$("#np-goals").hidden = true;
+      UI.openSheet("sheet-new-phase");
+    });
+    UI.$("#np-copy").addEventListener("change", () => {
+      UI.$("#np-goals").hidden = UI.$("#np-copy").checked;
+    });
+    UI.$("#np-cancel").addEventListener("click", () => UI.closeSheet("sheet-new-phase"));
+    UI.$("#np-save").addEventListener("click", () => {
+      const today = Ledger.todayKey();
+      const copy = UI.$("#np-copy").checked;
+      const goals = copy ? null : {
+        kcal: Number(UI.$("#np-kcal").value) || DEFAULT_GOALS.kcal,
+        protein: Number(UI.$("#np-protein").value) || 0,
+        carbs: Number(UI.$("#np-carbs").value) || 0,
+        fat: Number(UI.$("#np-fat").value) || 0,
+        fiber: state.settings.goals.fiber,
+        sodium: state.settings.goals.sodium,
+      };
+      Phases.startPhase(state.settings, {
+        name: UI.$("#np-name").value.trim() || undefined,
+        kind: UI.$("#np-kind").value,
+        goals,
+        startDay: today,
+        copyGoals: copy,
+      });
+      saveSettings();
+      Sync.schedulePush();
+      UI.closeSheet("sheet-new-phase");
+      UI.$("#settings-modal").classList.remove("open");
+      refreshAll();
+      UI.toast("New phase started");
+    });
+
+    UI.$("#btn-weight-save").addEventListener("click", saveWeightFromField);
+    UI.$("#day-weight").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); saveWeightFromField(); }
     });
 
     UI.$("#foods-search").addEventListener("input", refreshFoods);
@@ -989,8 +1118,10 @@ const App = (() => {
       UI.$("#dg-fat").value = ov.fat != null ? ov.fat : "";
       UI.$("#dg-fiber").value = ov.fiber != null ? ov.fiber : "";
       UI.$("#dg-sodium").value = ov.sodium != null ? ov.sodium : "";
-      const base = { ...DEFAULT_GOALS, ...(state.settings.goals || {}) };
-      UI.$("#day-goals-blurb").textContent = `Usual goals: ${base.kcal} kcal · P ${base.protein}. Blank fields keep those.`;
+      const phaseBase = Phases.goalsForDay(state.viewDay, { ...state.settings, dayGoals: {} });
+      const phase = Phases.phaseForDay(state.settings.phases, state.viewDay);
+      const phaseBit = phase ? ` (${phase.name})` : "";
+      UI.$("#day-goals-blurb").textContent = `Phase targets${phaseBit}: ${phaseBase.kcal} kcal · P ${phaseBase.protein}. Blank fields keep those. Day goals override one day only.`;
       UI.openSheet("sheet-day-goals");
     });
     UI.$("#dg-save").addEventListener("click", () => {
@@ -1142,9 +1273,9 @@ const App = (() => {
     UI.$("#insight-range").addEventListener("click", (e) => {
       const btn = e.target.closest("[data-days]");
       if (!btn) return;
-      state.insightDays = Number(btn.dataset.days);
+      state.insightDays = btn.dataset.days === "phase" ? "phase" : Number(btn.dataset.days);
       UI.$("#insight-range").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
-      UI.renderTrends({ ...DEFAULT_GOALS, ...(state.settings.goals || {}) }, state.insightDays);
+      refreshInsights();
     });
     const canvas = UI.$("#trend-canvas");
     if (canvas) {
@@ -1157,11 +1288,7 @@ const App = (() => {
     let resizeT = null;
     window.addEventListener("resize", () => {
       clearTimeout(resizeT);
-      resizeT = setTimeout(() => {
-        if (document.querySelector("#view-insights.active")) {
-          UI.renderTrends({ ...DEFAULT_GOALS, ...(state.settings.goals || {}) }, state.insightDays);
-        }
-      }, 150);
+      resizeT = setTimeout(() => refreshInsights(), 150);
     });
 
     document.body.addEventListener("click", (e) => {
@@ -1378,13 +1505,24 @@ const App = (() => {
         state.settings.dayGoals = dg && typeof dg === "object" ? dg : {};
         saveSettings();
       },
+      getPhases: () => state.settings.phases || [],
+      setPhases: (list) => {
+        state.settings.phases = Array.isArray(list) ? list : [];
+        Phases.ensureMigrated(state.settings, Phases.earliestDayFromEvents(Ledger.allEvents()), Ledger.todayKey());
+        saveSettings();
+      },
+      getWeights: () => state.settings.weights || {},
+      setWeights: (w) => {
+        state.settings.weights = w && typeof w === "object" ? w : {};
+        saveSettings();
+      },
       onStatus: (s, detail) => {
         if (s === "ok") {
           localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
           UI.setSyncPill("ok", Sync.state().email ? Sync.state().email.split("@")[0] : "synced");
         } else if (s === "pending" || s === "syncing") UI.setSyncPill("pending", detail || "syncing…");
         else if (s === "auth") UI.setSyncPill("warn", "reconnect");
-        else if (s === "error") UI.setSyncPill("warn", detail || "sync issue");
+        else if (s === "error" || s === "warn") UI.setSyncPill("warn", detail || "sync issue");
         else UI.setSyncPill("local", "local only");
         refreshInfoBanner();
         if (UI.$("#settings-modal").classList.contains("open")) refreshDriveStatus();

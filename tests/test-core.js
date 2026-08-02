@@ -142,8 +142,67 @@ console.log("\n[6] Display formatting");
   ok(FoodMatch.displayQty(180, "g", 180) === "180 g", "gram qty shown plainly");
 }
 
-console.log("\n[7] Cloud sync merge (conflict-free by construction)");
+console.log("\n[7] Phases / goalsForDay");
 {
+  const Phases = require("../js/phases.js");
+  const settings = {
+    goals: { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 },
+    goalsUpdatedAt: 100,
+    dayGoals: {},
+    phases: [],
+    weights: {},
+  };
+  Phases.ensureMigrated(settings, "2026-07-01", "2026-08-01");
+  ok(settings.phases.length === 1, "migrate synthesizes one phase");
+  ok(settings.phases[0].startDay === "2026-07-01", "phase starts at earliest ledger day");
+  ok(Phases.goalsForDay("2026-07-15", settings).kcal === 2200, "historical day uses migrated goals");
+
+  Phases.appendRevision(settings, { ...settings.goals, kcal: 2800, protein: 160 }, "2026-08-01");
+  ok(Phases.goalsForDay("2026-07-15", settings).kcal === 2200, "past day unchanged after revision");
+  ok(Phases.goalsForDay("2026-08-01", settings).kcal === 2800, "today uses new revision");
+  ok(settings.phases[0].revisions.length === 2, "append adds a revision");
+
+  settings.dayGoals["2026-08-01"] = { kcal: 3000, updatedAt: 200 };
+  ok(Phases.goalsForDay("2026-08-01", settings).kcal === 3000, "dayGoals override beats phase revision");
+  ok(Phases.goalsForDay("2026-08-01", settings).protein === 160, "dayGoals partial override keeps other macros");
+
+  Phases.startPhase(settings, {
+    name: "Summer bulk",
+    kind: "bulk",
+    startDay: "2026-08-10",
+    copyGoals: true,
+  });
+  ok(settings.phases.length === 2, "startPhase adds a phase");
+  ok(settings.phases[0].endDay === "2026-08-09", "previous phase ends day before");
+  ok(Phases.activePhase(settings.phases).name === "Summer bulk", "new phase is active");
+  ok(Phases.goalsForDay("2026-08-05", settings).kcal === 2800, "days in old phase keep old revision");
+
+  const scored = Phases.scoreDayTotals(
+    { count: 1, kcal: { mean: 2200 }, p: { mean: 100 }, c: { mean: 250 }, f: { mean: 70 }, fb: { mean: 28 }, na: { mean: 2000 } },
+    { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 }
+  );
+  ok(scored.kcal.status === "hit", "kcal within ±10% is hit");
+  ok(scored.protein.status === "under", "protein below floor is under");
+
+  const merged = Phases.mergePhases(
+    [{ id: "ph1", updatedAt: 100, startDay: "2026-01-01", endDay: null, revisions: [{ id: "r1", effectiveFrom: "2026-01-01", goals: { kcal: 2000 } }] }],
+    [{ id: "ph1", updatedAt: 200, startDay: "2026-01-01", endDay: null, revisions: [{ id: "r1", effectiveFrom: "2026-01-01", goals: { kcal: 2000 } }, { id: "r2", effectiveFrom: "2026-03-01", goals: { kcal: 2500 } }] }]
+  );
+  ok(merged[0].revisions.length === 2, "mergePhases unions revisions by id");
+
+  const fp1 = require("../js/sync.js").fingerprint({
+    resetAt: 0, events: [], personalFoods: [], dayGoals: {}, phases: settings.phases, weights: {}, goals: settings.goals,
+  });
+  settings.phases[1].updatedAt = Date.now() + 1;
+  const fp2 = require("../js/sync.js").fingerprint({
+    resetAt: 0, events: [], personalFoods: [], dayGoals: {}, phases: settings.phases, weights: {}, goals: settings.goals,
+  });
+  ok(fp1 !== fp2, "fingerprint changes when a phase updates");
+}
+
+console.log("\n[8] Cloud sync merge (conflict-free by construction)");
+{
+  globalThis.Phases = require("../js/phases.js");
   const Sync = require("../js/sync.js");
 
   // two devices logged different meals offline → union, ordered by time
@@ -207,9 +266,30 @@ console.log("\n[7] Cloud sync merge (conflict-free by construction)");
   const stillOnDrive = { "2026-08-01": { kcal: 2800, updatedAt: 100 } };
   const dgCleared = Sync.mergeDayGoals(clearedLocal, stillOnDrive);
   ok(dgCleared["2026-08-01"].cleared === true, "dayGoals: clear tombstone beats older override");
+
+  // phases + weights survive doc merge
+  const localPh = {
+    version: 2, events: [], personalFoods: [], dayGoals: {},
+    phases: [{ id: "phA", updatedAt: 100, startDay: "2026-01-01", endDay: null, revisions: [{ id: "rA", effectiveFrom: "2026-01-01", goals: { kcal: 2000 } }] }],
+    weights: { "2026-08-01": { kg: 80, updatedAt: 100 } },
+    goals: { kcal: 2000 }, goalsUpdatedAt: 100,
+  };
+  const remotePh = {
+    version: 2, events: [], personalFoods: [], dayGoals: {},
+    phases: [{ id: "phA", updatedAt: 200, startDay: "2026-01-01", endDay: null, revisions: [
+      { id: "rA", effectiveFrom: "2026-01-01", goals: { kcal: 2000 } },
+      { id: "rB", effectiveFrom: "2026-06-01", goals: { kcal: 2400 } },
+    ] }],
+    weights: { "2026-08-01": { kg: 79.5, updatedAt: 200 } },
+    goals: { kcal: 2400 }, goalsUpdatedAt: 200,
+  };
+  const mergedPh = Sync.mergeDocs(localPh, remotePh);
+  ok(mergedPh.doc.phases[0].revisions.length === 2, "doc merge unions phase revisions");
+  ok(mergedPh.doc.weights["2026-08-01"].kg === 79.5, "doc merge: newer weight wins");
+  ok(mergedPh.doc.version === 2, "doc version is 2");
 }
 
-console.log("\n[8] Recipe sharing (untrusted input validation)");
+console.log("\n[9] Recipe sharing (untrusted input validation)");
 {
   const Share = require("../js/share.js");
   const dal = {

@@ -276,6 +276,34 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .row input { flex: 1; }
 .goals-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .goals-grid span { display: block; margin-bottom: 3px; }
+.phase-card { margin-top: 4px; }
+.phase-meta-grid { margin-bottom: 10px; }
+.phase-context { margin: 0 0 8px; }
+.weight-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 2px 4px; margin-bottom: 4px;
+}
+.weight-row .weight-label { font-size: 0.85rem; color: var(--muted); flex-shrink: 0; }
+.weight-row input {
+  width: 5.5rem; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+}
+.score-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.score-list li {
+  display: grid; grid-template-columns: 5.5rem 1fr auto; gap: 6px;
+  align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--line);
+  font-size: 0.88rem;
+}
+.score-list li:last-child { border-bottom: 0; }
+.score-name { font-weight: 600; }
+.score-counts { color: var(--ink); }
+.callout { margin: 8px 0; padding: 10px 12px; border-radius: 10px; font-size: 0.9rem; line-height: 1.35; }
+.callout.need { background: rgba(208, 112, 60, 0.12); color: var(--ink); }
+.callout.over { background: rgba(61, 153, 112, 0.12); color: var(--ink); }
+.phase-card select, #sheet-new-phase select {
+  width: 100%; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+}
 
 .muted { color: var(--muted); }
 .small { font-size: 12px; }

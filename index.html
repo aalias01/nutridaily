@@ -83,6 +83,12 @@
 
   <main>
     <section id="view-today" class="view active">
+      <div class="weight-row" id="weight-row">
+        <label class="weight-label" for="day-weight">Weight</label>
+        <input id="day-weight" type="text" inputmode="decimal" placeholder="—" aria-label="Body weight">
+        <span class="muted small" id="weight-unit">kg</span>
+        <button type="button" class="linkbtn" id="btn-weight-save">Save</button>
+      </div>
       <div id="day-log" class="day-log"></div>
       <button id="fab-add" class="fab" type="button" aria-label="Add food">+</button>
     </section>
@@ -100,13 +106,17 @@
       <div class="view-head">
         <h2>Insights</h2>
         <div class="range-pills" id="insight-range">
+          <button type="button" data-days="phase">Phase</button>
           <button type="button" data-days="14" class="active">14 d</button>
           <button type="button" data-days="30">30 d</button>
           <button type="button" data-days="90">90 d</button>
         </div>
       </div>
+      <p id="phase-context" class="muted small phase-context"></p>
       <div class="canvas-wrap"><canvas id="trend-canvas"></canvas></div>
       <p id="trend-summary" class="muted"></p>
+      <div id="insight-callouts"></div>
+      <div id="insight-scorecard" class="card-block"></div>
       <div id="top-foods" class="card-block"></div>
       <div id="day-detail"></div>
     </section>
@@ -145,6 +155,36 @@
         <button id="kcal-cancel" class="btn ghost" type="button">Cancel</button>
       </div>
       <button id="kcal-remove" class="linkbtn danger" type="button" hidden>Remove this log entry</button>
+    </div>
+  </div>
+
+  <!-- Start new phase -->
+  <div id="sheet-new-phase" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-new-phase"></div>
+    <div class="sheet-card">
+      <div class="sheet-grab"></div>
+      <h3>Start new phase</h3>
+      <p class="muted small">Ends the current phase yesterday. Past Insights keep their old targets.</p>
+      <label>Name<input id="np-name" type="text" maxlength="48" placeholder="e.g. Summer bulk"></label>
+      <label>Kind
+        <select id="np-kind">
+          <option value="bulk">Bulk</option>
+          <option value="cut">Cut</option>
+          <option value="maintain">Maintain</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+      <label class="check-row"><input id="np-copy" type="checkbox" checked> Copy targets from current phase</label>
+      <div class="goals-grid" id="np-goals">
+        <div><span class="small muted">Calories</span><input id="np-kcal" type="number" min="800" step="50"></div>
+        <div><span class="small muted">Protein g</span><input id="np-protein" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Carbs g</span><input id="np-carbs" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Fat g</span><input id="np-fat" type="number" min="0" step="5"></div>
+      </div>
+      <div class="row end">
+        <button id="np-cancel" class="btn ghost" type="button">Cancel</button>
+        <button id="np-save" class="btn" type="button">Start phase</button>
+      </div>
     </div>
   </div>
 
@@ -315,14 +355,33 @@ END</pre>
         <button id="btn-clear-gclient" class="linkbtn" type="button">Clear override</button>
       </details>
 
-      <label>Daily goals</label>
-      <div class="goals-grid">
-        <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="800" step="50"></div>
-        <div><label class="small muted" for="set-protein">Protein g</label><input id="set-protein" type="number" min="0" step="5"></div>
-        <div><label class="small muted" for="set-carbs">Carbs g</label><input id="set-carbs" type="number" min="0" step="5"></div>
-        <div><label class="small muted" for="set-fat">Fat g</label><input id="set-fat" type="number" min="0" step="5"></div>
-        <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
-        <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
+      <label>Active phase</label>
+      <div class="card-block phase-card">
+        <p class="muted small" id="phase-save-hint">Saving changed targets starts a new version from today. Past days keep the old targets in Insights.</p>
+        <div class="goals-grid phase-meta-grid">
+          <div style="grid-column: span 2">
+            <label class="small muted" for="set-phase-name">Name</label>
+            <input id="set-phase-name" type="text" maxlength="48" placeholder="e.g. Spring cut">
+          </div>
+          <div>
+            <span class="small muted">Kind</span>
+            <select id="set-phase-kind" aria-label="Phase kind">
+              <option value="maintain">Maintain</option>
+              <option value="cut">Cut</option>
+              <option value="bulk">Bulk</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+        </div>
+        <div class="goals-grid">
+          <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="800" step="50"></div>
+          <div><label class="small muted" for="set-protein">Protein g</label><input id="set-protein" type="number" min="0" step="5"></div>
+          <div><label class="small muted" for="set-carbs">Carbs g</label><input id="set-carbs" type="number" min="0" step="5"></div>
+          <div><label class="small muted" for="set-fat">Fat g</label><input id="set-fat" type="number" min="0" step="5"></div>
+          <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
+          <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
+        </div>
+        <button id="btn-start-phase" class="btn ghost full" type="button">Start new phase…</button>
       </div>
 
       <label>Units</label>
@@ -363,6 +422,7 @@ END</pre>
 <script src="js/foods.js"></script>
 <script src="js/share.js"></script>
 <script src="js/ledger.js"></script>
+<script src="js/phases.js"></script>
 <script src="js/gdrive.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/ui.js"></script>

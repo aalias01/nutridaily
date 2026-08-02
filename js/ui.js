@@ -527,21 +527,63 @@ const UI = (() => {
     return streak;
   }
 
-  function renderTrends(goals, daysBack) {
+  /**
+   * @param {object} opts
+   * @param {number|string} opts.daysBack — number of days, or "phase"
+   * @param {object} opts.settings
+   * @param {string} opts.todayKey
+   * @param {(day:string)=>object} opts.goalsForDay
+   */
+  function renderTrends(opts) {
     const canvas = $("#trend-canvas");
     if (!canvas) return;
-    const end = new Date();
-    const keys = [];
-    for (let i = daysBack - 1; i >= 0; i--) {
-      const d = new Date(end);
-      d.setDate(d.getDate() - i);
-      keys.push(Ledger.todayKey(d));
+    const settings = (opts && opts.settings) || {};
+    const todayKey = (opts && opts.todayKey) || Ledger.todayKey();
+    const goalsForDay = (opts && opts.goalsForDay) || ((day) =>
+      (typeof Phases !== "undefined" ? Phases.goalsForDay(day, settings) : (settings.goals || {})));
+    const end = new Date(todayKey + "T12:00:00");
+    let keys = [];
+    const daysBack = opts && opts.daysBack;
+    if (daysBack === "phase" && typeof Phases !== "undefined") {
+      const phase = Phases.activePhase(settings.phases);
+      if (phase) {
+        const start = new Date(phase.startDay + "T12:00:00");
+        const cur = new Date(start);
+        while (cur <= end) {
+          keys.push(Ledger.todayKey(cur));
+          cur.setDate(cur.getDate() + 1);
+        }
+      }
     }
+    if (!keys.length) {
+      const n = Number(daysBack) || 14;
+      for (let i = n - 1; i >= 0; i--) {
+        const d = new Date(end);
+        d.setDate(d.getDate() - i);
+        keys.push(Ledger.todayKey(d));
+      }
+    }
+
+    const totalsMap = {};
+    keys.forEach((day) => { totalsMap[day] = Ledger.totalsFor(day); });
     const points = keys.map((day) => {
-      const t = Ledger.totalsFor(day);
-      return { day, kcal: t.count ? t.kcal.mean : null, p: t.count ? t.p.mean : null, count: t.count };
+      const t = totalsMap[day];
+      const g = goalsForDay(day);
+      return {
+        day,
+        kcal: t.count ? t.kcal.mean : null,
+        p: t.count ? t.p.mean : null,
+        count: t.count,
+        goalKcal: g.kcal,
+      };
     });
     const logged = points.filter((p) => p.count);
+
+    const ctxHeader = $("#phase-context");
+    if (ctxHeader && typeof Phases !== "undefined") {
+      ctxHeader.textContent = Phases.phaseContext(settings, todayKey);
+    }
+
     const w = canvas.clientWidth || 320;
     const h = 168;
     canvas.width = w * 2; canvas.height = h * 2;
@@ -549,44 +591,120 @@ const UI = (() => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(2, 2);
     ctx.clearRect(0, 0, w, h);
-    const maxK = Math.max(goals.kcal * 1.2, ...logged.map((p) => p.kcal), 1);
+    const maxK = Math.max(
+      ...points.map((p) => p.goalKcal || 0),
+      ...logged.map((p) => p.kcal),
+      1
+    ) * 1.15;
     const pad = { l: 8, r: 8, t: 12, b: 28 };
     const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
     const barW = Math.max(2, iw / keys.length - 2);
-    ctx.strokeStyle = "rgba(61,153,112,0.45)";
+
+    // Step goal line (per-day targets)
+    ctx.strokeStyle = "rgba(61,153,112,0.55)";
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    const gy = pad.t + ih * (1 - goals.kcal / maxK);
-    ctx.moveTo(pad.l, gy); ctx.lineTo(pad.l + iw, gy); ctx.stroke();
+    points.forEach((p, i) => {
+      const x0 = pad.l + i * (iw / keys.length);
+      const x1 = pad.l + (i + 1) * (iw / keys.length);
+      const gy = pad.t + ih * (1 - (p.goalKcal || 0) / maxK);
+      if (i === 0) ctx.moveTo(x0, gy);
+      else ctx.lineTo(x0, gy);
+      ctx.lineTo(x1, gy);
+    });
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    // Phase start markers
+    if (typeof Phases !== "undefined" && Array.isArray(settings.phases)) {
+      ctx.strokeStyle = "rgba(80,100,90,0.35)";
+      ctx.setLineDash([3, 3]);
+      for (const ph of settings.phases) {
+        const idx = keys.indexOf(ph.startDay);
+        if (idx < 0) continue;
+        const x = pad.l + idx * (iw / keys.length);
+        ctx.beginPath();
+        ctx.moveTo(x, pad.t);
+        ctx.lineTo(x, pad.t + ih);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
     points.forEach((p, i) => {
       if (p.kcal == null) return;
       const x = pad.l + (i + 0.15) * (iw / keys.length);
       const bh = (p.kcal / maxK) * ih;
-      ctx.fillStyle = p.kcal > goals.kcal * 1.05 ? "#d0703c" : "#3d9970";
+      const over = p.goalKcal && p.kcal > p.goalKcal * 1.10;
+      const under = p.goalKcal && p.kcal < p.goalKcal * 0.90;
+      ctx.fillStyle = over ? "#d0703c" : under ? "#6a8f7a" : "#3d9970";
       ctx.fillRect(x, pad.t + ih - bh, barW, bh);
     });
-    // sparse day labels
+
     ctx.fillStyle = "rgba(100,100,100,0.85)";
     ctx.font = "10px system-ui,sans-serif";
     const step = keys.length > 40 ? 7 : keys.length > 20 ? 4 : Math.max(1, Math.floor(keys.length / 6));
     keys.forEach((day, i) => {
       if (i % step !== 0 && i !== keys.length - 1) return;
       const x = pad.l + (i + 0.5) * (iw / keys.length);
-      const label = day.slice(5); // MM-DD
-      ctx.fillText(label, x - 12, h - 8);
+      ctx.fillText(day.slice(5), x - 12, h - 8);
     });
     _trendHit = { keys, pad, iw, w };
 
     const avgK = logged.length ? logged.reduce((s, p) => s + p.kcal, 0) / logged.length : 0;
     const avgP = logged.length ? logged.reduce((s, p) => s + p.p, 0) / logged.length : 0;
     const weekKeys = keys.slice(-7);
-    const weekLogged = weekKeys.map((d) => Ledger.totalsFor(d)).filter((t) => t.count);
+    const weekLogged = weekKeys.map((d) => totalsMap[d]).filter((t) => t && t.count);
     const weekAvg = weekLogged.length
       ? Math.round(weekLogged.reduce((s, t) => s + t.kcal.mean, 0) / weekLogged.length)
       : 0;
     const streak = streakEndingToday();
+    const rangeLabel = daysBack === "phase" ? "this phase" : `${keys.length} days`;
     $("#trend-summary").textContent = logged.length
-      ? `${logged.length} of ${daysBack} days · avg ${fmt(avgK)} kcal · ${fmt(avgP)} g protein · 7d avg ${fmt(weekAvg)} · streak ${streak}d`
+      ? `${logged.length} of ${keys.length} days logged (${rangeLabel}) · avg ${fmt(avgK)} kcal · ${fmt(avgP)} g protein · 7d avg ${fmt(weekAvg)} · streak ${streak}d`
       : "No logged days in this range yet.";
+
+    // Scorecard + callouts
+    const scoreRoot = $("#insight-scorecard");
+    const callRoot = $("#insight-callouts");
+    if (scoreRoot && typeof Phases !== "undefined") {
+      const excludeToday = !totalsMap[todayKey] || !totalsMap[todayKey].count ? todayKey : null;
+      const scorecard = Phases.scoreRange(
+        keys,
+        (day) => totalsMap[day],
+        settings,
+        { excludeDay: excludeToday }
+      );
+      const unit = (k) => (k === "kcal" ? "" : k === "sodium" ? " mg" : " g");
+      scoreRoot.innerHTML = scorecard.logged
+        ? `<b>Target scorecard</b><ul class="score-list">${scorecard.nutrients.map((n) => {
+            const avg = n.n ? `${n.avgDelta >= 0 ? "+" : ""}${fmt(n.avgDelta)}${unit(n.key)}` : "—";
+            return `<li><span class="score-name">${esc(n.label)}</span>
+              <span class="score-counts">${n.hit} hit · ${n.under} under · ${n.over} over</span>
+              <span class="muted small">avg ${avg}</span></li>`;
+          }).join("")}</ul>`
+        : `<span class="muted">Target hit rates appear after a few logged days.</span>`;
+
+      const calls = Phases.callouts(scorecard);
+      const bal = Phases.kcalBalance(keys, (day) => totalsMap[day], settings);
+      const phase = Phases.activePhase(settings.phases);
+      const wDelta = phase
+        ? Phases.weightDelta(settings, keys[0], keys[keys.length - 1])
+        : null;
+      const bits = [];
+      if (calls.need) bits.push(`<p class="callout need">${esc(calls.need)}</p>`);
+      if (calls.over) bits.push(`<p class="callout over">${esc(calls.over)}</p>`);
+      if (bal) {
+        const sign = bal.sum >= 0 ? "+" : "";
+        bits.push(`<p class="muted small">Cumulative vs calorie target: ${sign}${fmt(bal.sum)} kcal across ${bal.n} days (≈ ${sign}${(bal.sum / 7700).toFixed(2)} kg).</p>`);
+      }
+      if (wDelta) {
+        const sign = wDelta.delta >= 0 ? "+" : "";
+        bits.push(`<p class="muted small">Weight: ${wDelta.first.toFixed(1)} → ${wDelta.last.toFixed(1)} kg (${sign}${wDelta.delta.toFixed(1)} kg, ${wDelta.n} weigh-ins).</p>`);
+      }
+      if (callRoot) callRoot.innerHTML = bits.join("") || "";
+    }
+
     renderDayDetail(null);
 
     const contrib = new Map();
