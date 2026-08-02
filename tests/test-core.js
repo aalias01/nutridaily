@@ -276,6 +276,16 @@ console.log("\n[7] Phases / goalsForDay");
   ok(Phases.classify(1800, 2200, Phases.BANDS.kcal) === "under", "range: kcal below band is under");
   ok(Phases.classify(2500, 2200, Phases.BANDS.kcal) === "over", "range: kcal above band is over");
 
+  // HUD bar warn: past printed goal for ceiling/range; floors never warn high
+  ok(Phases.hudBarOver(2035, 2000, Phases.BANDS.sodium) === true, "HUD: sodium past ceiling warns");
+  ok(Phases.hudBarOver(2000, 2000, Phases.BANDS.sodium) === false, "HUD: sodium at ceiling not over");
+  ok(Phases.hudBarOver(2050, 2000, Phases.BANDS.sodium) === true, "HUD: sodium in scoring band still warns");
+  ok(Phases.hudBarOver(2500, 2200, Phases.BANDS.kcal) === true, "HUD: kcal past goal warns");
+  ok(Phases.hudBarOver(2300, 2200, Phases.BANDS.kcal) === true, "HUD: kcal slightly over goal warns");
+  ok(Phases.hudBarOver(2200, 2200, Phases.BANDS.kcal) === false, "HUD: kcal at goal not over");
+  ok(Phases.hudBarOver(160, 140, Phases.BANDS.protein) === false, "HUD: protein over floor does not warn");
+  ok(Phases.hudBarOver(40, 30, Phases.BANDS.fiber) === false, "HUD: fiber over floor does not warn");
+
   const merged = Phases.mergePhases(
     [{ id: "ph1", updatedAt: 100, startDay: "2026-01-01", endDay: null, revisions: [{ id: "r1", effectiveFrom: "2026-01-01", goals: { kcal: 2000 } }] }],
     [{ id: "ph1", updatedAt: 200, startDay: "2026-01-01", endDay: null, revisions: [{ id: "r1", effectiveFrom: "2026-01-01", goals: { kcal: 2000 } }, { id: "r2", effectiveFrom: "2026-03-01", goals: { kcal: 2500 } }] }]

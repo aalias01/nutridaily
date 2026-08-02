@@ -554,6 +554,13 @@ const Phases = (() => {
     return "hit";
   }
 
+  /** Today HUD: warn when past the printed goal for ceiling/range; floors never warn high. */
+  function hudBarOver(mean, goal, band) {
+    if (!band || band.dir === "floor") return false;
+    const g = Number(goal) || 0;
+    return g > 0 && Number.isFinite(mean) && mean > g;
+  }
+
   function scoreDayTotals(totals, goals) {
     if (!totals || !totals.count) return null;
     const out = {};
@@ -868,6 +875,7 @@ const Phases = (() => {
     mergeProfiles,
     dayBefore,
     classify,
+    hudBarOver,
     scoreDayTotals,
     scoreRange,
     callouts,

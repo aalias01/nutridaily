@@ -118,10 +118,10 @@ const UI = (() => {
       const g = Number(goal) || 0;
       const pct = g ? Math.min(100, (mean / g) * 100) : 0;
       fill.style.width = pct + "%";
-      // Warn only on "over" (ceiling/range). Floor nutrients (protein, fiber) never warn when high.
-      // Do not warn on "under" — Today is in-progress, so under is normal mid-day.
-      const band = Phases.BANDS[key];
-      fill.classList.toggle("over", !!band && Phases.classify(mean, g, band) === "over");
+      // HUD warns past the printed goal for ceiling/range. Scoring bands stay in Phases.classify.
+      const isOver = Phases.hudBarOver(mean, g, Phases.BANDS[key]);
+      fill.classList.toggle("over", isOver);
+      val.classList.toggle("over", isOver);
       const right = goalLabel(goal, key, unit);
       if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${right}` : `${fmt(mean)}`;
       else val.textContent = g ? `${fmt(mean)} / ${right}` : unit ? `${fmt(mean)} ${unit}` : `${fmt(mean)}`;

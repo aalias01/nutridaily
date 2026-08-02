@@ -92,6 +92,7 @@ header { display: flex; justify-content: space-between; align-items: flex-start;
 .macros { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; align-content: center; min-width: 180px; }
 .m-top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
 .m-val { color: var(--muted); }
+.m-val.over { color: var(--warn); }
 .bar { height: 7px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .bar.big { height: 9px; }
 .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; }
