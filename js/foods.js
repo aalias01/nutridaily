@@ -227,6 +227,9 @@ const Foods = (() => {
       }
       return { kind: "edit", label: "Yours · edited", detail: "Started from the reference catalog; numbers are yours now." };
     }
+    if (food.source === "shared") {
+      return { kind: "shared", label: "Yours · shared", detail: "Imported from a NutriDaily share link or code." };
+    }
     if (hasRaw) {
       return { kind: "ai", label: "Yours · AI estimate", detail: "From an AI paste (ChatGPT, Claude, etc.); review before trusting." };
     }

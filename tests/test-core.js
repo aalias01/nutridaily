@@ -354,7 +354,17 @@ console.log("\n[9] Recipe sharing (untrusted input validation)");
   ok(r.food.per100.kcal === 132 && r.food.per100.p === 7.1, "macros round-trip exactly");
   ok(r.food.units.serving === 240, "serving size round-trips");
   ok(r.food.recipe.servings === 6 && r.food.recipe.ingredients.length === 3, "ingredient list round-trips");
+  ok(r.food.recipe.ingredients[0].text === "red lentils (400 g)", "ingredients unpack as { text }");
   ok(r.food.source === "shared", "provenance is marked");
+
+  const withObjIngs = Share.pack({
+    name: "obj dal",
+    per100: { kcal: 132, p: 7.1, c: 18, f: 3.2, fb: 4, na: 200 },
+    units: { serving: 240 },
+    recipe: { servings: 2, ingredients: [{ text: "lentils (100 g)" }, { text: "onion" }] },
+  });
+  const rObj = Share.unpack(withObjIngs);
+  ok(rObj.ok && rObj.food.recipe.ingredients[0].text === "lentils (100 g)", "pack accepts { text } ingredients");
 
   ok(Share.unpack("NCR1.deadbeef").ok === false, "corrupted payload is rejected");
   ok(Share.unpack("hello there").ok === false, "non-code text is rejected");

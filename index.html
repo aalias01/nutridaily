@@ -100,6 +100,7 @@
         <button id="btn-add-food" class="btn" type="button">+ Add</button>
       </div>
       <input id="foods-search" type="search" placeholder="Search your foods" aria-label="Search foods">
+      <button id="btn-import-shared" class="btn ghost full" type="button" style="margin: 8px 0 10px">Import shared food</button>
       <div id="foods-list"></div>
     </section>
 
@@ -300,6 +301,7 @@
       <div id="pick-list" class="sheet-list"></div>
       <button id="btn-quick-kcal" class="btn ghost full" type="button">+ Quick kcal only</button>
       <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (AI paste)</button>
+      <button id="btn-import-shared-add" class="btn ghost full" type="button">Import shared food</button>
     </div>
   </div>
 
@@ -542,6 +544,23 @@ END</pre>
     <div class="sheet-card tall">
       <div class="sheet-grab"></div>
       <div id="detail-body"></div>
+    </div>
+  </div>
+
+  <!-- Import shared food -->
+  <div id="sheet-import-shared" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-import-shared"></div>
+    <div class="sheet-card">
+      <div class="sheet-grab"></div>
+      <h3>Import shared food</h3>
+      <p class="muted small">Paste a NutriDaily food link or NCR1 code someone sent you. Nothing is uploaded; the code is decoded on this device.</p>
+      <textarea id="shared-import-text" rows="4" placeholder="Paste link or NCR1.… code"></textarea>
+      <div id="shared-import-preview" class="card-block" hidden></div>
+      <div class="row end" style="margin-top:10px">
+        <button id="btn-shared-cancel" class="btn ghost" type="button">Cancel</button>
+        <button id="btn-shared-parse" class="btn ghost" type="button">Preview</button>
+        <button id="btn-shared-save" class="btn" type="button" disabled>Add to My Foods</button>
+      </div>
     </div>
   </div>
 

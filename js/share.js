@@ -32,9 +32,13 @@ const Share = (() => {
       g: Math.round((food.units && (food.units.serving || food.units.piece)) || 100),
     };
     if (food.recipe) {
+      const ings = (food.recipe.ingredients || []).slice(0, 30).map((x) => {
+        if (typeof x === "string") return x.slice(0, 60);
+        return String((x && (x.text || x.name)) || "").slice(0, 60);
+      }).filter(Boolean);
       payload.r = {
         s: Math.max(1, Math.round(food.recipe.servings || 1)),
-        i: (food.recipe.ingredients || []).slice(0, 30).map((x) => String(x).slice(0, 60)),
+        i: ings,
       };
     }
     return PREFIX + b64urlEncode(JSON.stringify(payload));
@@ -46,7 +50,7 @@ const Share = (() => {
     if (!m) return { ok: false, err: "That doesn't look like a NutriDaily recipe code." };
     let p;
     try { p = JSON.parse(b64urlDecode(m[1])); }
-    catch (e) { return { ok: false, err: "Recipe code is corrupted — ask them to share it again." }; }
+    catch (e) { return { ok: false, err: "Recipe code is corrupted. Ask them to share it again." }; }
     if (!p || p.v !== 1 || typeof p.n !== "string" || !p.n.trim() || !p.per100) return { ok: false, err: "Unrecognized recipe format." };
 
     const per100 = {};
@@ -59,11 +63,11 @@ const Share = (() => {
     if (per100.p + per100.c + per100.f > 105) return { ok: false, err: "Recipe rejected: macros exceed 100 g per 100 g of food." };
 
     const g = Math.min(2000, Math.max(10, Math.round(+p.g || 100)));
-    const name = p.n.trim().slice(0, 80).toLowerCase();
+    const name = p.n.trim().slice(0, 80);
     const food = {
       id: null, // assigned on accept
       name,
-      aliases: [name],
+      aliases: [name.toLowerCase()],
       per100,
       units: { serving: g, piece: g, bowl: g },
       cat: "dish",
@@ -71,7 +75,13 @@ const Share = (() => {
     };
     if (p.r && Array.isArray(p.r.i)) {
       const servings = Math.min(100, Math.max(1, Math.round(+p.r.s || 1)));
-      food.recipe = { servings, ingredients: p.r.i.slice(0, 30).map((x) => String(x).slice(0, 60)), totalGrams: g * servings };
+      food.recipe = {
+        servings,
+        ingredients: p.r.i.slice(0, 30).map((x) => ({ text: String(x).slice(0, 60) })),
+        totalGrams: g * servings,
+        prep: "",
+        notes: "Imported from a shared NutriDaily food",
+      };
     }
     return { ok: true, food };
   }

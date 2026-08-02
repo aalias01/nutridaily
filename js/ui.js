@@ -507,7 +507,10 @@ const UI = (() => {
   function renderFoodDetail(food) {
     const serv = food.units && food.units.serving;
     const mServ = serv ? FoodMatch.computeMacros(food.per100, serv) : null;
-    const ings = ((food.recipe && food.recipe.ingredients) || []).map((i) => `<li>${esc(i.text)}</li>`).join("");
+    const ings = ((food.recipe && food.recipe.ingredients) || []).map((i) => {
+      const t = typeof i === "string" ? i : (i && i.text) || "";
+      return t ? `<li>${esc(t)}</li>` : "";
+    }).join("");
     const prov = Foods.provenance(food);
     const batch = food.batch && food.batch.grams
       ? `<div class="card-block"><b>Batch</b>: ${fmt(food.batch.grams)} g · ${food.batch.servings || 1} servings
@@ -526,6 +529,7 @@ const UI = (() => {
       ${ings ? `<div class="card-block"><b>Ingredients</b><ul class="ing-list">${ings}</ul>${food.recipe.prep ? `<p class="small">${esc(food.recipe.prep)}</p>` : ""}</div>` : ""}
       <div class="col-actions">
         <button type="button" class="btn full" data-action="log-this" data-id="${esc(food.id)}">Log this</button>
+        <button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>
         <button type="button" class="btn ghost full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>
         <button type="button" class="btn ghost full" data-action="update-food" data-id="${esc(food.id)}">Update from AI paste</button>
         <button type="button" class="btn ghost full" data-action="copy-update-prompt" data-id="${esc(food.id)}">Copy update prompt</button>

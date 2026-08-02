@@ -1109,6 +1109,110 @@ const App = (() => {
     box._parsed = parsed;
   }
 
+  let pendingSharedFood = null;
+
+  function openImportSharedSheet(prefill) {
+    pendingSharedFood = null;
+    const ta = UI.$("#shared-import-text");
+    const prev = UI.$("#shared-import-preview");
+    const save = UI.$("#btn-shared-save");
+    if (ta) ta.value = prefill || "";
+    if (prev) { prev.hidden = true; prev.innerHTML = ""; }
+    if (save) save.disabled = true;
+    UI.closeSheet("sheet-add");
+    UI.openSheet("sheet-import-shared");
+    if (prefill) previewSharedImport();
+  }
+
+  function previewSharedImport() {
+    const raw = (UI.$("#shared-import-text") && UI.$("#shared-import-text").value) || "";
+    const parsed = Share.unpack(raw);
+    const prev = UI.$("#shared-import-preview");
+    const save = UI.$("#btn-shared-save");
+    if (!prev || !save) return;
+    if (!parsed.ok) {
+      pendingSharedFood = null;
+      prev.hidden = false;
+      prev.innerHTML = `<p class="muted small">${UI.esc(parsed.err || "Could not read that code.")}</p>`;
+      save.disabled = true;
+      return;
+    }
+    pendingSharedFood = parsed.food;
+    const p = parsed.food.per100;
+    const serv = parsed.food.units && parsed.food.units.serving;
+    prev.hidden = false;
+    prev.innerHTML = `<b>${UI.esc(parsed.food.name)}</b>
+      <p class="muted small">Per 100 g: ${Math.round(p.kcal)} kcal · P ${p.p} · C ${p.c} · F ${p.f}</p>
+      ${serv ? `<p class="muted small">Serving: ${serv} g</p>` : ""}
+      <p class="muted small">Review numbers before adding. You can edit anytime after import.</p>`;
+    save.disabled = false;
+  }
+
+  function saveSharedImport() {
+    if (!pendingSharedFood) {
+      UI.toast("Preview a valid code first");
+      return;
+    }
+    const name = pendingSharedFood.name;
+    const dup = activeFoods().find((f) => f.name.toLowerCase() === name.toLowerCase());
+    if (dup && !confirm(`You already have “${dup.name}”. Add another copy anyway?`)) return;
+    const food = Foods.createFromDraft({
+      name: pendingSharedFood.name,
+      aliases: pendingSharedFood.aliases || [],
+      cat: pendingSharedFood.cat || "dish",
+      per100: pendingSharedFood.per100,
+      units: pendingSharedFood.units || {},
+      recipe: pendingSharedFood.recipe || { ingredients: [], prep: "", notes: "" },
+      confidence: "medium",
+      sd: 0.15,
+      raw: "",
+    });
+    food.source = "shared";
+    state.personalFoods.push(food);
+    savePersonal();
+    Sync.schedulePush();
+    pendingSharedFood = null;
+    UI.closeSheet("sheet-import-shared");
+    switchView("foods");
+    refreshFoods();
+    openDetail(food.id);
+    UI.toast("Food added to My Foods");
+  }
+
+  async function shareFoodById(id) {
+    const food = findFood(id);
+    if (!food) return;
+    const payload = Share.shareText(food);
+    const isUrl = /^https?:\/\//i.test(payload);
+    try {
+      if (navigator.share) {
+        if (isUrl) await navigator.share({ title: food.name, text: `NutriDaily food: ${food.name}`, url: payload });
+        else await navigator.share({ title: food.name, text: `NutriDaily food: ${food.name}\n${payload}` });
+        UI.toast("Share sheet opened");
+        return;
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+    }
+    try {
+      await navigator.clipboard.writeText(payload);
+      UI.toast("Share link copied");
+    } catch (_) {
+      window.prompt("Copy this food link / code:", payload);
+    }
+  }
+
+  function consumeRecipeHash() {
+    const hash = String(location.hash || "");
+    const m = hash.match(/[#&?]recipe=(NCR1\.[A-Za-z0-9\-_]+)/i)
+      || hash.match(/(NCR1\.[A-Za-z0-9\-_]+)/);
+    if (!m) return;
+    try {
+      history.replaceState(null, "", location.pathname + location.search);
+    } catch (_) { /* ignore */ }
+    openImportSharedSheet(m[1]);
+  }
+
   function openSettings() {
     switchView("settings");
   }
@@ -1243,6 +1347,19 @@ const App = (() => {
       UI.closeSheet("sheet-add");
       openPaste();
     });
+    const openShared = () => openImportSharedSheet();
+    if (UI.$("#btn-import-shared")) UI.$("#btn-import-shared").addEventListener("click", openShared);
+    if (UI.$("#btn-import-shared-add")) UI.$("#btn-import-shared-add").addEventListener("click", openShared);
+    if (UI.$("#btn-shared-cancel")) {
+      UI.$("#btn-shared-cancel").addEventListener("click", () => UI.closeSheet("sheet-import-shared"));
+    }
+    if (UI.$("#btn-shared-parse")) UI.$("#btn-shared-parse").addEventListener("click", previewSharedImport);
+    if (UI.$("#btn-shared-save")) UI.$("#btn-shared-save").addEventListener("click", saveSharedImport);
+    if (UI.$("#shared-import-text")) {
+      UI.$("#shared-import-text").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) previewSharedImport();
+      });
+    }
     UI.$("#theme-seg").addEventListener("click", (e) => {
       const btn = e.target.closest("[data-theme-opt]");
       if (!btn) return;
@@ -1836,6 +1953,8 @@ const App = (() => {
         UI.closeSheet("sheet-detail");
         state.pendingCatalogFood = null;
         openQty(findFood(id));
+      } else if (action === "share-food") {
+        shareFoodById(id);
       } else if (action === "edit-food") {
         openEditFood(findFood(id));
       } else if (action === "update-food") {
@@ -2065,6 +2184,8 @@ const App = (() => {
     refreshAll();
     refreshInfoBanner();
     refreshSettingsTabNudge();
+    consumeRecipeHash();
+    window.addEventListener("hashchange", () => consumeRecipeHash());
     if (!localStorage.getItem(ONB_KEY) && !activeFoods().length && !Ledger.allEvents().length) {
       UI.showOnboarding(true);
     }
