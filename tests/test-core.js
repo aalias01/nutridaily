@@ -183,6 +183,15 @@ console.log("\n[7] Phases / goalsForDay");
   ok(Phases.activePhase(settings.phases).name === "Summer bulk", "new phase is active");
   ok(Phases.goalsForDay("2026-08-05", settings).kcal === 2800, "days in old phase keep old revision");
 
+  const ended = settings.phases[0];
+  const endedKeys = Phases.phaseDayKeys(ended, "2026-08-15");
+  ok(endedKeys[0] === ended.startDay, "phaseDayKeys starts at startDay");
+  ok(endedKeys[endedKeys.length - 1] === ended.endDay, "phaseDayKeys stops at endDay for completed phase");
+  ok(!endedKeys.includes("2026-08-10"), "completed phase keys exclude later active phase days");
+  const hist = Phases.phaseHistoryRows(settings, "2026-08-15", () => ({ count: 0 }));
+  ok(hist.length === 2, "phaseHistoryRows lists both phases");
+  ok(hist[0].active === true && hist[0].name === "Summer bulk", "history lists active phase first among newest");
+
   const scored = Phases.scoreDayTotals(
     { count: 1, kcal: { mean: 2200 }, p: { mean: 100 }, c: { mean: 250 }, f: { mean: 70 }, fb: { mean: 28 }, na: { mean: 2000 } },
     { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 }

@@ -550,6 +550,7 @@ const UI = (() => {
    * @param {object} opts
    * @param {number|string} opts.daysBack — number of days, or "phase"
    * @param {string} opts.nutrient — kcal|protein|carbs|fat|fiber|sodium
+   * @param {string|null} opts.phaseId — selected phase for "phase" range
    * @param {object} opts.settings
    * @param {string} opts.todayKey
    * @param {(day:string)=>object} opts.goalsForDay
@@ -560,21 +561,16 @@ const UI = (() => {
     const settings = (opts && opts.settings) || {};
     const todayKey = (opts && opts.todayKey) || Ledger.todayKey();
     const nutrient = (opts && opts.nutrient) || "kcal";
+    const phaseId = opts && opts.phaseId;
     const goalsForDay = (opts && opts.goalsForDay) || ((day) =>
       (typeof Phases !== "undefined" ? Phases.goalsForDay(day, settings) : (settings.goals || {})));
     const end = new Date(todayKey + "T12:00:00");
     let keys = [];
     const daysBack = opts && opts.daysBack;
+    let selectedPhase = null;
     if (daysBack === "phase" && typeof Phases !== "undefined") {
-      const phase = Phases.activePhase(settings.phases);
-      if (phase) {
-        const start = new Date(phase.startDay + "T12:00:00");
-        const cur = new Date(start);
-        while (cur <= end) {
-          keys.push(Ledger.todayKey(cur));
-          cur.setDate(cur.getDate() + 1);
-        }
-      }
+      selectedPhase = Phases.phaseById(settings.phases, phaseId) || Phases.activePhase(settings.phases);
+      if (selectedPhase) keys = Phases.phaseDayKeys(selectedPhase, todayKey);
     }
     if (!keys.length) {
       const n = Number(daysBack) || 14;
@@ -617,8 +613,45 @@ const UI = (() => {
     const logged = points.filter((p) => p.count);
 
     const ctxHeader = $("#phase-context");
+    const backBtn = $("#btn-phase-current");
     if (ctxHeader && typeof Phases !== "undefined") {
-      ctxHeader.textContent = Phases.phaseContext(settings, todayKey);
+      const ctxPhase = daysBack === "phase" ? selectedPhase : Phases.activePhase(settings.phases);
+      ctxHeader.textContent = Phases.phaseContext(settings, todayKey, ctxPhase);
+    }
+    if (backBtn) {
+      const viewingPast = daysBack === "phase" && selectedPhase && selectedPhase.endDay != null;
+      backBtn.hidden = !viewingPast;
+    }
+
+    // Phase history list (hidden until 2+ phases)
+    const histRoot = $("#phase-history");
+    const histList = $("#phase-history-list");
+    const histSum = $("#phase-history-summary");
+    if (histRoot && histList && typeof Phases !== "undefined") {
+      const rows = Phases.phaseHistoryRows(settings, todayKey, (day) => Ledger.totalsFor(day));
+      if (rows.length < 2) {
+        histRoot.hidden = true;
+      } else {
+        histRoot.hidden = false;
+        if (histSum) histSum.textContent = `Phase history (${rows.length})`;
+        const selId = daysBack === "phase" && selectedPhase
+          ? selectedPhase.id
+          : (Phases.activePhase(settings.phases) || {}).id;
+        histList.innerHTML = rows.map((r) => {
+          const logs = r.logged
+            ? `${r.logged}/${r.days} logged`
+            : (r.days ? "no logs" : "0 d");
+          const bits = [r.rangeLabel, `${r.days} d`, logs];
+          if (r.kcalLabel) bits.push(r.kcalLabel);
+          if (r.weightLabel) bits.push(r.weightLabel);
+          const activeCls = r.id === selId ? " active" : "";
+          const chip = r.active ? '<span class="phase-chip">Active</span>' : "";
+          return `<button type="button" class="phase-hist-row${activeCls}" data-phase-id="${esc(r.id)}">
+            <span class="phase-hist-title">${esc(r.name)} · ${esc(r.kindLabel)} ${chip}</span>
+            <span class="muted small">${esc(bits.join(" · "))}</span>
+          </button>`;
+        }).join("");
+      }
     }
 
     const nutPills = $("#insight-nutrient");
@@ -719,18 +752,24 @@ const UI = (() => {
     const weekAvg = weekLogged.length
       ? Math.round(weekLogged.reduce((s, t) => s + nutKey.total(t), 0) / weekLogged.length)
       : 0;
+    const viewingPastPhase = daysBack === "phase" && selectedPhase && selectedPhase.endDay != null;
     const streak = streakEndingToday();
-    const rangeLabel = daysBack === "phase" ? "this phase" : `${keys.length} days`;
+    const rangeLabel = daysBack === "phase" && selectedPhase
+      ? selectedPhase.name
+      : `${keys.length} days`;
     const unitSuffix = nutKey.unit === "kcal" ? " kcal" : ` ${nutKey.unit}`;
+    const streakBit = viewingPastPhase ? "" : ` · streak ${streak}d`;
     $("#trend-summary").textContent = logged.length
-      ? `${logged.length} of ${keys.length} days logged (${rangeLabel}) · avg ${fmt(avgSel)}${unitSuffix} ${nutKey.label} · P ${fmt(avg("p"))} · C ${fmt(avg("c"))} · F ${fmt(avg("f"))} · 7d ${fmt(weekAvg)}${unitSuffix} · streak ${streak}d`
+      ? `${logged.length} of ${keys.length} days logged (${rangeLabel}) · avg ${fmt(avgSel)}${unitSuffix} ${nutKey.label} · P ${fmt(avg("p"))} · C ${fmt(avg("c"))} · F ${fmt(avg("f"))} · 7d ${fmt(weekAvg)}${unitSuffix}${streakBit}`
       : "No logged days in this range yet.";
 
     // Scorecard + callouts
     const scoreRoot = $("#insight-scorecard");
     const callRoot = $("#insight-callouts");
     if (scoreRoot && typeof Phases !== "undefined") {
-      const excludeToday = !totalsMap[todayKey] || !totalsMap[todayKey].count ? todayKey : null;
+      const excludeToday = viewingPastPhase
+        ? null
+        : (!totalsMap[todayKey] || !totalsMap[todayKey].count ? todayKey : null);
       const scorecard = Phases.scoreRange(
         keys,
         (day) => totalsMap[day],
@@ -749,8 +788,7 @@ const UI = (() => {
 
       const calls = Phases.callouts(scorecard);
       const bal = Phases.kcalBalance(keys, (day) => totalsMap[day], settings);
-      const phase = Phases.activePhase(settings.phases);
-      const wDelta = phase
+      const wDelta = keys.length
         ? Phases.weightDelta(settings, keys[0], keys[keys.length - 1])
         : null;
       const bits = [];

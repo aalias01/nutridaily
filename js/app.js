@@ -30,6 +30,7 @@ const App = (() => {
     editFoodDirect: false, // opened review without AI paste step
     insightDays: 14, // number or "phase"
     insightNutrient: "kcal",
+    insightPhaseId: null, // null = active phase when daysBack is "phase"
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
     yesterdayKey: null,
   };
@@ -288,6 +289,7 @@ const App = (() => {
     UI.renderTrends({
       daysBack: state.insightDays,
       nutrient: state.insightNutrient || "kcal",
+      phaseId: state.insightPhaseId,
       settings: state.settings,
       todayKey: Ledger.todayKey(),
       goalsForDay: (day) => Phases.goalsForDay(day, state.settings),
@@ -1335,10 +1337,38 @@ const App = (() => {
     UI.$("#insight-range").addEventListener("click", (e) => {
       const btn = e.target.closest("[data-days]");
       if (!btn) return;
-      state.insightDays = btn.dataset.days === "phase" ? "phase" : Number(btn.dataset.days);
+      const next = btn.dataset.days === "phase" ? "phase" : Number(btn.dataset.days);
+      state.insightDays = next;
+      if (next !== "phase") state.insightPhaseId = null;
       UI.$("#insight-range").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
       refreshInsights();
     });
+    const histList = UI.$("#phase-history-list");
+    if (histList) {
+      histList.addEventListener("click", (e) => {
+        const row = e.target.closest("[data-phase-id]");
+        if (!row) return;
+        state.insightPhaseId = row.dataset.phaseId;
+        state.insightDays = "phase";
+        UI.$("#insight-range").querySelectorAll("button").forEach((b) =>
+          b.classList.toggle("active", b.dataset.days === "phase")
+        );
+        const details = UI.$("#phase-history");
+        if (details) details.open = false;
+        refreshInsights();
+      });
+    }
+    const backPhase = UI.$("#btn-phase-current");
+    if (backPhase) {
+      backPhase.addEventListener("click", () => {
+        state.insightPhaseId = null;
+        state.insightDays = "phase";
+        UI.$("#insight-range").querySelectorAll("button").forEach((b) =>
+          b.classList.toggle("active", b.dataset.days === "phase")
+        );
+        refreshInsights();
+      });
+    }
     const nutPills = UI.$("#insight-nutrient");
     if (nutPills) {
       nutPills.addEventListener("click", (e) => {
@@ -1541,6 +1571,7 @@ const App = (() => {
       state.lastCalendarToday = state.viewDay;
       state.insightDays = 14;
       state.insightNutrient = "kcal";
+      state.insightPhaseId = null;
       Phases.ensureMigrated(state.settings, null, state.viewDay);
       saveSettings();
       applyTheme();

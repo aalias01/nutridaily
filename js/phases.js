@@ -367,19 +367,104 @@ const Phases = (() => {
     return { need, over };
   }
 
-  function phaseContext(settings, todayKey) {
-    const phase = activePhase(settings.phases);
+  function dayKeyFromDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  function shortDate(dayKey) {
+    const d = new Date(dayKey + "T12:00:00");
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function phaseById(phases, id) {
+    if (!id) return null;
+    return (phases || []).find((p) => p && p.id === id && !p.archived) || null;
+  }
+
+  /** Inclusive day keys for a phase, capped at todayKey. */
+  function phaseDayKeys(phase, todayKey) {
+    if (!phase || !phase.startDay) return [];
+    const end = phase.endDay && phase.endDay < todayKey ? phase.endDay : todayKey;
+    if (end < phase.startDay) return [];
+    const keys = [];
+    const cur = new Date(phase.startDay + "T12:00:00");
+    const last = new Date(end + "T12:00:00");
+    while (cur <= last) {
+      keys.push(dayKeyFromDate(cur));
+      cur.setDate(cur.getDate() + 1);
+    }
+    return keys;
+  }
+
+  function phaseContext(settings, todayKey, phaseOpt) {
+    const phase = phaseOpt || activePhase(settings.phases);
     if (!phase) return "";
-    const rev = revisionForDay(phase, todayKey);
-    const goals = rev ? normalizeGoals(rev.goals) : normalizeGoals(settings.goals);
-    const start = new Date(phase.startDay + "T12:00:00");
-    const today = new Date(todayKey + "T12:00:00");
-    const dayNum = Math.max(1, Math.round((today - start) / 86400000) + 1);
     const kind = KIND_LABEL[phase.kind] || phase.kind;
-    const since = rev && rev.effectiveFrom !== phase.startDay
-      ? ` · targets since ${rev.effectiveFrom.slice(5)}`
-      : "";
-    return `${phase.name} · ${kind} · day ${dayNum} · ${Math.round(goals.kcal)} kcal${since}`;
+    const end = phase.endDay || todayKey;
+    const rev = revisionForDay(phase, end);
+    const goals = rev ? normalizeGoals(rev.goals) : normalizeGoals(settings.goals);
+    if (phase.endDay == null) {
+      const start = new Date(phase.startDay + "T12:00:00");
+      const today = new Date(todayKey + "T12:00:00");
+      const dayNum = Math.max(1, Math.round((today - start) / 86400000) + 1);
+      const since = rev && rev.effectiveFrom !== phase.startDay
+        ? ` · targets since ${rev.effectiveFrom.slice(5)}`
+        : "";
+      return `${phase.name} · ${kind} · day ${dayNum} · ${Math.round(goals.kcal)} kcal${since}`;
+    }
+    const days = phaseDayKeys(phase, todayKey).length;
+    return `${phase.name} · ${kind} · ${days} day${days === 1 ? "" : "s"} · ${shortDate(phase.startDay)} – ${shortDate(phase.endDay)} · ${Math.round(goals.kcal)} kcal`;
+  }
+
+  /** Compact rows for Insights phase history (newest first). */
+  function phaseHistoryRows(settings, todayKey, totalsForDay) {
+    const list = (settings.phases || []).filter((p) => p && !p.archived);
+    list.sort((a, b) => {
+      const ae = a.endDay || todayKey;
+      const be = b.endDay || todayKey;
+      return be.localeCompare(ae) || b.startDay.localeCompare(a.startDay);
+    });
+    return list.map((phase) => {
+      const keys = phaseDayKeys(phase, todayKey);
+      let logged = 0;
+      for (const day of keys) {
+        const t = totalsForDay ? totalsForDay(day) : null;
+        if (t && t.count) logged += 1;
+      }
+      const end = phase.endDay || todayKey;
+      const startRev = revisionForDay(phase, phase.startDay);
+      const endRev = revisionForDay(phase, end);
+      const k0 = startRev ? normalizeGoals(startRev.goals).kcal : null;
+      const k1 = endRev ? normalizeGoals(endRev.goals).kcal : null;
+      let kcalLabel = "";
+      if (k0 != null && k1 != null && k0 !== k1) kcalLabel = `${Math.round(k0)} → ${Math.round(k1)} kcal`;
+      else if (k0 != null) kcalLabel = `${Math.round(k0)} kcal`;
+      const w = keys.length ? weightDelta(settings, keys[0], keys[keys.length - 1]) : null;
+      let weightLabel = "";
+      if (w) {
+        const sign = w.delta >= 0 ? "+" : "";
+        weightLabel = `${sign}${w.delta.toFixed(1)} kg`;
+      }
+      return {
+        id: phase.id,
+        name: phase.name,
+        kind: phase.kind,
+        kindLabel: KIND_LABEL[phase.kind] || phase.kind,
+        active: phase.endDay == null,
+        startDay: phase.startDay,
+        endDay: phase.endDay,
+        days: keys.length,
+        logged,
+        kcalLabel,
+        weightLabel,
+        rangeLabel: phase.endDay
+          ? `${shortDate(phase.startDay)} – ${shortDate(phase.endDay)}`
+          : `${shortDate(phase.startDay)} – now`,
+      };
+    });
   }
 
   function mergePhases(a, b) {
@@ -490,6 +575,10 @@ const Phases = (() => {
     scoreRange,
     callouts,
     phaseContext,
+    phaseById,
+    phaseDayKeys,
+    phaseHistoryRows,
+    shortDate,
     mergePhases,
     mergeWeights,
     filterPhasesAfter,
