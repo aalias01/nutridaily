@@ -15,6 +15,10 @@
  *  - resetAt: Clear-all / full Import bumps this. The side with the newer reset
  *    is the base; the other side only contributes events/foods at or after that
  *    timestamp, so a wipe is not undone by the next Drive merge.
+ *
+ * Auth: background pushes never open a sign-in UI. Silent re-auth via
+ * GDrive.silentBoot (BFF refresh cookie, or GIS prompt:none fallback).
+ * Interactive connect redirects to /api/auth/start when needed.
  */
 const Sync = (() => {
   const ENABLED_KEY = "nd_sync_enabled";
@@ -22,14 +26,18 @@ const Sync = (() => {
   const RESET_KEY = "nd_reset_at";
   const PUSH_DELAY = 4000;
   const DOC_VERSION = 2;
+  const AUTH_DETAIL = "Tap to re-connect Google Drive";
 
   let deps = null;      // injected accessors
   let fileId = null;
   let timer = null;
   let running = false;
   let queued = false;
+  let dirtyPending = false;
   let lastSync = null;
   let lastStatus = { s: "off", detail: "" };
+  let visibilityWired = false;
+  let refreshPushInflight = false;
 
   const state = () => ({
     enabled: localStorage.getItem(ENABLED_KEY) === "1",
@@ -43,6 +51,12 @@ const Sync = (() => {
     lastStatus = { s, detail: detail || "" };
     if (deps && deps.onStatus) deps.onStatus(s, detail || "");
   };
+
+  function isAuthErr(err) {
+    const m = (err && err.message) || "";
+    return m === GDrive.NEEDS_AUTH ||
+      /sign-in|401|none|credential|needs-auth|insufficient|scope|Drive permission was not granted/i.test(m);
+  }
 
   // ---------- pure merge (unit-tested) ----------
   function mergeEvents(a, b) {
@@ -276,11 +290,13 @@ const Sync = (() => {
     if (running) { queued = true; return { ok: false, busy: true }; }
     running = true;
     setStatus("syncing");
+    const wantInteractive = !!interactive;
     try {
       if (!fileId) {
-        const r = await GDrive.ensureFile(localDoc());
+        const r = await GDrive.ensureFile(localDoc(), wantInteractive);
         fileId = r.fileId;
         if (r.created) {
+          dirtyPending = false;
           running = false;
           lastSync = Date.now();
           setStatus("ok");
@@ -290,12 +306,13 @@ const Sync = (() => {
       }
       let remote;
       try {
-        remote = await GDrive.readFile(fileId);
+        remote = await GDrive.readFile(fileId, wantInteractive);
       } catch (err) {
         if (/404|not found|trash/i.test(String(err.message || err))) {
           fileId = null;
-          const r = await GDrive.ensureFile(localDoc());
+          const r = await GDrive.ensureFile(localDoc(), wantInteractive);
           fileId = r.fileId;
+          dirtyPending = false;
           running = false;
           lastSync = Date.now();
           setStatus("ok");
@@ -307,6 +324,7 @@ const Sync = (() => {
       // Newer schema from another device: apply but avoid writing a stripped doc
       if ((remote.version || 1) > DOC_VERSION) {
         applyDoc(remote);
+        dirtyPending = false;
         running = false;
         lastSync = Date.now();
         setStatus("warn", "Update this app to keep syncing phases");
@@ -314,7 +332,8 @@ const Sync = (() => {
       }
       const { doc, differsFromLocal, differsFromRemote } = mergeDocs(localDoc(), remote);
       if (differsFromLocal) applyDoc(doc);
-      if (differsFromRemote) await GDrive.writeFile(fileId, doc);
+      if (differsFromRemote) await GDrive.writeFile(fileId, doc, wantInteractive);
+      dirtyPending = false;
       running = false;
       lastSync = Date.now();
       setStatus("ok");
@@ -322,8 +341,8 @@ const Sync = (() => {
       return { ok: true };
     } catch (err) {
       running = false;
-      const authy = /sign-in|401|none|credential/i.test(err.message || "");
-      setStatus(authy ? "auth" : "error", err.message);
+      const authy = isAuthErr(err);
+      setStatus(authy ? "auth" : "error", authy ? AUTH_DETAIL : err.message);
       if (interactive) throw err;
       return { ok: false, error: err };
     }
@@ -332,21 +351,66 @@ const Sync = (() => {
   /** Debounced push after local mutations. */
   function schedulePush() {
     if (!state().enabled) return;
+    if (!GDrive.cachedToken()) {
+      dirtyPending = true;
+      clearTimeout(timer);
+      timer = null;
+      if (refreshPushInflight) return;
+      refreshPushInflight = true;
+      setStatus("pending");
+      GDrive.silentBoot()
+        .then(() => {
+          refreshPushInflight = false;
+          if (!state().enabled) return;
+          if (GDrive.cachedToken()) {
+            clearTimeout(timer);
+            timer = setTimeout(() => fullSync(false), PUSH_DELAY);
+            setStatus("pending");
+          } else {
+            setStatus("auth", AUTH_DETAIL);
+          }
+        })
+        .catch(() => {
+          refreshPushInflight = false;
+          if (state().enabled) setStatus("auth", AUTH_DETAIL);
+        });
+      return;
+    }
     clearTimeout(timer);
     timer = setTimeout(() => fullSync(false), PUSH_DELAY);
     setStatus("pending");
   }
 
-  /** Interactive connect (call from a click). */
-  async function connect() {
-    await GDrive.getToken(true);
+  /** Complete connect after cookie/token is available (post-redirect or silent refresh). */
+  async function finishConnect() {
+    await GDrive.refreshSession();
     const email = await GDrive.userEmail();
     localStorage.setItem(ENABLED_KEY, "1");
     localStorage.setItem(EMAIL_KEY, email);
+    dirtyPending = false;
     const r = await fullSync(true);
     if (r && r.busy) return email;
     if (!r || !r.ok) throw new Error((r && r.error && r.error.message) || "Sync failed");
     return email;
+  }
+
+  /**
+   * User-gesture connect. Tries silent refresh first; if that fails, redirects to Google
+   * (BFF) or opens GIS popup (fallback). Returns email, or null when a redirect started.
+   */
+  async function connect() {
+    try {
+      await GDrive.refreshSession();
+    } catch (e) {
+      try {
+        await GDrive.getToken(true);
+      } catch (e2) {
+        throw e2;
+      }
+      /* getToken may navigate away (BFF); if we still have a token, finish. */
+      if (!GDrive.cachedToken()) return null;
+    }
+    return finishConnect();
   }
 
   function disconnect() {
@@ -354,19 +418,46 @@ const Sync = (() => {
     localStorage.removeItem(EMAIL_KEY);
     GDrive.signOut();
     fileId = null;
+    dirtyPending = false;
     setStatus("off");
   }
 
-  /** On app start: silent resume if previously connected. */
+  /** On app start / foreground: silent resume if previously connected. */
   async function resume() {
     if (!state().enabled) { setStatus("off"); return; }
-    if (!GDrive.canUse()) { setStatus("error", GDrive.unavailableReason()); return; }
+    if (!GDrive.onHttp()) { setStatus("error", GDrive.unavailableReason()); return; }
     try {
-      await GDrive.getToken(false);
+      await GDrive.silentBoot();
+      await fullSync(false);
+      if (dirtyPending && GDrive.cachedToken()) await fullSync(false);
+    } catch (e) {
+      setStatus("auth", AUTH_DETAIL);
+    }
+  }
+
+  async function onForeground() {
+    if (!state().enabled || !GDrive.onHttp()) return;
+    if (GDrive.cachedToken()) {
+      if (dirtyPending) schedulePush();
+      return;
+    }
+    try {
+      await GDrive.silentBoot();
       await fullSync(false);
     } catch (e) {
-      setStatus("auth", "Tap to re-connect Google Drive");
+      setStatus("auth", AUTH_DETAIL);
     }
+  }
+
+  function wireVisibility() {
+    if (visibilityWired || typeof document === "undefined") return;
+    visibilityWired = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") onForeground();
+    });
+    window.addEventListener("pageshow", (ev) => {
+      if (ev.persisted) onForeground();
+    });
   }
 
   /** Mark a local wipe/replace so the next merge does not resurrect old remote data. */
@@ -374,10 +465,13 @@ const Sync = (() => {
     setResetAt(ts || Date.now());
   }
 
-  function init(d) { deps = d; }
+  function init(d) {
+    deps = d;
+    wireVisibility();
+  }
 
   return {
-    init, connect, disconnect, resume, schedulePush, fullSync, state,
+    init, connect, finishConnect, disconnect, resume, schedulePush, fullSync, state,
     mergeDocs, mergeEvents, mergePersonal, mergeDayGoals, mergeDayPlans, mergePhases, mergeWeights, mergeProfiles,
     activeDayGoals, markReset, getResetAt, fingerprint, DOC_VERSION,
   };

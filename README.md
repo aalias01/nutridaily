@@ -19,6 +19,8 @@ python3 -m http.server 8080
 
 Or open the hosted URL. Install from Settings → **Home screen** (Chrome Install, or iPhone Safari → Share → Add to Home Screen).
 
+For always-connected Drive auth locally, prefer `npx vercel dev` (see Deploy below) so `/api/auth/*` is available.
+
 ## First-time flow
 
 **Common foods (no AI needed):** Today → **+** → pick from **Common foods** (banana, apple, eggs, rice, …) or search the catalog → enter grams / pieces → Save. First pick copies it into My Foods. Tap **Edit food** to change macros or name. Catalog values are USDA-style averages (good defaults, not brand-specific); override anytime.
@@ -38,13 +40,13 @@ Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium. Daily goals 
 
 Lives in this browser. Optional Google Drive backup (`NutriDaily/nutridaily-data.json`). Export / import JSON in Settings. Past log lines keep their macros if you later update a recipe.
 
-After reopening the installed app (especially on iPhone), Drive may pause until you tap **Reconnect** on the banner or the header sync pill. A Hide on that banner lasts for the rest of the calendar day. Meals still save locally meanwhile.
+On the live Vercel deploy, sign-in uses a small auth API that stores a Google **refresh token** in an httpOnly cookie, so Pixel/iPhone home-screen apps can stay connected across reopen without tapping Reconnect. Meals always keep working locally if Drive ever pauses (revoked access, cleared site data, or Google Testing refresh expiry). A Hide on the reconnect banner lasts for the rest of the calendar day.
 
-## Google Drive setup (Daycells-style)
+## Google Drive setup (full reference)
 
-About five minutes. Free for personal use. On the live deploy, a Google OAuth Client ID is injected at build time via `GOOGLE_CLIENT_ID`. If your Gmail is on the project’s **test users** list, open Settings and tap **Sign in with Google**. A Google popup appears. No Client ID paste needed.
+About five minutes. Free for personal use. On [nutridaily.vercel.app](https://nutridaily.vercel.app), skip to Sign in if you are already a test user.
 
-Forks and your own deploys: leave committed `js/config.js` empty. Create your own Client ID (steps below), then either set `GOOGLE_CLIENT_ID` on Vercel or paste it under Settings → **Advanced: override Client ID**.
+Forks and your own deploys: leave committed `js/config.js` empty. Create your own OAuth client (steps below), set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `AUTH_SECRET` on Vercel for always-connected sync, or paste a Client ID under Settings → Advanced for the older popup fallback.
 
 ### Create a Client ID
 
@@ -52,34 +54,67 @@ Forks and your own deploys: leave committed `js/config.js` empty. Create your ow
 2. **APIs & Services → Library** → enable **Google Drive API**.
 3. **Google Auth Platform** (OAuth):
    - **Branding:** app name `NutriDaily` + your email.
-   - **Audience:** External. Stay in **Testing**. Under **Test users**, add every Gmail that should sign in.
+   - **Audience:** External. Stay in **Testing**. Under **Test users**, add every Gmail that should sign in (you, spouse, etc.; Testing allows up to 100). Save.
 4. **Clients → Create client → Web application.**
    - Authorized JavaScript origins (no path, no trailing slash):
      - `https://nutridaily.vercel.app`
-     - `http://localhost:8080`
-   - Leave **Authorized redirect URIs** empty (popup token flow, same as Daycells).
-   - Create. Copy the **Client ID** only (`….apps.googleusercontent.com`). Ignore the Client Secret.
-5. Wire the Client ID:
-   - **Vercel:** Project → Settings → Environment Variables → `GOOGLE_CLIENT_ID` (Production) → Redeploy.
-   - **Or** Settings → Advanced → paste Client ID → Sign in with Google.
-6. Confirm Drive has folder **NutriDaily** / file **nutridaily-data.json**.
+     - `http://localhost:3000` for `vercel dev` (and `http://localhost:8080` if you still use a static server + GIS fallback)
+   - **Authorized redirect URIs** (required for always-connected auth):
+     - `https://nutridaily.vercel.app/api/auth/callback`
+     - `http://localhost:3000/api/auth/callback` for local `vercel dev`
+   - Create. Copy the **Client ID** (`….apps.googleusercontent.com`) and the **Client Secret**. Never commit the secret or paste it into the browser UI.
+5. Wire env on **Vercel** (Project → Settings → Environment Variables, Production):
+   - `GOOGLE_CLIENT_ID` = Client ID (also injected into `js/config.js` at build)
+   - `GOOGLE_CLIENT_SECRET` = Client Secret (server-only; used by `/api/auth/*`)
+   - `AUTH_SECRET` = a long random string (e.g. `openssl rand -hex 32`) used to encrypt the refresh cookie
+   - Redeploy. Do not commit filled `js/config.js`.
+6. Confirm Drive has folder **NutriDaily** / file **nutridaily-data.json**. On another device: same Google account → **Sign in with Google** once.
+7. **Forks / static-only hosts:** without `GOOGLE_CLIENT_SECRET` + `AUTH_SECRET`, Sign in falls back to the older Google Identity Services popup (session access token only; may ask to Reconnect after PWA reopen). Advanced → override Client ID still helps that fallback path.
 
 ### Data Access (scopes)
 
-Register: `.../auth/userinfo.email` and `.../auth/drive.file`. When signing in, grant Drive access (granular consent may show Drive unchecked by default).
+Register: `.../auth/userinfo.email` and `.../auth/drive.file`. When signing in, grant Drive access (granular consent may show Drive unchecked by default). NutriDaily requires Drive; if you continue without it, sign-in is rejected and sync will not enable.
+
+To register scopes:
+
+1. Google Auth Platform → **Data Access** → **Add or remove scopes**.
+2. Filter `userinfo` → check `.../auth/userinfo.email`. Filter `drive.file` → check `.../auth/drive.file`.
+3. Click **Update** on the side panel, then **Save** on the main Data Access page.
 
 ### Testing vs publish
 
-Stay in **Testing** for household use. One Client ID is enough; each person signs in with their own Gmail and gets their own Drive file.
+Stay in **Testing** for household use. One Client ID is enough; each person signs in with their own Gmail and gets their own Drive file. Each browser gets its own refresh cookie after Sign in; testers benefit from always-connected sync the same way you do.
+
+**Testing refresh tokens:** while the OAuth app stays in Testing, Google may expire refresh tokens after about **7 days**. Users then tap Sign in / Reconnect once more. Publishing the OAuth app (when you are ready) removes that Testing limit.
 
 ## Deploy your own
 
 ```bash
 vercel env add GOOGLE_CLIENT_ID production
+vercel env add GOOGLE_CLIENT_SECRET production
+vercel env add AUTH_SECRET production
 npx vercel --prod
 ```
 
 After code changes, bump the `CACHE` name in `sw.js` (or hard-refresh) so installed PWAs pick up the new build.
+
+Local with auth API (`vercel dev`, recommended):
+
+```bash
+npx vercel dev
+```
+
+Use the localhost origin/redirect URI you registered (often `http://localhost:3000`). Static-only `python3 -m http.server 8080` still works for UI work, but Sign in then uses the GIS fallback (no refresh cookie) unless the BFF is running.
+
+## Troubleshoot
+
+- Redirect / origin error: add the exact origin under Authorized JavaScript origins and `https://nutridaily.vercel.app/api/auth/callback` under Authorized redirect URIs.
+- "Sign-in is not configured": set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `AUTH_SECRET` on Vercel and redeploy.
+- Access blocked: add that Gmail under Audience → Test users, or publish the OAuth app.
+- Google did not return a refresh token: Google Account → [Third-party access](https://myaccount.google.com/connections) → remove NutriDaily, then Sign in again (consent must include Drive).
+- **"Google Drive permission was not granted"**: Sign in again and check the Google Drive permission on the consent screen.
+- Drive sync paused after reopen: with BFF env set, reopen should refresh quietly. If it still pauses (Testing ~7-day refresh expiry, cleared site data, or revoked access), meals still save locally; tap **Reconnect**.
+- Stale UI after deploy: bump `sw.js` CACHE or hard-refresh (reopen the home-screen app if installed).
 
 ## Tests
 
