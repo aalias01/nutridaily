@@ -593,6 +593,35 @@ const App = (() => {
     return stats;
   }
 
+  function gapSelectRowForFood(food, key, kind) {
+    const k = key || gapFoodKey(food);
+    if (kind === "catalog") {
+      const kcal = food && food.per100 ? food.per100.kcal : 0;
+      return {
+        key: k,
+        name: food.name,
+        sub: `Reference · USDA avg · ${UI.fmt(kcal)} kcal/100g`,
+        selected: !!state.gapSelected[k],
+        food,
+        kind: "catalog",
+      };
+    }
+    const stats = food && food.id ? gapPortionFor(food.id) : { n: 0 };
+    const prov = Foods.provenance(food);
+    const hist = stats.n
+      ? GapPrompt.portionLine(stats)
+      : `${UI.fmt(food.per100 && food.per100.kcal)} kcal/100g`;
+    const tag = prov && prov.kind === "ref" ? "Reference · USDA avg · " : "";
+    return {
+      key: k,
+      name: food.name,
+      sub: `${tag}${hist}`,
+      selected: !!state.gapSelected[k],
+      food,
+      kind: "personal",
+    };
+  }
+
   function refreshGapSelectList() {
     const q = (UI.$("#gap-food-search") && UI.$("#gap-food-search").value) || "";
     const needle = String(q).trim().toLowerCase();
@@ -600,7 +629,6 @@ const App = (() => {
     const DB = typeof FOOD_DB !== "undefined" ? FOOD_DB : [];
     const byCatalogId = new Map(personal.filter((f) => f.catalogId).map((f) => [f.catalogId, f]));
     const ownedCatalogIds = new Set(byCatalogId.keys());
-    const rows = [];
 
     const match = (name, aliases) => {
       if (!needle) return true;
@@ -615,29 +643,23 @@ const App = (() => {
       }
     }
 
-    const personalMatched = [];
-    for (const f of Foods.sortForPicker(personal)) {
-      if (!match(f.name, f.aliases)) continue;
-      personalMatched.push(f);
-    }
-    // Cap rendered rows; still include every currently selected food
-    const selectedKeys = new Set(Object.keys(state.gapSelected));
-    const personalRows = personalMatched.filter((f) => selectedKeys.has(gapFoodKey(f)) || personalMatched.indexOf(f) < 40);
-    // Ensure selected foods not in the first 40 still appear
-    for (const f of personalMatched) {
-      const key = gapFoodKey(f);
-      if (selectedKeys.has(key) && !personalRows.includes(f)) personalRows.push(f);
+    // Selected always pinned at top (even if they don't match the current query)
+    const selectedRows = [];
+    const seen = new Set();
+    for (const [key, food] of Object.entries(state.gapSelected)) {
+      if (!food) continue;
+      const kind = food.catalogId && !personal.some((f) => f.id === food.id) ? "catalog" : "personal";
+      selectedRows.push(gapSelectRowForFood(food, key, kind));
+      seen.add(key);
     }
 
-    for (const f of personalRows.slice(0, 60)) {
+    const otherRows = [];
+    for (const f of Foods.sortForPicker(personal)) {
       const key = gapFoodKey(f);
-      const stats = gapPortionFor(f.id);
-      const prov = Foods.provenance(f);
-      const hist = stats.n
-        ? GapPrompt.portionLine(stats)
-        : `${UI.fmt(f.per100.kcal)} kcal/100g`;
-      const tag = prov && prov.kind === "ref" ? "Reference · USDA avg · " : "";
-      rows.push({ key, name: f.name, sub: `${tag}${hist}`, selected: !!state.gapSelected[key], food: f, kind: "personal" });
+      if (seen.has(key) || !match(f.name, f.aliases)) continue;
+      otherRows.push(gapSelectRowForFood(f, key, "personal"));
+      seen.add(key);
+      if (otherRows.length >= 40) break;
     }
 
     const personalNames = new Set(personal.map((f) => String(f.name || "").toLowerCase()));
@@ -655,18 +677,14 @@ const App = (() => {
 
     for (const db of catalogPool) {
       const key = `cat:${db.id}`;
+      if (seen.has(key)) continue;
       const existing = state.gapSelected[key];
       const food = existing || Foods.fromCatalog(db);
-      rows.push({
-        key,
-        name: db.name,
-        sub: `Reference · USDA avg · ${UI.fmt(db.per100.kcal)} kcal/100g`,
-        selected: !!existing,
-        food,
-        kind: "catalog",
-      });
+      otherRows.push(gapSelectRowForFood(food, key, "catalog"));
+      seen.add(key);
     }
 
+    const rows = selectedRows.concat(otherRows);
     UI.renderGapSelectList(rows.map((r) => ({ key: r.key, name: r.name, sub: r.sub, selected: r.selected })));
     refreshGapSelectList._rows = rows;
     const btn = UI.$("#btn-gap-to-prompt");
@@ -677,10 +695,18 @@ const App = (() => {
     const rows = refreshGapSelectList._rows || [];
     const row = rows.find((r) => r.key === key);
     if (!row) return;
-    if (state.gapSelected[key]) delete state.gapSelected[key];
-    else state.gapSelected[key] = row.food;
+    const selecting = !state.gapSelected[key];
+    if (selecting) state.gapSelected[key] = row.food;
+    else delete state.gapSelected[key];
+    // After a pick, clear search so selected stay visible at the top of the full list
+    if (selecting) {
+      const search = UI.$("#gap-food-search");
+      if (search && search.value) search.value = "";
+    }
     persistGapDraft("select");
     refreshGapSelectList();
+    const list = UI.$("#gap-select-list");
+    if (list && selecting) list.scrollTop = 0;
   }
 
   function showGapSheetStep(step) {

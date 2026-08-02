@@ -1209,7 +1209,7 @@ const UI = (() => {
 
   /**
    * Multi-select food list for gap plan.
-   * rows: [{ key, name, sub, selected }]
+   * rows: [{ key, name, sub, selected }] — selected rows are expected first.
    */
   function renderGapSelectList(rows) {
     const root = $("#gap-select-list");
@@ -1218,14 +1218,26 @@ const UI = (() => {
       root.innerHTML = `<div class="empty small">No foods match. Add foods to My Foods or search the catalog.</div>`;
       return;
     }
-    root.innerHTML = rows.map((r) => `
+    const rowHtml = (r) => `
       <button type="button" class="gap-select-row${r.selected ? " selected" : ""}" data-action="gap-toggle" data-key="${esc(r.key)}">
         <input type="checkbox" tabindex="-1" ${r.selected ? "checked" : ""} aria-hidden="true">
         <div class="gap-meta">
           <div class="r-name">${esc(r.name)}</div>
           <div class="r-qty">${esc(r.sub || "")}</div>
         </div>
-      </button>`).join("");
+      </button>`;
+    const selected = rows.filter((r) => r.selected);
+    const rest = rows.filter((r) => !r.selected);
+    let html = "";
+    if (selected.length) {
+      html += `<div class="meal-label">Selected (${selected.length})</div>`;
+      html += selected.map(rowHtml).join("");
+    }
+    if (rest.length) {
+      if (selected.length) html += `<div class="meal-label">Foods</div>`;
+      html += rest.map(rowHtml).join("");
+    }
+    root.innerHTML = html;
   }
 
   /**
