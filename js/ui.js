@@ -300,7 +300,7 @@ const UI = (() => {
           .map((id) => byId.get(id))
           .filter((f) => f && !ownedCatalogIds.has(f.id));
         html += section("Common foods", common, catalogRow);
-        html += `<p class="muted small pick-hint">Banana, eggs, rice, and more from the reference catalog (USDA-style averages). Search above, or paste a homemade dish below.</p>`;
+        html += `<p class="muted small pick-hint">Common picks above; search the full catalog for walnuts, raisins, and ~150 other reference foods (USDA-style averages). Or paste a homemade dish below.</p>`;
       }
     } else {
       html += section("My foods", all.slice(0, 40), personalRow);

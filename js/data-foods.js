@@ -174,7 +174,7 @@ const FOOD_DB = [
 const FOOD_COMMON_IDS = [
   "banana", "apple", "egg", "chicken-breast", "greek-yogurt-nonfat", "oats-dry",
   "brown-rice", "white-rice", "chapati", "bread-ww", "salmon", "avocado",
-  "milk-whole", "almonds", "olive-oil", "broccoli",
+  "milk-whole", "almonds", "walnuts", "raisins", "olive-oil", "broccoli",
 ];
 
 if (typeof module !== "undefined") module.exports = FOOD_DB;
