@@ -30,6 +30,8 @@ const App = (() => {
     updateFoodId: null,
     saveAsNew: false,
     editFoodDirect: false, // opened review without AI paste step
+    foodSaveIntent: "library", // "library" | "log" — after paste save
+    detailMode: "library", // food detail CTA mode
     insightDays: 14, // number or "phase"
     insightNutrient: "kcal",
     insightPhaseId: null, // null = active phase when daysBack is "phase"
@@ -736,9 +738,12 @@ const App = (() => {
     state.saveAsNew = false;
     state.editFoodDirect = false;
     state.reviewParsed = null;
+    // Library unless explicitly logging (Today Add → AI paste)
+    state.foodSaveIntent = (opts && opts.intent === "log") ? "log" : "library";
     UI.$("#paste-text").value = "";
     UI.showPastePrompt();
     if (state.updateFoodId) UI.$("#paste-title").textContent = "Update from AI paste";
+    else UI.$("#paste-title").textContent = "Add food from AI paste";
     UI.openSheet("sheet-paste");
   }
 
@@ -883,25 +888,30 @@ const App = (() => {
       UI.toast("Food saved");
     }
     const wasDirect = state.editFoodDirect;
+    const intent = state.foodSaveIntent === "log" ? "log" : "library";
     savePersonal();
     state.updateFoodId = null;
     state.saveAsNew = false;
     state.editFoodDirect = false;
+    state.foodSaveIntent = "library";
     UI.closeSheet("sheet-paste");
     refreshFoods();
-    if (wasDirect && savedFood) {
+    if (!savedFood) return;
+    // Library path: Foods + detail (building database). Log path: Today + qty.
+    if (wasDirect || intent === "library" || updateId) {
       switchView("foods");
-      openDetail(savedFood.id);
+      openDetail(savedFood.id, "library");
     } else {
       switchView("today");
-      if (savedFood) openQty(savedFood);
+      openQty(savedFood);
     }
   }
 
-  function openDetail(id) {
+  function openDetail(id, mode) {
     const food = findFood(id);
     if (!food) return;
-    UI.renderFoodDetail(food);
+    state.detailMode = mode === "log" ? "log" : "library";
+    UI.renderFoodDetail(food, { mode: state.detailMode });
     UI.openSheet("sheet-detail");
   }
 
@@ -1175,7 +1185,7 @@ const App = (() => {
     UI.closeSheet("sheet-import-shared");
     switchView("foods");
     refreshFoods();
-    openDetail(food.id);
+    openDetail(food.id, "library");
     UI.toast("Food added to My Foods");
   }
 
@@ -1342,10 +1352,10 @@ const App = (() => {
     UI.$("#btn-day-prev").addEventListener("click", () => shiftDay(-1));
     UI.$("#btn-day-next").addEventListener("click", () => shiftDay(1));
     UI.$("#fab-add").addEventListener("click", openAddSheet);
-    UI.$("#btn-add-food").addEventListener("click", () => openPaste());
+    UI.$("#btn-add-food").addEventListener("click", () => openPaste({ intent: "library" }));
     UI.$("#btn-paste-new").addEventListener("click", () => {
       UI.closeSheet("sheet-add");
-      openPaste();
+      openPaste({ intent: "log" });
     });
     const openShared = () => openImportSharedSheet();
     if (UI.$("#btn-import-shared")) UI.$("#btn-import-shared").addEventListener("click", openShared);
@@ -1945,10 +1955,10 @@ const App = (() => {
         };
         state.personalFoods[idx] = next;
         savePersonal();
-        UI.renderFoodDetail(next);
+        UI.renderFoodDetail(next, { mode: state.detailMode || "library" });
         UI.toast(`Batch → ${Math.round(grams)} g / ${servings} serv`);
       } else if (action === "food-detail") {
-        openDetail(id);
+        openDetail(id, "library");
       } else if (action === "log-this") {
         UI.closeSheet("sheet-detail");
         state.pendingCatalogFood = null;
@@ -1959,14 +1969,14 @@ const App = (() => {
         openEditFood(findFood(id));
       } else if (action === "update-food") {
         UI.closeSheet("sheet-detail");
-        openPaste({ updateId: id });
+        openPaste({ updateId: id, intent: "library" });
       } else if (action === "copy-update-prompt") {
         const f = findFood(id);
         if (!f) return;
         const text = NutriParse.updatePrompt(f.raw || "");
         navigator.clipboard.writeText(text).then(() => UI.toast("Update prompt copied")).catch(() => {
           UI.closeSheet("sheet-detail");
-          openPaste({ updateId: id });
+          openPaste({ updateId: id, intent: "library" });
           UI.showPromptFallback(text);
           UI.toast("Select the prompt below, then copy");
         });

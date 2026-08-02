@@ -1,5 +1,5 @@
 /* NutriDaily service worker — app-shell caching for installable/offline use. */
-const CACHE = "nutridaily-v28";
+const CACHE = "nutridaily-v29";
 const SHELL = [
   ".", "index.html", "css/style.css", "manifest.webmanifest",
   "js/config.js", "js/data-foods.js", "js/foodmatch.js", "js/parse.js", "js/foods.js",

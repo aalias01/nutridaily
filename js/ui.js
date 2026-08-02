@@ -504,7 +504,8 @@ const UI = (() => {
     };
   }
 
-  function renderFoodDetail(food) {
+  function renderFoodDetail(food, opts) {
+    const mode = (opts && opts.mode) === "log" ? "log" : "library";
     const serv = food.units && food.units.serving;
     const mServ = serv ? FoodMatch.computeMacros(food.per100, serv) : null;
     const ings = ((food.recipe && food.recipe.ingredients) || []).map((i) => {
@@ -517,6 +518,14 @@ const UI = (() => {
           <button type="button" class="btn ghost full" style="margin-top:8px" data-action="scale-batch" data-id="${esc(food.id)}">Scale batch</button>
         </div>`
       : `<div class="card-block"><button type="button" class="btn ghost full" data-action="scale-batch" data-id="${esc(food.id)}">Set / scale batch</button></div>`;
+    const logBtn = mode === "log"
+      ? `<button type="button" class="btn full" data-action="log-this" data-id="${esc(food.id)}">Log this</button>`
+      : `<button type="button" class="btn ghost full" data-action="log-this" data-id="${esc(food.id)}">Log this</button>`;
+    const libraryPrimary = mode === "library"
+      ? `<button type="button" class="btn full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>
+        <button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>`
+      : `<button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>
+        <button type="button" class="btn ghost full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>`;
     $("#detail-body").innerHTML = `
       <h3>${esc(food.name)}</h3>
       <p class="muted small">${esc(prov.label)}${prov.detail ? " · " + esc(prov.detail) : ""}</p>
@@ -528,9 +537,9 @@ const UI = (() => {
       ${batch}
       ${ings ? `<div class="card-block"><b>Ingredients</b><ul class="ing-list">${ings}</ul>${food.recipe.prep ? `<p class="small">${esc(food.recipe.prep)}</p>` : ""}</div>` : ""}
       <div class="col-actions">
-        <button type="button" class="btn full" data-action="log-this" data-id="${esc(food.id)}">Log this</button>
-        <button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>
-        <button type="button" class="btn ghost full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>
+        ${mode === "log" ? logBtn : ""}
+        ${libraryPrimary}
+        ${mode === "library" ? logBtn : ""}
         <button type="button" class="btn ghost full" data-action="update-food" data-id="${esc(food.id)}">Update from AI paste</button>
         <button type="button" class="btn ghost full" data-action="copy-update-prompt" data-id="${esc(food.id)}">Copy update prompt</button>
         <button type="button" class="btn ghost full danger" data-action="delete-food" data-id="${esc(food.id)}">Delete</button>
