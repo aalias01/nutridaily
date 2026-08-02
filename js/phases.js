@@ -43,6 +43,31 @@ const Phases = (() => {
     return ov;
   }
 
+  /** Active signed bumps for a day (legacy absolute overrides converted vs phase). */
+  function bumpsForDay(day, settings, phaseGoals) {
+    const ov = dayGoalOverride(settings, day);
+    if (!ov) return null;
+    const base = phaseGoals || normalizeGoals(DEFAULT_GOALS);
+    if (ov.bumps && typeof ov.bumps === "object") {
+      const out = {};
+      let any = false;
+      for (const k of GOAL_KEYS) {
+        const n = Number(ov.bumps[k]);
+        if (Number.isFinite(n) && n !== 0) { out[k] = n; any = true; }
+      }
+      return any ? out : null;
+    }
+    // Legacy absolute dayGoals → treat as delta from phase for that day
+    const out = {};
+    let any = false;
+    for (const k of GOAL_KEYS) {
+      if (ov[k] == null || !Number.isFinite(Number(ov[k]))) continue;
+      const delta = Number(ov[k]) - (base[k] || 0);
+      if (delta !== 0) { out[k] = delta; any = true; }
+    }
+    return any ? out : null;
+  }
+
   function phaseCovers(phase, day) {
     if (!phase || !day) return false;
     if (phase.archived) return false;
@@ -75,20 +100,31 @@ const Phases = (() => {
     return pick || sorted[0];
   }
 
-  /** Resolve targets for a calendar day. dayGoals > phase revision > defaults. */
+  /** Resolve targets for a calendar day. phase revision + day bumps (legacy absolute still works). */
   function goalsForDay(day, settings) {
     const base = normalizeGoals((settings && settings.goals) || DEFAULT_GOALS);
     const phase = phaseForDay((settings && settings.phases) || [], day);
     const rev = revisionForDay(phase, day);
     const fromPhase = rev ? normalizeGoals(rev.goals) : base;
-    const ov = dayGoalOverride(settings, day);
-    if (!ov) return fromPhase;
-    const { updatedAt: _u, cleared: _c, ...rest } = ov;
-    const patch = {};
+    const bumps = bumpsForDay(day, settings, fromPhase);
+    if (!bumps) return { ...fromPhase, _bumps: null, _phase: fromPhase };
+    const resolved = { ...fromPhase };
     for (const k of GOAL_KEYS) {
-      if (rest[k] != null && Number.isFinite(Number(rest[k]))) patch[k] = Number(rest[k]);
+      if (bumps[k] != null) resolved[k] = Math.max(0, fromPhase[k] + bumps[k]);
     }
-    return { ...fromPhase, ...patch };
+    resolved._bumps = bumps;
+    resolved._phase = fromPhase;
+    return resolved;
+  }
+
+  function formatBumpSummary(bumps) {
+    if (!bumps) return "";
+    const parts = [];
+    if (bumps.kcal) parts.push(`${bumps.kcal > 0 ? "+" : ""}${Math.round(bumps.kcal)} kcal`);
+    if (bumps.protein) parts.push(`${bumps.protein > 0 ? "+" : ""}${Math.round(bumps.protein)} g P`);
+    if (bumps.carbs) parts.push(`${bumps.carbs > 0 ? "+" : ""}${Math.round(bumps.carbs)} g C`);
+    if (bumps.fat) parts.push(`${bumps.fat > 0 ? "+" : ""}${Math.round(bumps.fat)} g F`);
+    return parts.join(" · ");
   }
 
   function mirrorActiveGoals(settings) {
@@ -440,6 +476,8 @@ const Phases = (() => {
     normalizeGoals,
     goalsEqual,
     goalsForDay,
+    bumpsForDay,
+    formatBumpSummary,
     phaseForDay,
     activePhase,
     revisionForDay,

@@ -94,33 +94,52 @@ const UI = (() => {
   }
 
   function updateHUD(totals, goals) {
-    const set = (id, mean, goal, unit) => {
+    const bumps = goals && goals._bumps;
+    const phase = goals && goals._phase;
+    const goalLabel = (resolved, key, unit) => {
+      const g = Number(resolved) || 0;
+      if (!g) return "";
+      const b = bumps && bumps[key];
+      if (b && phase) {
+        const base = Number(phase[key]) || 0;
+        const sign = b > 0 ? "+" : "";
+        return unit
+          ? `${fmt(g)} (${fmt(base)}${sign}${fmt(b)}) ${unit}`
+          : `${fmt(g)} (${fmt(base)}${sign}${fmt(b)})`;
+      }
+      return unit ? `${fmt(g)} ${unit}` : `${fmt(g)}`;
+    };
+    const set = (id, mean, goal, key, unit) => {
       const fill = $(`#f-${id}`), val = $(`#v-${id}`);
       if (!fill || !val) return;
       const g = Number(goal) || 0;
       const pct = g ? Math.min(100, (mean / g) * 100) : 0;
       fill.style.width = pct + "%";
       fill.classList.toggle("over", g && mean > g * 1.05);
-      if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${fmt(g)}` : `${fmt(mean)}`;
-      else if (unit === "mg") val.textContent = g ? `${fmt(mean)} / ${fmt(g)} mg` : `${fmt(mean)} mg`;
-      else val.textContent = g ? `${fmt(mean)} / ${fmt(g)} g` : `${fmt(mean)} g`;
+      const right = goalLabel(goal, key, unit);
+      if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${right}` : `${fmt(mean)}`;
+      else val.textContent = g ? `${fmt(mean)} / ${right}` : unit ? `${fmt(mean)} ${unit}` : `${fmt(mean)}`;
     };
     $("#v-kcal-big").textContent = fmt(totals.kcal.mean);
     const lo = Math.max(0, Math.round(totals.kcal.mean - totals.kcal.sd));
     const hi = Math.round(totals.kcal.mean + totals.kcal.sd);
-    $("#kcal-range").textContent = totals.count ? `likely ${fmt(lo)}–${fmt(hi)}` : "—";
-    set("kcal", totals.kcal.mean, goals.kcal);
-    set("p", totals.p.mean, goals.protein);
-    set("c", totals.c.mean, goals.carbs);
-    set("f", totals.f.mean, goals.fat);
-    set("fb", totals.fb.mean, goals.fiber);
+    const bumpNote = bumps && bumps.kcal
+      ? ` · target ${fmt(goals.kcal)} (${bumps.kcal > 0 ? "+" : ""}${fmt(bumps.kcal)} bump)`
+      : "";
+    $("#kcal-range").textContent = totals.count ? `likely ${fmt(lo)}–${fmt(hi)}${bumpNote}` : "—";
+    set("kcal", totals.kcal.mean, goals.kcal, "kcal", "");
+    set("p", totals.p.mean, goals.protein, "protein", "g");
+    set("c", totals.c.mean, goals.carbs, "carbs", "g");
+    set("f", totals.f.mean, goals.fat, "fat", "g");
+    set("fb", totals.fb.mean, goals.fiber, "fiber", "g");
     {
       const fill = $("#f-sodium"), val = $("#v-sodium");
       const mean = totals.na.mean, g = Number(goals.sodium) || 0;
       if (fill && val) {
         fill.style.width = (g ? Math.min(100, (mean / g) * 100) : 0) + "%";
         fill.classList.toggle("over", g && mean > g * 1.05);
-        val.textContent = g ? `${fmt(mean)} / ${fmt(g)} mg` : `${fmt(mean)} mg`;
+        const right = goalLabel(goals.sodium, "sodium", "mg");
+        val.textContent = g ? `${fmt(mean)} / ${right}` : `${fmt(mean)} mg`;
       }
     }
     const naLine = $("#v-na");

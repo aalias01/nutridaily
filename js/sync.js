@@ -8,7 +8,7 @@
  *  - personalFoods merge by id, newest updatedAt wins; deletes are tombstones
  *    ({deleted:true}) so they propagate across devices instead of resurrecting.
  *  - goals: newest goalsUpdatedAt wins (derived mirror of active phase revision).
- *  - dayGoals: per-day overrides merge by day key, newest updatedAt wins.
+ *  - dayGoals: per-day bumps (or legacy absolute overrides) merge by day key, newest updatedAt wins.
  *  - phases: union by id; revisions union by id (append-only goal timeline).
  *  - weights: per-day body weight, newest updatedAt wins.
  *  - resetAt: Clear-all / full Import bumps this. The side with the newer reset
@@ -183,7 +183,8 @@ const Sync = (() => {
     const pf = (doc.personalFoods || []).map((f) => `${f.id}:${f.updatedAt || 0}:${f.deleted ? 1 : 0}`).sort().join(",");
     const dg = Object.keys(doc.dayGoals || {}).sort().map((d) => {
       const o = doc.dayGoals[d] || {};
-      return `${d}:${o.updatedAt || 0}:${o.kcal || ""}:${o.protein || ""}`;
+      const b = o.bumps || {};
+      return `${d}:${o.updatedAt || 0}:${o.cleared ? 1 : 0}:${b.kcal || o.kcal || ""}:${b.protein || o.protein || ""}`;
     }).join(",");
     const ph = (doc.phases || []).map((p) => {
       const revs = (p.revisions || []).map((r) => r.id).sort().join("+");

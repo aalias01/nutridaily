@@ -49,14 +49,16 @@
 <div class="shell">
 
   <header>
-    <div class="date-nav">
-      <button id="btn-day-prev" class="iconbtn" type="button" aria-label="Previous day">‹</button>
-      <div>
-        <div class="brand">NutriDaily</div>
-        <button type="button" class="day day-btn" id="day-label" title="Jump to today"></button>
-        <button type="button" class="linkbtn day-goals-link" id="btn-day-goals">Day goals</button>
+    <div class="head-left">
+      <div class="brand">NutriDaily</div>
+      <div id="day-controls" class="day-controls">
+        <button id="btn-day-prev" class="iconbtn" type="button" aria-label="Previous day">‹</button>
+        <div class="day-meta">
+          <button type="button" class="day day-btn" id="day-label" title="Jump to today"></button>
+          <button type="button" class="linkbtn day-goals-link" id="btn-day-goals" title="Add a one-day bump on top of phase targets">Day bump</button>
+        </div>
+        <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
       </div>
-      <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
     </div>
     <div class="head-right">
       <button id="sync-pill" class="pill" title="Cloud backup status" type="button">local only</button>
@@ -295,23 +297,24 @@
     </div>
   </div>
 
-  <!-- Day goals override -->
+  <!-- Day bump (signed deltas on phase targets) -->
   <div id="sheet-day-goals" class="sheet" hidden>
     <div class="sheet-backdrop" data-close="sheet-day-goals"></div>
     <div class="sheet-card">
       <div class="sheet-grab"></div>
-      <h3>Goals for this day</h3>
-      <p class="muted small" id="day-goals-blurb">Override your usual targets for training days or rest days. Leave blank to use defaults.</p>
+      <h3>Bump for this day</h3>
+      <p class="muted small" id="day-goals-blurb">Adds to your phase targets for this day only. Use + for a surplus day, − for a tighter day. Leave blank for no bump.</p>
+      <p class="muted small" id="day-bump-preview"></p>
       <div class="goals-grid">
-        <div><span class="small muted">Calories</span><input id="dg-kcal" type="number" min="0" step="50"></div>
-        <div><span class="small muted">Protein g</span><input id="dg-protein" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Carbs g</span><input id="dg-carbs" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Fat g</span><input id="dg-fat" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Fiber g</span><input id="dg-fiber" type="number" min="0" step="1"></div>
-        <div><span class="small muted">Sodium mg</span><input id="dg-sodium" type="number" min="0" step="50"></div>
+        <div><span class="small muted">Calories ±</span><input id="dg-kcal" type="number" step="50" placeholder="0"></div>
+        <div><span class="small muted">Protein g ±</span><input id="dg-protein" type="number" step="5" placeholder="0"></div>
+        <div><span class="small muted">Carbs g ±</span><input id="dg-carbs" type="number" step="5" placeholder="0"></div>
+        <div><span class="small muted">Fat g ±</span><input id="dg-fat" type="number" step="5" placeholder="0"></div>
+        <div><span class="small muted">Fiber g ±</span><input id="dg-fiber" type="number" step="1" placeholder="0"></div>
+        <div><span class="small muted">Sodium mg ±</span><input id="dg-sodium" type="number" step="50" placeholder="0"></div>
       </div>
       <div class="row end">
-        <button id="dg-clear" class="btn ghost" type="button">Use defaults</button>
+        <button id="dg-clear" class="btn ghost" type="button">Clear bump</button>
         <button id="dg-save" class="btn" type="button">Save</button>
       </div>
     </div>

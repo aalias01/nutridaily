@@ -52,9 +52,11 @@ const App = (() => {
   function refreshDayGoalsLink() {
     const btn = UI.$("#btn-day-goals");
     if (!btn) return;
-    const has = !!dayGoalOverride();
-    btn.classList.toggle("has-override", has);
-    btn.textContent = has ? "Day goals · custom" : "Day goals";
+    const g = Phases.goalsForDay(state.viewDay, state.settings);
+    const bumps = g && g._bumps;
+    const summary = Phases.formatBumpSummary(bumps);
+    btn.classList.toggle("has-override", !!summary);
+    btn.textContent = summary ? `Day bump · ${summary}` : "Day bump";
   }
 
   let deferredInstall = null;
@@ -357,10 +359,11 @@ const App = (() => {
   function switchView(name) {
     document.querySelectorAll(".bottom-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
     document.querySelectorAll("main .view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
+    const onToday = name === "today";
     const hud = UI.$("#hud");
-    if (hud) hud.hidden = name !== "today";
-    const dateNav = document.querySelector(".date-nav");
-    if (dateNav) dateNav.classList.toggle("settings-mode", name === "settings");
+    if (hud) hud.hidden = !onToday;
+    const dayControls = UI.$("#day-controls");
+    if (dayControls) dayControls.hidden = !onToday;
     if (name === "foods") refreshFoods();
     if (name === "insights") refreshInsights();
     if (name === "today") refreshDay();
@@ -1135,19 +1138,51 @@ const App = (() => {
       });
     });
     UI.$("#day-label").addEventListener("click", jumpToToday);
-    UI.$("#btn-day-goals").addEventListener("click", () => {
-      const ov = dayGoalOverride() || {};
-      UI.$("#dg-kcal").value = ov.kcal != null ? ov.kcal : "";
-      UI.$("#dg-protein").value = ov.protein != null ? ov.protein : "";
-      UI.$("#dg-carbs").value = ov.carbs != null ? ov.carbs : "";
-      UI.$("#dg-fat").value = ov.fat != null ? ov.fat : "";
-      UI.$("#dg-fiber").value = ov.fiber != null ? ov.fiber : "";
-      UI.$("#dg-sodium").value = ov.sodium != null ? ov.sodium : "";
+    const refreshBumpPreview = () => {
       const phaseBase = Phases.goalsForDay(state.viewDay, { ...state.settings, dayGoals: {} });
+      const read = (id) => {
+        const v = UI.$(id).value.trim();
+        if (v === "") return 0;
+        const n = parseAmount(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const bumps = {
+        kcal: read("#dg-kcal"),
+        protein: read("#dg-protein"),
+        carbs: read("#dg-carbs"),
+        fat: read("#dg-fat"),
+        fiber: read("#dg-fiber"),
+        sodium: read("#dg-sodium"),
+      };
+      const kcal = Math.max(0, phaseBase.kcal + bumps.kcal);
+      const p = Math.max(0, phaseBase.protein + bumps.protein);
+      const prev = UI.$("#day-bump-preview");
+      if (prev) {
+        const any = Object.values(bumps).some((n) => n !== 0);
+        prev.textContent = any
+          ? `Effective today: ${Math.round(kcal)} kcal · P ${Math.round(p)} (phase ${phaseBase.kcal} / ${phaseBase.protein})`
+          : `Phase targets: ${phaseBase.kcal} kcal · P ${phaseBase.protein}`;
+      }
+    };
+    UI.$("#btn-day-goals").addEventListener("click", () => {
+      const g = Phases.goalsForDay(state.viewDay, state.settings);
+      const bumps = (g && g._bumps) || {};
+      UI.$("#dg-kcal").value = bumps.kcal != null ? bumps.kcal : "";
+      UI.$("#dg-protein").value = bumps.protein != null ? bumps.protein : "";
+      UI.$("#dg-carbs").value = bumps.carbs != null ? bumps.carbs : "";
+      UI.$("#dg-fat").value = bumps.fat != null ? bumps.fat : "";
+      UI.$("#dg-fiber").value = bumps.fiber != null ? bumps.fiber : "";
+      UI.$("#dg-sodium").value = bumps.sodium != null ? bumps.sodium : "";
       const phase = Phases.phaseForDay(state.settings.phases, state.viewDay);
       const phaseBit = phase ? ` (${phase.name})` : "";
-      UI.$("#day-goals-blurb").textContent = `Phase targets${phaseBit}: ${phaseBase.kcal} kcal · P ${phaseBase.protein}. Blank fields keep those. Day goals override one day only.`;
+      const phaseBase = g._phase || g;
+      UI.$("#day-goals-blurb").textContent = `Phase${phaseBit}: ${phaseBase.kcal} kcal · P ${phaseBase.protein}. Enter deltas only (+500, −200). Blank = no bump.`;
+      refreshBumpPreview();
       UI.openSheet("sheet-day-goals");
+    });
+    ["#dg-kcal", "#dg-protein", "#dg-carbs", "#dg-fat", "#dg-fiber", "#dg-sodium"].forEach((sel) => {
+      const el = UI.$(sel);
+      if (el) el.addEventListener("input", refreshBumpPreview);
     });
     UI.$("#dg-save").addEventListener("click", () => {
       const num = (id) => {
@@ -1156,21 +1191,23 @@ const App = (() => {
         const n = parseAmount(v);
         return Number.isFinite(n) ? n : null;
       };
-      const patch = {};
+      const bumps = {};
       [["kcal", "#dg-kcal"], ["protein", "#dg-protein"], ["carbs", "#dg-carbs"], ["fat", "#dg-fat"], ["fiber", "#dg-fiber"], ["sodium", "#dg-sodium"]]
-        .forEach(([k, sel]) => { const n = num(sel); if (n != null) patch[k] = n; });
+        .forEach(([k, sel]) => {
+          const n = num(sel);
+          if (n != null && n !== 0) bumps[k] = n;
+        });
       if (!state.settings.dayGoals) state.settings.dayGoals = {};
-      if (Object.keys(patch).length) {
-        state.settings.dayGoals[state.viewDay] = { ...patch, updatedAt: Date.now() };
+      if (Object.keys(bumps).length) {
+        state.settings.dayGoals[state.viewDay] = { bumps, updatedAt: Date.now() };
       } else {
-        // Tombstone so Drive merge does not resurrect the override
         state.settings.dayGoals[state.viewDay] = { cleared: true, updatedAt: Date.now() };
       }
       saveSettings();
       Sync.schedulePush();
       UI.closeSheet("sheet-day-goals");
       refreshDay();
-      UI.toast(Object.keys(patch).length ? "Day goals saved" : "Using defaults");
+      UI.toast(Object.keys(bumps).length ? "Day bump saved" : "Bump cleared");
     });
     UI.$("#dg-clear").addEventListener("click", () => {
       if (!state.settings.dayGoals) state.settings.dayGoals = {};
@@ -1179,7 +1216,7 @@ const App = (() => {
       Sync.schedulePush();
       UI.closeSheet("sheet-day-goals");
       refreshDay();
-      UI.toast("Using defaults");
+      UI.toast("Bump cleared");
     });
 
     UI.$("#btn-quick-kcal").addEventListener("click", () => openQuickKcal());

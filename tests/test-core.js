@@ -162,9 +162,15 @@ console.log("\n[7] Phases / goalsForDay");
   ok(Phases.goalsForDay("2026-08-01", settings).kcal === 2800, "today uses new revision");
   ok(settings.phases[0].revisions.length === 2, "append adds a revision");
 
-  settings.dayGoals["2026-08-01"] = { kcal: 3000, updatedAt: 200 };
-  ok(Phases.goalsForDay("2026-08-01", settings).kcal === 3000, "dayGoals override beats phase revision");
-  ok(Phases.goalsForDay("2026-08-01", settings).protein === 160, "dayGoals partial override keeps other macros");
+  settings.dayGoals["2026-08-01"] = { bumps: { kcal: 200, protein: 20 }, updatedAt: 200 };
+  ok(Phases.goalsForDay("2026-08-01", settings).kcal === 3000, "day bump adds to phase kcal (2800+200)");
+  ok(Phases.goalsForDay("2026-08-01", settings).protein === 180, "day bump adds to phase protein (160+20)");
+  ok(Phases.goalsForDay("2026-08-01", settings)._bumps.kcal === 200, "resolved goals expose _bumps");
+
+  settings.dayGoals["2026-08-02"] = { kcal: 3000, updatedAt: 210 }; // legacy absolute
+  // phase for 08-02 still 2800/160 from revision
+  ok(Phases.goalsForDay("2026-08-02", settings).kcal === 3000, "legacy absolute dayGoals still resolve");
+  ok(Phases.goalsForDay("2026-08-02", settings)._bumps.kcal === 200, "legacy absolute converts to bump vs phase");
 
   Phases.startPhase(settings, {
     name: "Summer bulk",
