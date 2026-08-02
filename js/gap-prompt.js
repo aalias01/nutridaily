@@ -1,5 +1,6 @@
 /* NutriDaily — GAP v1 close-the-gap prompt + paste parser.
  * Deterministic only. LLMs live outside the app.
+ * A GAP block may contain 2–3 Option sections (tradeoffs); legacy single-plan blocks still parse.
  */
 const GapPrompt = (() => {
   const GOAL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium"];
@@ -68,10 +69,7 @@ const GapPrompt = (() => {
    *   logged?: Array<{name:string, grams?:number, displayQty?:string, meal?:string, macros?:object}>,
    *   totals?: object,
    *   goals?: object,
-   *   candidates?: Array<{
-   *     id?: string, name: string, per100?: object, logAs?: string, pieceGrams?: number|null,
-   *     portion?: {n:number, median?:number, p25?:number, p75?:number, last?:number}|null
-   *   }>
+   *   candidates?: Array<object>
    * }} ctx
    */
   function buildGapPrompt(ctx) {
@@ -144,31 +142,39 @@ const GapPrompt = (() => {
       candBlock +
       "\n" +
       "Task:\n" +
-      "- Propose grams (or piece counts when piece weight is listed) for each candidate so the day approaches targets.\n" +
+      "- Propose exactly 3 plan OPTIONS with different tradeoffs. I will pick one in the app.\n" +
+      "  Suggested labels (adapt as needed):\n" +
+      "  1 | Balanced — closest overall to targets within preferred portions\n" +
+      "  2 | Protect floors — prioritize protein and fiber even if kcal/carbs/fat drift\n" +
+      "  3 | Respect ceilings — stay under sodium (and avoid overshooting kcal) even if floors are short\n" +
+      "- Each option must have its own Reachable, Note, Item lines, and Projected line.\n" +
       "- Prefer each food's preferred portion range when n ≥ 3. Stay near median/last when history is thin.\n" +
       "- Protein and fiber are floors; sodium is a ceiling; kcal/carbs/fat are soft ranges.\n" +
-      "- If the candidate set cannot hit targets within preferred ranges, set Reachable: no, explain briefly in Note,\n" +
-      "  and still propose the best honest quantities. I may add another food in the app and re-copy this prompt,\n" +
-      "  or we can iterate in chat (raise qty / swap) before you emit the final block.\n" +
-      "- Do NOT invent plan Item lines for foods not listed above. Use each candidate's exact Name on Item lines.\n" +
+      "- If an option cannot hit all targets with this candidate set, set that option's Reachable: no and explain the tradeoff in Note.\n" +
+      "  Still give honest quantities for that strategy. Do not collapse to a single option when tradeoffs exist.\n" +
+      "- Do NOT invent Item lines for foods not listed above. Use each candidate's exact Name.\n" +
       "- Qty must include a unit: e.g. `120 g` or `2 piece` (not a bare number).\n" +
-      "- Omit Item lines for foods I should skip (do not write 0 g).\n" +
-      "- Reference catalog foods use USDA-style averages. If you refine macros for any candidate (especially Reference),\n" +
-      "  ALSO emit a NUTRI v1 … END block for that food (same Name) so I can update My Foods. You may refine several.\n" +
-      "- If during our chat we agree on a brand-new homemade dish not in the list, ALSO emit a NUTRI v1 … END block for it.\n" +
-      "  Still keep GAP Item lines limited to the candidate names I selected (or tell me to re-select after importing).\n" +
+      "- Omit Item lines for foods that option should skip (do not write 0 g).\n" +
+      "- Reference catalog foods use USDA-style averages. If you refine macros for any candidate,\n" +
+      "  ALSO emit a NUTRI v1 … END block for that food (same Name) so I can update My Foods.\n" +
+      "- Brand-new homemade dishes agreed in chat: emit NUTRI v1, but GAP Items stay limited to selected candidates.\n" +
       (refineNames.length
         ? `- Candidates that especially benefit from a NUTRI refine: ${refineNames.join("; ")}.\n`
         : "") +
-      "- Plain numbers only. One GAP v1 block for the final answer (plus optional NUTRI blocks).\n\n" +
-      "Reply with the GAP plan (and optional NUTRI v1 blocks if needed), exactly:\n\n" +
+      "- Plain numbers only. One GAP v1 block with three Option sections (plus optional NUTRI blocks).\n\n" +
+      "Reply exactly in this format:\n\n" +
       "GAP v1\n" +
       `Day: ${day || "<YYYY-MM-DD>"}\n` +
+      "Option: 1 | Balanced\n" +
       "Reachable: yes\n" +
-      "Note: <one or two sentences>\n" +
+      "Note: <tradeoff in one or two sentences>\n" +
       "Item: <exact candidate name> | <n> g | <meal>\n" +
       "Item: <exact candidate name> | <n> g | <meal>\n" +
       "Projected: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
+      "Option: 2 | Protect floors\n" +
+      "(same fields)\n" +
+      "Option: 3 | Respect ceilings\n" +
+      "(same fields)\n" +
       "END\n"
     );
   }
@@ -232,13 +238,8 @@ const GapPrompt = (() => {
     return out;
   }
 
-  /**
-   * Parse Item qty field: "120 g", "1.5 piece", "2 pieces"
-   * @returns {{ qty: number, unit: string, gramsHint: number|null }}
-   */
   function parseQtyField(raw) {
     const s = String(raw || "").trim().toLowerCase();
-    // Ranges like "100-150 g" → take midpoint and flag via range flag
     const range = s.match(/^(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)\s*(g|grams?|oz|piece|pieces)?$/i);
     if (range) {
       const a = Number(range[1]);
@@ -264,9 +265,6 @@ const GapPrompt = (() => {
     return { qty, unit, gramsHint, ranged: false, unknownUnit: !known };
   }
 
-  /**
-   * @returns {{ cand: object|null, score: number, exact: boolean, ambiguous: boolean }}
-   */
   function matchCandidate(name, candidates, scorer) {
     const list = Array.isArray(candidates) ? candidates : [];
     const t = String(name || "").trim().toLowerCase();
@@ -288,10 +286,80 @@ const GapPrompt = (() => {
     return { cand: best.c, score: best.s, exact: false, ambiguous: false };
   }
 
+  function parseReachable(val) {
+    const v = String(val || "").trim().toLowerCase();
+    return !/^(no|false|0|partial)\b/.test(v);
+  }
+
+  function parseItemLine(line, candidates, scorer, hasCandidateList, warnings) {
+    const itemM = line.replace(/^\*+\s*/, "").replace(/\*+$/, "")
+      .replace(/^[-•]\s*/, "")
+      .match(/^Item:\s*(.+)$/i);
+    if (!itemM) return null;
+    const parts = itemM[1].split("|").map((p) => p.trim().replace(/^\*+|\*+$/g, ""));
+    if (parts.length < 2) {
+      warnings.push(`Ignored incomplete Item line: ${line}`);
+      return null;
+    }
+    const name = parts[0];
+    const qtyParsed = parseQtyField(parts[1]);
+    if (!qtyParsed || !(qtyParsed.qty > 0)) {
+      warnings.push(`Ignored Item with bad qty: ${name}`);
+      return null;
+    }
+    if (qtyParsed.ranged) {
+      warnings.push(`Used midpoint of range for ${name}: ${qtyParsed.rangeText}`);
+    }
+    if (qtyParsed.unknownUnit) {
+      warnings.push(`Unrecognized unit "${qtyParsed.unit}" for ${name}; confirm amount when logging`);
+    }
+    const meal = normalizeMeal(parts[2] || "snack");
+    const match = matchCandidate(name, candidates, scorer);
+    if (hasCandidateList) {
+      if (match.ambiguous) {
+        warnings.push(`Dropped ambiguous food name: ${name}`);
+        return null;
+      }
+      if (!match.cand) {
+        warnings.push(`Dropped unknown food (not in candidates): ${name}`);
+        return null;
+      }
+      if (!match.exact) {
+        warnings.push(`Matched "${name}" → "${match.cand.name}"`);
+      }
+    }
+    const cand = match.cand;
+    let grams = qtyParsed.gramsHint;
+    const unit = qtyParsed.unit;
+    const qty = qtyParsed.qty;
+    if (grams == null && unit === "piece" && cand && cand.pieceGrams) {
+      grams = Math.round(qty * cand.pieceGrams * 10) / 10;
+    } else if (grams == null && unit === "g") {
+      grams = qty;
+    }
+    return {
+      name: cand ? cand.name : name,
+      foodId: cand && cand.id ? cand.id : null,
+      qty,
+      unit,
+      grams: grams != null ? grams : null,
+      meal,
+    };
+  }
+
   /**
-   * @param {string} text
-   * @param {Array<{id?:string, name:string, pieceGrams?:number|null}>} [candidates]
-   * @param {(q:string, name:string)=>number} [scorer]
+   * @returns {{
+   *   ok: boolean,
+   *   error?: string,
+   *   day?: string,
+   *   options?: Array<{index:number, label:string, reachable:boolean, note:string, items:Array, projected:object|null}>,
+   *   warnings?: string[],
+   *   // legacy convenience (first option)
+   *   reachable?: boolean,
+   *   note?: string,
+   *   items?: Array,
+   *   projected?: object|null
+   * }}
    */
   function parseGapBlock(text, candidates, scorer) {
     const body = extractBody(text);
@@ -300,88 +368,102 @@ const GapPrompt = (() => {
     }
     const lines = body.split(/\n/).map((l) => l.trim()).filter(Boolean);
     let day = "";
-    let reachable = true;
-    let note = "";
-    let projected = null;
-    const items = [];
     const warnings = [];
     const hasCandidateList = Array.isArray(candidates);
+    const options = [];
+    let cur = null;
+
+    function pushCur() {
+      if (!cur) return;
+      if (!cur.items.length) {
+        warnings.push(`Option ${cur.index} (${cur.label}) had no valid items — skipped`);
+        cur = null;
+        return;
+      }
+      options.push({
+        index: cur.index,
+        label: cur.label || `Option ${cur.index}`,
+        reachable: cur.reachable !== false,
+        note: cur.note || "",
+        items: cur.items,
+        projected: cur.projected || null,
+      });
+      cur = null;
+    }
+
+    function ensureLegacyCur() {
+      if (cur) return;
+      cur = {
+        index: 1,
+        label: "Plan",
+        reachable: true,
+        note: "",
+        items: [],
+        projected: null,
+        _legacy: true,
+      };
+    }
 
     for (const line of lines) {
       const dayM = line.match(/^Day:\s*(.+)$/i);
-      if (dayM) { day = dayM[1].trim(); continue; }
+      if (dayM && !cur) { day = dayM[1].trim(); continue; }
+
+      const optM = line.match(/^Option:\s*(\d+)\s*(?:\|\s*(.+))?$/i);
+      if (optM) {
+        pushCur();
+        cur = {
+          index: Number(optM[1]),
+          label: (optM[2] || `Option ${optM[1]}`).trim(),
+          reachable: true,
+          note: "",
+          items: [],
+          projected: null,
+        };
+        continue;
+      }
+
       const reachM = line.match(/^Reachable:\s*(.+)$/i);
       if (reachM) {
-        const v = reachM[1].trim().toLowerCase();
-        // LLMs often annotate: "no — protein short", "No (still under)"
-        reachable = !/^(no|false|0|partial)\b/.test(v);
+        ensureLegacyCur();
+        cur.reachable = parseReachable(reachM[1]);
         continue;
       }
       const noteM = line.match(/^Note:\s*(.*)$/i);
-      if (noteM) { note = noteM[1].trim(); continue; }
+      if (noteM) {
+        ensureLegacyCur();
+        cur.note = noteM[1].trim();
+        continue;
+      }
       const projM = line.match(/^Projected:\s*(.*)$/i);
-      if (projM) { projected = parseProjected(projM[1]); continue; }
-      // Allow light markdown: **Item:** / - Item:
-      const itemM = line.replace(/^\*+\s*/, "").replace(/\*+$/, "")
-        .replace(/^[-•]\s*/, "")
-        .match(/^Item:\s*(.+)$/i);
-      if (!itemM) continue;
-      const parts = itemM[1].split("|").map((p) => p.trim().replace(/^\*+|\*+$/g, ""));
-      if (parts.length < 2) {
-        warnings.push(`Ignored incomplete Item line: ${line}`);
+      if (projM) {
+        ensureLegacyCur();
+        cur.projected = parseProjected(projM[1]);
         continue;
       }
-      const name = parts[0];
-      const qtyParsed = parseQtyField(parts[1]);
-      if (!qtyParsed || !(qtyParsed.qty > 0)) {
-        warnings.push(`Ignored Item with bad qty: ${name}`);
-        continue;
+      if (/^Item:/i.test(line.replace(/^\*+\s*/, "").replace(/^[-•]\s*/, ""))) {
+        ensureLegacyCur();
+        const item = parseItemLine(line, candidates, scorer, hasCandidateList, warnings);
+        if (item) cur.items.push(item);
       }
-      if (qtyParsed.ranged) {
-        warnings.push(`Used midpoint of range for ${name}: ${qtyParsed.rangeText}`);
-      }
-      if (qtyParsed.unknownUnit) {
-        warnings.push(`Unrecognized unit "${qtyParsed.unit}" for ${name}; confirm amount when logging`);
-      }
-      const meal = normalizeMeal(parts[2] || "snack");
-      const match = matchCandidate(name, candidates, scorer);
-      if (hasCandidateList) {
-        if (match.ambiguous) {
-          warnings.push(`Dropped ambiguous food name: ${name}`);
-          continue;
-        }
-        if (!match.cand) {
-          warnings.push(`Dropped unknown food (not in candidates): ${name}`);
-          continue;
-        }
-        if (!match.exact) {
-          warnings.push(`Matched "${name}" → "${match.cand.name}"`);
-        }
-      }
-      const cand = match.cand;
-      let grams = qtyParsed.gramsHint;
-      let unit = qtyParsed.unit;
-      let qty = qtyParsed.qty;
-      if (grams == null && unit === "piece" && cand && cand.pieceGrams) {
-        grams = Math.round(qty * cand.pieceGrams * 10) / 10;
-      } else if (grams == null && unit === "g") {
-        grams = qty;
-      }
-      // Leave grams null when unit needs food-specific conversion and food is unknown
-      items.push({
-        name: cand ? cand.name : name,
-        foodId: cand && cand.id ? cand.id : null,
-        qty,
-        unit,
-        grams: grams != null ? grams : null,
-        meal,
-      });
+    }
+    pushCur();
+
+    if (!options.length) {
+      return { ok: false, error: "GAP block found but no valid options/items matched your selected foods." };
     }
 
-    if (!items.length) {
-      return { ok: false, error: "GAP block found but no valid Item lines matched your selected foods." };
-    }
-    return { ok: true, day, reachable, note, items, projected, warnings };
+    const first = options[0];
+    return {
+      ok: true,
+      day,
+      options,
+      warnings,
+      // Convenience for single-option / legacy callers
+      reachable: first.reachable,
+      note: first.note,
+      items: first.items,
+      projected: first.projected,
+    };
   }
 
   return {

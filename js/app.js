@@ -44,6 +44,7 @@ const App = (() => {
     gapPendingItemId: null, // plan item id while qty sheet open
     gapPendingDay: null, // day the pending item belongs to (survives midnight roll)
     gapNutriPending: null, // NutriParse results from last paste
+    gapParsed: null, // last GapPrompt.parseGapBlock result (multi-option)
     gapStep: "select",
     gapPortionCache: null, // Map foodId -> portionStats for select list
   };
@@ -253,7 +254,7 @@ const App = (() => {
     }
     const title = kind === "reconnect" ? "Drive sync paused" : "Keep your log safe";
     const body = kind === "reconnect"
-      ? "Meals still save on this device. Tap Reconnect to resume Google Drive (opens a Google popup)."
+      ? "Meals still save on this device. Tap Reconnect to resume Google Drive."
       : "Optional: Sign in with Google in Settings to keep your nutrition log in your Drive if this browser is cleared.";
     el.hidden = false;
     el.dataset.kind = kind;
@@ -662,12 +663,58 @@ const App = (() => {
       const hint = UI.$("#gap-prompt-hint");
       if (hint) {
         hint.textContent =
-          "Copy the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final GAP v1 … END reply. " +
+          "Copy the prompt into ChatGPT / Claude / any LLM. Ask for 2–3 options with different tradeoffs, then paste the GAP v1 … END reply. " +
           "Optional NUTRI v1 blocks refine Reference catalog foods or add brand-new dishes.";
       }
+    } else if (step === "choose") {
+      renderGapChooseStep();
     } else if (step === "plan") {
       renderGapPlanStep();
     }
+  }
+
+  function optionSummary(opt) {
+    const p = opt && opt.projected;
+    if (p && p.kcal != null) {
+      return `${UI.fmt(p.kcal)} kcal · P ${UI.fmt(p.protein)} · C ${UI.fmt(p.carbs)} · F ${UI.fmt(p.fat)} · Na ${UI.fmt(p.sodium)}`;
+    }
+    const n = (opt && opt.items && opt.items.length) || 0;
+    return `${n} food${n === 1 ? "" : "s"}`;
+  }
+
+  function renderGapChooseStep() {
+    const parsed = state.gapParsed;
+    const banner = UI.$("#gap-choose-nutri");
+    if (banner) {
+      const pending = state.gapNutriPending;
+      if (pending && pending.length) {
+        const names = pending.map((r) => (r.food && r.food.name) || "food").join(", ");
+        banner.hidden = false;
+        banner.innerHTML = `Also found ${pending.length} NUTRI block(s) (${UI.esc(names)}). ` +
+          `<button type="button" class="linkbtn" id="btn-gap-import-nutri-choose">Import / refine first</button>`;
+        const btn = UI.$("#btn-gap-import-nutri-choose");
+        if (btn) btn.onclick = () => importGapNutriFoods();
+      } else {
+        banner.hidden = true;
+        banner.innerHTML = "";
+      }
+    }
+    if (!parsed || !parsed.options) {
+      UI.renderGapOptions([]);
+      return;
+    }
+    const cards = parsed.options.map((o) => ({
+      index: o.index,
+      label: o.label,
+      reachable: o.reachable,
+      note: o.note,
+      summary: optionSummary(o),
+      itemLines: (o.items || []).map((it) => {
+        const g = it.grams != null ? `${UI.fmt(it.grams)} g` : `${it.qty} ${it.unit || "g"}`;
+        return `${it.name}: ${g} · ${it.meal || "snack"}`;
+      }),
+    }));
+    UI.renderGapOptions(cards);
   }
 
   function restoreGapSelectionFromPlan(plan, pendingOnly) {
@@ -792,14 +839,19 @@ const App = (() => {
     return Foods.findByName(state.personalFoods, item.name);
   }
 
-  function applyGapParsed(parsed) {
+  function applyGapOption(opt, parsedMeta) {
     const candidates = buildGapCandidatesFromSelection();
     if (!candidates.length) {
       UI.toast("Select at least one food first");
       return;
     }
-    if (parsed.day && parsed.day !== state.viewDay) {
-      if (!confirm(`This plan is labeled ${parsed.day}, but you're viewing ${state.viewDay}. Apply it to ${state.viewDay} anyway?`)) {
+    if (!opt || !opt.items || !opt.items.length) {
+      UI.toast("That option has no foods");
+      return;
+    }
+    const dayLabel = parsedMeta && parsedMeta.day;
+    if (dayLabel && dayLabel !== state.viewDay) {
+      if (!confirm(`This plan is labeled ${dayLabel}, but you're viewing ${state.viewDay}. Apply it to ${state.viewDay} anyway?`)) {
         return;
       }
     }
@@ -810,12 +862,11 @@ const App = (() => {
         return;
       }
     }
-    const items = parsed.items.map((it) => {
+    const items = opt.items.map((it) => {
       const cand = candidates.find((c) => c.id && c.id === it.foodId)
         || candidates.find((c) => String(c.name).toLowerCase() === String(it.name).toLowerCase())
         || null;
       let food = cand ? cand.food : resolveGapFood(it);
-      // Commit catalog copies; dedupe by catalogId so we don't double-add
       if (food && food.catalogId) {
         const existing = state.personalFoods.find((f) => !f.deleted && f.catalogId === food.catalogId);
         if (existing) food = existing;
@@ -825,8 +876,8 @@ const App = (() => {
         }
       }
       let grams = it.grams;
-      let qty = it.qty;
-      let unit = it.unit || "g";
+      const qty = it.qty;
+      const unit = it.unit || "g";
       if (food && unit !== "g" && grams == null) {
         const entry = Foods.entryFromQty(food, qty, unit, it.meal);
         if (entry) grams = entry.grams;
@@ -844,22 +895,22 @@ const App = (() => {
         loggedEntryId: null,
       };
     });
-    // Keep prior logged rows for audit (not re-proposed)
     const carried = prevLogged.map((it) => ({ ...it }));
+    const noteBits = [opt.label, opt.note].filter(Boolean).join(" · ");
     const plan = {
       updatedAt: Date.now(),
-      reachable: parsed.reachable !== false,
-      note: parsed.note || "",
+      reachable: opt.reachable !== false,
+      note: noteBits,
+      optionLabel: opt.label || "",
       candidates: candidates.map((c) => ({ foodId: c.id, name: c.name })),
       items: [...items, ...carried],
-      projected: parsed.projected || null,
+      projected: opt.projected || null,
     };
     saveDayPlan(state.viewDay, plan);
     clearGapDraft(state.viewDay);
-    if (parsed.warnings && parsed.warnings.length) {
-      UI.toast(parsed.warnings[0]);
-    }
+    state.gapParsed = null;
     showGapSheetStep("plan");
+    UI.toast(`Using ${opt.label || "plan"}`);
   }
 
   function importGapPaste() {
@@ -880,7 +931,16 @@ const App = (() => {
     state.gapNutriPending = (nutri && nutri.found)
       ? (nutri.results || []).filter((r) => r && r.ok && r.canSave)
       : null;
-    applyGapParsed(parsed);
+    state.gapParsed = parsed;
+    if (parsed.warnings && parsed.warnings.length) {
+      UI.toast(parsed.warnings[0]);
+    }
+    const opts = parsed.options || [];
+    if (opts.length === 1) {
+      applyGapOption(opts[0], parsed);
+      return;
+    }
+    showGapSheetStep("choose");
   }
 
   function importGapNutriFoods() {
@@ -1902,16 +1962,25 @@ const App = (() => {
     }
   }
 
+  function authErrMsg(e, fallback) {
+    const m = (e && e.message) || "";
+    if (m === GDrive.NEEDS_AUTH || m === "needs-auth") {
+      return "Could not finish Google Drive connect. Tap Sign in again.";
+    }
+    return m || fallback || "Connect failed";
+  }
+
   async function connectDrive() {
     try {
-      await Sync.connect();
+      const email = await Sync.connect();
+      if (email == null && !GDrive.cachedToken()) return; // BFF redirect in progress
       localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
       localStorage.setItem(SIGNIN_SEEN_KEY, "1");
       refreshDriveStatus();
       refreshInfoBanner();
       UI.toast("Drive connected");
     } catch (err) {
-      UI.toast(err.message || "Connect failed");
+      UI.toast(authErrMsg(err));
       refreshDriveStatus();
       refreshInfoBanner();
     }
@@ -2020,6 +2089,22 @@ const App = (() => {
     }
     if (UI.$("#btn-gap-back-select")) {
       UI.$("#btn-gap-back-select").addEventListener("click", () => showGapSheetStep("select"));
+    }
+    if (UI.$("#btn-gap-choose-back")) {
+      UI.$("#btn-gap-choose-back").addEventListener("click", () => showGapSheetStep("prompt"));
+    }
+    if (UI.$("#gap-option-list")) {
+      UI.$("#gap-option-list").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-action='apply-gap-option']");
+        if (!btn) return;
+        const i = Number(btn.dataset.opt);
+        const opts = state.gapParsed && state.gapParsed.options;
+        if (!opts || !opts[i]) {
+          UI.toast("Option missing — parse again");
+          return;
+        }
+        applyGapOption(opts[i], state.gapParsed);
+      });
     }
     if (UI.$("#btn-gap-recalc")) {
       UI.$("#btn-gap-recalc").addEventListener("click", startGapRecalc);
@@ -2863,7 +2948,7 @@ const App = (() => {
     });
     UI.$("#sync-pill").addEventListener("click", async () => {
       const st = Sync.state();
-      if (st.enabled && (st.status === "auth" || !GDrive.storedToken())) {
+      if (st.enabled && (st.status === "auth" || !GDrive.cachedToken())) {
         await connectDrive();
         return;
       }
@@ -2884,7 +2969,7 @@ const App = (() => {
       if (document.visibilityState !== "visible") return;
       const rolled = ensureViewDayCurrent();
       if (rolled) refreshDay();
-      Sync.resume().catch(() => {});
+      /* Drive resume on foreground is wired inside Sync.init */
     });
     UI.$("#btn-onb-skip").addEventListener("click", () => {
       localStorage.setItem(ONB_KEY, "1");
@@ -2939,7 +3024,38 @@ const App = (() => {
       },
       onRemoteApplied: () => refreshAll(),
     });
-    Sync.resume().catch(() => {});
+    /* OAuth BFF return: /?auth=ok|error&err=... — finish before resume to avoid races. */
+    (async function bootSync() {
+      let params;
+      try { params = new URLSearchParams(location.search); } catch (e) { params = null; }
+      const auth = params && params.get("auth");
+      if (auth) {
+        const err = params.get("err") || "";
+        params.delete("auth");
+        params.delete("err");
+        const q = params.toString();
+        try {
+          history.replaceState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
+        } catch (e) {}
+        if (auth === "error") {
+          UI.toast(err || "Google sign-in failed");
+        } else if (auth === "ok") {
+          try {
+            await Sync.finishConnect();
+            localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
+            localStorage.setItem(SIGNIN_SEEN_KEY, "1");
+            refreshDriveStatus();
+            refreshInfoBanner();
+            UI.toast("Drive connected");
+            return;
+          } catch (e) {
+            UI.toast(authErrMsg(e, "Could not finish Google Drive connect"));
+            /* Fall through to resume so Reconnect status/banner can appear. */
+          }
+        }
+      }
+      await Sync.resume();
+    })().catch(() => {});
   }
 
   function boot() {

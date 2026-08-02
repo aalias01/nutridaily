@@ -510,6 +510,7 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
   ok(/rice \(cooked\)/.test(prompt) && /preferred 100–140 g/.test(prompt), "prompt includes candidate portion band");
   ok(/banana/.test(prompt) && /Totals so far/.test(prompt), "prompt includes logged foods and totals");
   ok(/Remaining/.test(prompt), "prompt includes remaining macros");
+  ok(/Option: 1/.test(prompt) && /3 plan OPTIONS/i.test(prompt), "prompt asks for multiple options");
 
   const block = `GAP v1
 Day: 2026-08-02
@@ -524,6 +525,7 @@ END`;
   const scorer = (q, name) => FoodMatch.scoreMatch(q, name);
   const parsed = GapPrompt.parseGapBlock(block, candidates, scorer);
   ok(parsed.ok, "parses GAP block");
+  ok(parsed.options && parsed.options.length === 1, "legacy single plan becomes one option");
   ok(parsed.reachable === false, "Reachable: no preserved");
   ok(/Protein still short/.test(parsed.note || ""), "note preserved");
   ok(parsed.items.length === 2, "only candidate foods kept");
@@ -532,6 +534,31 @@ END`;
   ok((parsed.warnings || []).some((w) => /mystery smoothie/i.test(w)), "unknown food dropped with warning");
   ok(parsed.projected && parsed.projected.kcal === 900 && parsed.projected.protein === 60, "projected macros parsed");
   ok(!GapPrompt.parseGapBlock("hello").ok, "rejects non-GAP text");
+
+  const multi = `GAP v1
+Day: 2026-08-02
+Option: 1 | Balanced
+Reachable: no
+Note: Sodium caps protein.
+Item: rice (cooked) | 120 g | dinner
+Item: chicken breast (cooked) | 150 g | dinner
+Projected: 800 kcal | P 55 | C 100 | F 18 | Fiber 5 | Sodium 500
+Option: 2 | Protect floors
+Reachable: no
+Note: Hits protein; sodium over.
+Item: chicken breast (cooked) | 220 g | dinner
+Projected: 360 kcal | P 68 | C 0 | F 8 | Fiber 0 | Sodium 160
+Option: 3 | Respect ceilings
+Reachable: yes
+Note: Under sodium; protein short.
+Item: rice (cooked) | 100 g | dinner
+Projected: 130 kcal | P 3 | C 28 | F 0 | Fiber 0 | Sodium 1
+END`;
+  const multiParsed = GapPrompt.parseGapBlock(multi, candidates, scorer);
+  ok(multiParsed.ok && multiParsed.options.length === 3, "parses three options");
+  ok(multiParsed.options[0].label === "Balanced" && multiParsed.options[0].reachable === false, "option 1 label + reachable");
+  ok(multiParsed.options[1].items[0].foodId === "pf-chicken" && multiParsed.options[1].items[0].grams === 220, "option 2 items");
+  ok(multiParsed.options[2].reachable === true && multiParsed.options[2].items.length === 1, "option 3 respects ceilings");
 
   const reachAnno = `GAP v1
 Day: 2026-08-02

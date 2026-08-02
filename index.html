@@ -451,12 +451,21 @@
       </div>
 
       <div id="gap-step-prompt" hidden>
-        <p class="muted small" id="gap-prompt-hint">Copy the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply. Optional <code>NUTRI v1</code> blocks refine Reference catalog foods or add brand-new dishes.</p>
+        <p class="muted small" id="gap-prompt-hint">Copy the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply with 2–3 options. Optional <code>NUTRI v1</code> blocks refine Reference catalog foods or add brand-new dishes.</p>
         <button id="btn-gap-copy-prompt" class="btn full" type="button">Copy gap prompt</button>
         <textarea id="gap-paste" rows="7" placeholder="Paste the GAP v1 … END reply here (plus optional NUTRI v1 blocks)"></textarea>
         <div class="col-actions">
-          <button id="btn-gap-parse" class="btn full" type="button">Parse plan</button>
+          <button id="btn-gap-parse" class="btn full" type="button">Parse options</button>
           <button id="btn-gap-back-select" class="btn ghost full" type="button">Back to food pick</button>
+        </div>
+      </div>
+
+      <div id="gap-step-choose" hidden>
+        <p class="muted small">Pick a plan option. Each trades off differently (e.g. protein/fiber floors vs sodium ceiling).</p>
+        <div id="gap-choose-nutri" class="banner warn" hidden></div>
+        <div id="gap-option-list" class="phase-option-list"></div>
+        <div class="col-actions">
+          <button id="btn-gap-choose-back" class="btn ghost full" type="button">Back to paste</button>
         </div>
       </div>
 

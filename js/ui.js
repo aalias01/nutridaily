@@ -1242,14 +1242,49 @@ const UI = (() => {
   function showGapStep(step) {
     const select = $("#gap-step-select");
     const prompt = $("#gap-step-prompt");
+    const choose = $("#gap-step-choose");
     const plan = $("#gap-step-plan");
     if (select) select.hidden = step !== "select";
     if (prompt) prompt.hidden = step !== "prompt";
+    if (choose) choose.hidden = step !== "choose";
     if (plan) plan.hidden = step !== "plan";
     const title = $("#gap-sheet-title");
     if (title) {
-      title.textContent = step === "plan" ? "Today’s plan" : step === "prompt" ? "AI gap prompt" : "Close the gap";
+      title.textContent = step === "plan"
+        ? "Today’s plan"
+        : step === "prompt"
+          ? "AI gap prompt"
+          : step === "choose"
+            ? "Choose a plan"
+            : "Close the gap";
     }
+  }
+
+  /**
+   * options: [{ index, label, reachable, note, summary, itemLines }]
+   */
+  function renderGapOptions(options) {
+    const root = $("#gap-option-list");
+    if (!root) return;
+    if (!options || !options.length) {
+      root.innerHTML = `<div class="empty small">No options parsed.</div>`;
+      return;
+    }
+    root.innerHTML = options.map((o, i) => {
+      const reach = o.reachable === false
+        ? `<span class="muted small">May not fully hit targets</span>`
+        : `<span class="muted small">Within reach of targets</span>`;
+      const items = (o.itemLines || []).map((l) => `<li>${esc(l)}</li>`).join("");
+      return `
+        <div class="phase-option">
+          <h4>${esc(o.label || `Option ${o.index || i + 1}`)}</h4>
+          ${reach}
+          <p class="muted small">${esc(o.summary || "")}</p>
+          ${o.note ? `<p class="small">${esc(o.note)}</p>` : ""}
+          ${items ? `<ul class="ing-list">${items}</ul>` : ""}
+          <button type="button" class="btn full ai-apply-opt" data-action="apply-gap-option" data-opt="${i}">Use this plan</button>
+        </div>`;
+    }).join("");
   }
 
   return {
@@ -1257,6 +1292,6 @@ const UI = (() => {
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
     syncReviewLogAsUI, renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
-    formatGapRemaining, renderGapSelectList, renderGapPlanList, showGapStep,
+    formatGapRemaining, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
   };
 })();
