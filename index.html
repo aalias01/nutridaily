@@ -454,7 +454,7 @@
       </div>
 
       <div id="gap-step-prompt" hidden>
-        <p class="muted small" id="gap-prompt-hint">Copy or share the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply with 2–3 options. Optional <code>NUTRI v1</code> blocks refine Reference catalog foods or add brand-new dishes.</p>
+        <p class="muted small" id="gap-prompt-hint">Copy or share the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply with 3 options. Optional <code>NUTRI v1</code> blocks refine Reference catalog foods or add brand-new dishes.</p>
         <button id="btn-gap-copy-prompt" class="btn full" type="button">Copy gap prompt</button>
         <button id="btn-gap-share-prompt" class="btn ghost full" type="button" hidden>Share to AI</button>
         <p class="muted small" data-prompt-share-hint hidden>Opens your share sheet. Choose Claude or ChatGPT — paste into a new chat if the app doesn’t fill it.</p>
@@ -466,7 +466,7 @@
       </div>
 
       <div id="gap-step-choose" hidden>
-        <p class="muted small">Pick a plan option. Each trades off differently (e.g. protein/fiber floors vs sodium ceiling).</p>
+        <p class="muted small">Pick a plan option. Each trades off differently (protein floor vs lowest sodium). Fiber is reported only; sodium lower is better. Reachable means protein met and sodium under the ceiling.</p>
         <div id="gap-choose-nutri" class="banner warn" hidden></div>
         <div id="gap-option-list" class="phase-option-list"></div>
         <div class="col-actions">

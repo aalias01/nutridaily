@@ -8,12 +8,12 @@ const GapPrompt = (() => {
   const TOTAL_KEY = { kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na" };
 
   const BAND_HINT = {
-    kcal: "range (±10%)",
-    protein: "floor (hit or exceed)",
-    carbs: "range (±15%)",
-    fat: "range (±15%)",
-    fiber: "floor (hit or exceed)",
-    sodium: "ceiling (do not exceed)",
+    kcal: "range, ±10%",
+    protein: "floor, hit or exceed",
+    carbs: "range, ±15%",
+    fat: "range, ±15%",
+    fiber: "report only, not a hit target",
+    sodium: "ceiling only, lower is better; warn if over",
   };
 
   function fmtNum(n, digits) {
@@ -95,11 +95,31 @@ const GapPrompt = (() => {
       }).join("\n") + "\n";
     }
 
-    const remLine = GOAL_KEYS.map((k) => {
-      const unit = k === "kcal" ? "" : (k === "sodium" ? " mg" : " g");
+    const remBits = [];
+    for (const k of ["kcal", "protein", "carbs", "fat"]) {
+      const unit = k === "kcal" ? "" : " g";
       const sign = remaining[k] > 0 ? "+" : "";
-      return `${k} ${sign}${fmtNum(remaining[k])}${unit} (${BAND_HINT[k]})`;
-    }).join("; ");
+      remBits.push(`${k} ${sign}${fmtNum(remaining[k])}${unit} (${BAND_HINT[k]})`);
+    }
+    {
+      const g = Number(goals.fiber) || 0;
+      const a = Number(means.fiber) || 0;
+      if (g > 0) remBits.push(`fiber ${fmtNum(a, 1)} of ${fmtNum(g)} g (${BAND_HINT.fiber})`);
+      else remBits.push(`fiber ${fmtNum(a, 1)} g logged (no target)`);
+    }
+    {
+      const g = Number(goals.sodium) || 0;
+      const a = Number(means.sodium) || 0;
+      const headroom = Number(remaining.sodium) || 0;
+      if (!(g > 0)) {
+        remBits.push(`sodium ${fmtNum(a)} mg logged (no ceiling set)`);
+      } else if (headroom >= 0) {
+        remBits.push(`sodium headroom +${fmtNum(headroom)} mg (${BAND_HINT.sodium})`);
+      } else {
+        remBits.push(`sodium OVER by ${fmtNum(Math.abs(headroom))} mg (${BAND_HINT.sodium})`);
+      }
+    }
+    const remLine = remBits.join("; ");
 
     let candBlock = "(no candidates selected)\n";
     const refineNames = [];
@@ -136,21 +156,32 @@ const GapPrompt = (() => {
       ` | F ${fmtNum(means.fat, 1)} | Fiber ${fmtNum(means.fiber, 1)} | Sodium ${fmtNum(means.sodium)}\n\n` +
       "Daily targets:\n" +
       `- ${fmtNum(goals.kcal)} kcal | P ${fmtNum(goals.protein)} | C ${fmtNum(goals.carbs)}` +
-      ` | F ${fmtNum(goals.fat)} | Fiber ${fmtNum(goals.fiber)} | Sodium ${fmtNum(goals.sodium)}\n\n` +
-      `Remaining (target − actual): ${remLine}\n\n` +
+      ` | F ${fmtNum(goals.fat)}` +
+      ` | Fiber ${fmtNum(goals.fiber)} g (report only)` +
+      ` | Sodium ${fmtNum(goals.sodium)} mg (ceiling — lower is better)\n\n` +
+      `Gap / status: ${remLine}\n` +
+      "(For kcal/protein/carbs/fat: positive = still to add, negative = already over.)\n\n" +
       "Candidate foods I plan to eat (ONLY assign quantities to these exact names):\n" +
       candBlock +
       "\n" +
       "Task:\n" +
       "- Propose exactly 3 plan OPTIONS with different tradeoffs. I will pick one in the app.\n" +
-      "  Suggested labels (adapt as needed):\n" +
-      "  1 | Balanced — closest overall to targets within preferred portions\n" +
-      "  2 | Protect floors — prioritize protein and fiber even if kcal/carbs/fat drift\n" +
-      "  3 | Respect ceilings — stay under sodium (and avoid overshooting kcal) even if floors are short\n" +
+      "  Use these exact short labels on the Option line. Parentheticals are guidance for you only; do not put them on the Option line.\n" +
+      "  1 | Balanced (closest on protein + kcal/carbs/fat within preferred portions)\n" +
+      "  2 | Protect protein (prioritize the protein floor even if kcal/carbs/fat drift)\n" +
+      "  3 | Lowest sodium (minimize sodium and avoid kcal overshoot; still meet protein if candidates allow; say so in Note if not)\n" +
       "- Each option must have its own Reachable, Note, Item lines, and Projected line.\n" +
+      "- Projected = end-of-day totals for the WHOLE day: everything already logged above PLUS this option's items. Not just the new items.\n" +
       "- Prefer each food's preferred portion range when n ≥ 3. Stay near median/last when history is thin.\n" +
-      "- Protein and fiber are floors; sodium is a ceiling; kcal/carbs/fat are soft ranges.\n" +
-      "- If an option cannot hit all targets with this candidate set, set that option's Reachable: no and explain the tradeoff in Note.\n" +
+      "- Hit rules: protein is a floor; kcal/carbs/fat are soft ranges.\n" +
+      "- Fiber: report in Projected only. Do NOT treat fiber as something to hit; fiber shortfalls never make Reachable: no.\n" +
+      "- Sodium: ceiling only. Lower is better. Do NOT try to \"reach\" the sodium number.\n" +
+      "  Prefer to stay under the ceiling. Options 1–2 may still overshoot when the candidate set forces it;\n" +
+      "  if projected sodium exceeds the ceiling, warn clearly in Note (e.g. \"Sodium over ceiling by ~X mg\") and set Reachable: no.\n" +
+      "- Reachable: yes means projected protein meets the floor AND projected sodium is at or under the ceiling\n" +
+      "  (or no sodium ceiling is set). Deliberate kcal/carbs/fat drift that the option's strategy calls for does NOT\n" +
+      "  by itself make Reachable: no — describe it in Note instead.\n" +
+      "- If an option misses the protein floor or breaks the sodium ceiling, set Reachable: no and explain in Note.\n" +
       "  Still give honest quantities for that strategy. Do not collapse to a single option when tradeoffs exist.\n" +
       "- Do NOT invent Item lines for foods not listed above. Use each candidate's exact Name.\n" +
       "- Qty must include a unit: e.g. `120 g` or `2 piece` (not a bare number).\n" +
@@ -171,9 +202,9 @@ const GapPrompt = (() => {
       "Item: <exact candidate name> | <n> g | <meal>\n" +
       "Item: <exact candidate name> | <n> g | <meal>\n" +
       "Projected: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
-      "Option: 2 | Protect floors\n" +
+      "Option: 2 | Protect protein\n" +
       "(same fields)\n" +
-      "Option: 3 | Respect ceilings\n" +
+      "Option: 3 | Lowest sodium\n" +
       "(same fields)\n" +
       "END\n"
     );

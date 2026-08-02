@@ -1177,7 +1177,7 @@ const UI = (() => {
     $("#onboarding").hidden = !show;
   }
 
-  /** Remaining blurb for gap sheet / Today. */
+  /** Remaining blurb for gap sheet / Today. Fiber = report only; sodium = ceiling headroom. */
   function formatGapRemaining(remaining, goals) {
     if (!remaining) return "";
     const bits = [];
@@ -1193,9 +1193,24 @@ const UI = (() => {
     push("P", "protein", "g");
     push("C", "carbs", "g");
     push("F", "fat", "g");
-    push("Fiber", "fiber", "g");
-    push("Na", "sodium", "mg");
-    return bits.length ? `Remaining: ${bits.join(" · ")}` : "Targets already met (or no goals set).";
+    {
+      const g = Number(goals && goals.fiber) || 0;
+      const r = Number(remaining.fiber);
+      const actual = Number.isFinite(r) ? g - r : 0;
+      if (g > 0) bits.push(`Fiber ${fmt(actual)} / ${fmt(g)} g`);
+      else if (Number.isFinite(r) && actual !== 0) bits.push(`Fiber ${fmt(actual)} g`);
+    }
+    {
+      const g = Number(goals && goals.sodium) || 0;
+      const r = Number(remaining.sodium);
+      if (g > 0) {
+        if (Number.isFinite(r) && r < 0) bits.push(`Na over ${fmt(Math.abs(r))} mg`);
+        else bits.push(`Na room +${fmt(Number.isFinite(r) ? r : g)} mg`);
+      } else if (Number.isFinite(r) && r !== 0) {
+        bits.push(`Na ${fmt(Math.abs(r))} mg`);
+      }
+    }
+    return bits.length ? `Gap: ${bits.join(" · ")}` : "Targets already met (or no goals set).";
   }
 
   /**
@@ -1273,8 +1288,8 @@ const UI = (() => {
     }
     root.innerHTML = options.map((o, i) => {
       const reach = o.reachable === false
-        ? `<span class="muted small">May not fully hit targets</span>`
-        : `<span class="muted small">Within reach of targets</span>`;
+        ? `<span class="muted small">Misses protein or exceeds sodium — see note</span>`
+        : `<span class="muted small">Protein + sodium OK</span>`;
       const items = (o.itemLines || []).map((l) => `<li>${esc(l)}</li>`).join("");
       return `
         <div class="phase-option">

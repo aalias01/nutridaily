@@ -694,7 +694,7 @@ const App = (() => {
       const hint = UI.$("#gap-prompt-hint");
       if (hint) {
         hint.textContent =
-          "Copy the prompt into ChatGPT / Claude / any LLM. Ask for 2–3 options with different tradeoffs, then paste the GAP v1 … END reply. " +
+          "Copy or share the prompt into ChatGPT / Claude / any LLM. Paste the GAP v1 … END reply with 3 options. " +
           "Optional NUTRI v1 blocks refine Reference catalog foods or add brand-new dishes.";
       }
     } else if (step === "choose") {
@@ -822,7 +822,7 @@ const App = (() => {
       return;
     }
     if (noteEl) {
-      const reach = plan.reachable === false ? "May not fully hit targets. " : "";
+      const reach = plan.reachable === false ? "Misses protein or exceeds sodium. " : "";
       noteEl.textContent = `${reach}${plan.note || ""}`.trim() || "Tap a food to log the suggested amount (you can edit grams).";
     }
     if (banner) {

@@ -509,8 +509,15 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
   ok(/not medical advice/i.test(prompt), "prompt includes medical disclaimer");
   ok(/rice \(cooked\)/.test(prompt) && /preferred 100–140 g/.test(prompt), "prompt includes candidate portion band");
   ok(/banana/.test(prompt) && /Totals so far/.test(prompt), "prompt includes logged foods and totals");
-  ok(/Remaining/.test(prompt), "prompt includes remaining macros");
+  ok(/Gap \/ status|Remaining/.test(prompt), "prompt includes gap/status macros");
+  ok(/positive = still to add/i.test(prompt), "prompt explains remaining sign");
+  ok(/report only/i.test(prompt), "fiber is report-only, not a hit target");
+  ok(/lower is better/i.test(prompt), "sodium lower is better");
+  ok(/warn.*ceiling|over ceiling/i.test(prompt), "sodium overshoot must be warned");
+  ok(/WHOLE day|already logged.*PLUS/i.test(prompt), "Projected is end-of-day totals");
+  ok(/protein meets the floor AND projected sodium/i.test(prompt), "Reachable tied to protein + sodium only");
   ok(/Option: 1/.test(prompt) && /3 plan OPTIONS/i.test(prompt), "prompt asks for multiple options");
+  ok(/Protect protein/i.test(prompt) && /Lowest sodium/i.test(prompt), "option labels prioritize protein / lowest sodium");
 
   const block = `GAP v1
 Day: 2026-08-02
