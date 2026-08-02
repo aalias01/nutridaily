@@ -443,14 +443,14 @@ const App = (() => {
 
   function refreshGapChip() {
     const chip = UI.$("#btn-gap-plan");
-    if (!chip) return;
+    const closeBtn = UI.$("#btn-close-gap");
+    const hasPlan = !!dayPlan(state.viewDay);
     const n = pendingPlanCount(state.viewDay);
-    if (n > 0) {
-      chip.hidden = false;
-      chip.textContent = `Plan: ${n} left`;
-    } else {
-      chip.hidden = true;
+    if (chip) {
+      chip.hidden = !hasPlan;
+      if (hasPlan) chip.textContent = `Plan: ${n} left`;
     }
+    if (closeBtn) closeBtn.hidden = hasPlan;
   }
 
   function pruneDayPlans(keepDays) {
@@ -815,7 +815,7 @@ const App = (() => {
       }
     }
 
-    if (preferPlan && plan && pendingPlanCount(state.viewDay) > 0) {
+    if (preferPlan && plan) {
       restoreGapSelectionFromPlan(plan, true);
       UI.openSheet("sheet-gap", { noAutofocus: true });
       showGapSheetStep("plan");
