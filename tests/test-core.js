@@ -210,6 +210,19 @@ console.log("\n[7] Phases / goalsForDay");
   Phases.appendRevision(settings, { ...Phases.activePhase(settings.phases).revisions[0].goals, kcal: 3500 }, "2026-08-15", "", { kind: "bulk" });
   ok(Phases.activePhase(settings.phases).name === "Bulk v2.0", "large kcal change forces major version");
 
+  ok(Phases.normalizeKind("recomp") === "recomp", "recomp is a valid kind");
+  ok(Phases.formatPhaseName("recomp", 1, 0) === "Recomp v1.0", "recomp formats as Recomp v1.0");
+  ok(Phases.ageFromDob("1990-08-02", "2026-08-01") === 35, "ageFromDob before birthday");
+  ok(Phases.ageFromDob("1990-08-02", "2026-08-02") === 36, "ageFromDob on birthday");
+  settings.profile = Phases.normalizeProfile({
+    dob: "1990-01-01", sex: "male", heightCm: 175, activity: "moderate", updatedAt: 1,
+  });
+  settings.weights["2026-08-15"] = { kg: 80, updatedAt: 1 };
+  let ready = Phases.profileReadyForAi(settings, { todayKey: "2026-08-15" });
+  ok(ready.ok && ready.age === 36 && ready.weightKg === 80, "profileReadyForAi when complete");
+  ready = Phases.profileReadyForAi({ profile: {}, weights: {} }, { todayKey: "2026-08-15" });
+  ok(!ready.ok && ready.missing.length >= 4, "profileReadyForAi lists missing fields");
+
   const scored = Phases.scoreDayTotals(
     { count: 1, kcal: { mean: 2200 }, p: { mean: 100 }, c: { mean: 250 }, f: { mean: 70 }, fb: { mean: 28 }, na: { mean: 2000 } },
     { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 }
@@ -351,6 +364,58 @@ console.log("\n[9] Recipe sharing (untrusted input validation)");
   ok(Share.unpack(evil1).ok === false, "impossible kcal density (>9.2 kcal/g) rejected");
   const evil2 = Share.pack({ name: "quantum food", per100: { kcal: 400, p: 60, c: 60, f: 60, fb: 0, na: 0 }, units: { serving: 50 } });
   ok(Share.unpack(evil2).ok === false, "macros >100 g per 100 g rejected");
+}
+
+console.log("\n[10] PHASE AI target prompt parse");
+{
+  globalThis.Phases = require("../js/phases.js");
+  const PhasePrompt = require("../js/phase-prompt.js");
+  const prompt = PhasePrompt.buildTargetPrompt({
+    kind: "recomp",
+    age: 36,
+    weightKg: 80,
+    profile: { sex: "male", heightCm: 175, activity: "moderate", notes: "" },
+  });
+  ok(/Kind: recomp/.test(prompt) || /Recomp/.test(prompt), "prompt includes recomp goal");
+  ok(/not medical advice/i.test(prompt), "prompt includes medical disclaimer");
+  ok(/PHASE v1/.test(prompt), "prompt asks for PHASE v1 format");
+
+  const block = `PHASE v1
+Kind: recomp
+Option: 1 | Conservative
+Kcal: 2100
+Protein: 160
+Carbs: 180
+Fat: 65
+Fiber: 30
+Sodium: 2300
+Reason: Near maintenance with high protein for recomp.
+Sources: Mifflin-St Jeor; ISSN protein position stand
+Option: 2 | Balanced
+Kcal: 2200
+Protein: 170
+Carbs: 200
+Fat: 70
+Fiber: 30
+Sodium: 2300
+Reason: Slightly higher carbs for training.
+Sources: ISSN; ACSM
+Option: 3 | Aggressive
+Kcal: 2000
+Protein: 180
+Carbs: 160
+Fat: 60
+Fiber: 32
+Sodium: 2200
+Reason: Mild deficit with elevated protein.
+Sources: ISSN
+END`;
+  const parsed = PhasePrompt.parsePhaseBlock(block);
+  ok(parsed.ok, "parses PHASE block");
+  ok(parsed.kind === "recomp", "parsed kind is recomp");
+  ok(parsed.options.length === 3, "three options parsed");
+  ok(parsed.options[1].goals.kcal === 2200 && parsed.options[1].label === "Balanced", "option 2 macros and label");
+  ok(!PhasePrompt.parsePhaseBlock("hello").ok, "rejects non-PHASE text");
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

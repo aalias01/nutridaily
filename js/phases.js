@@ -5,10 +5,25 @@
 const Phases = (() => {
   const DEFAULT_GOALS = { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 };
   /** User-facing kinds (pills). Legacy "custom" still resolves in data. */
-  const KINDS = ["cut", "maintain", "bulk"];
-  const KIND_LABEL = { cut: "Cut", bulk: "Bulk", maintain: "Maintain", custom: "Custom" };
+  const KINDS = ["cut", "maintain", "bulk", "recomp"];
+  const KIND_LABEL = {
+    cut: "Cut",
+    bulk: "Bulk",
+    maintain: "Maintain",
+    recomp: "Recomp",
+    custom: "Custom",
+  };
   const MAJOR_KCAL_DELTA = 200;
   const MAJOR_PROTEIN_DELTA = 25;
+  const SEX_OPTIONS = ["male", "female", "other"];
+  const ACTIVITY_OPTIONS = ["sedentary", "light", "moderate", "active", "very_active"];
+  const ACTIVITY_LABEL = {
+    sedentary: "Sedentary (desk, little exercise)",
+    light: "Light (1–3 days/week)",
+    moderate: "Moderate (3–5 days/week)",
+    active: "Active (6–7 days/week)",
+    very_active: "Very active (physical job or 2x/day)",
+  };
 
   /** Per-nutrient hit bands (v1 global). */
   const BANDS = {
@@ -109,8 +124,89 @@ const Phases = (() => {
   }
 
   function normalizeKind(kind) {
-    if (kind === "cut" || kind === "bulk" || kind === "maintain") return kind;
+    if (kind === "cut" || kind === "bulk" || kind === "maintain" || kind === "recomp") return kind;
     return "maintain";
+  }
+
+  function ageFromDob(dob, onDay) {
+    if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(String(dob))) return null;
+    const day = onDay || new Date().toISOString().slice(0, 10);
+    const [y, m, d] = String(dob).split("-").map(Number);
+    const [Y, M, D] = String(day).split("-").map(Number);
+    let age = Y - y;
+    if (M < m || (M === m && D < d)) age -= 1;
+    return age >= 0 && age < 130 ? age : null;
+  }
+
+  function normalizeProfile(p) {
+    const out = {
+      dob: "",
+      sex: "",
+      heightCm: null,
+      activity: "",
+      notes: "",
+      updatedAt: 0,
+    };
+    if (!p || typeof p !== "object") return out;
+    if (p.dob && /^\d{4}-\d{2}-\d{2}$/.test(String(p.dob))) out.dob = String(p.dob);
+    if (SEX_OPTIONS.includes(p.sex)) out.sex = p.sex;
+    const h = Number(p.heightCm);
+    if (Number.isFinite(h) && h >= 90 && h <= 250) out.heightCm = Math.round(h * 10) / 10;
+    if (ACTIVITY_OPTIONS.includes(p.activity)) out.activity = p.activity;
+    if (p.notes != null) out.notes = String(p.notes).slice(0, 500);
+    out.updatedAt = Number(p.updatedAt) || 0;
+    return out;
+  }
+
+  function ensureProfile(settings) {
+    if (!settings || typeof settings !== "object") return normalizeProfile(null);
+    settings.profile = normalizeProfile(settings.profile);
+    return settings.profile;
+  }
+
+  /** Latest non-cleared body weight (kg), preferring onOrBefore day then any. */
+  function latestWeightKg(settings, onOrBefore) {
+    const entries = Object.entries((settings && settings.weights) || {})
+      .filter(([, w]) => w && !w.cleared && w.kg != null && Number.isFinite(Number(w.kg)))
+      .sort((a, b) => b[0].localeCompare(a[0]));
+    for (const [day, w] of entries) {
+      if (onOrBefore && day > onOrBefore) continue;
+      return Number(w.kg);
+    }
+    return entries.length ? Number(entries[0][1].kg) : null;
+  }
+
+  /**
+   * Required for AI targets copy: dob→age, sex, height, activity, weightKg.
+   * Returns { ok, missing: string[], age, profile, weightKg }.
+   */
+  function profileReadyForAi(settings, opts) {
+    const profile = ensureProfile(settings);
+    const today = (opts && opts.todayKey) || new Date().toISOString().slice(0, 10);
+    const weightKg = opts && opts.weightKg != null && Number.isFinite(Number(opts.weightKg))
+      ? Number(opts.weightKg)
+      : latestWeightKg(settings, today);
+    const age = ageFromDob(profile.dob, today);
+    const missing = [];
+    if (!profile.dob || age == null) missing.push("date of birth");
+    if (!profile.sex) missing.push("sex");
+    if (profile.heightCm == null) missing.push("height");
+    if (!profile.activity) missing.push("activity level");
+    if (weightKg == null || !(weightKg > 0)) missing.push("body weight");
+    return {
+      ok: missing.length === 0,
+      missing,
+      age,
+      profile,
+      weightKg: weightKg != null ? Math.round(weightKg * 100) / 100 : null,
+    };
+  }
+
+  function mergeProfiles(a, b) {
+    const A = normalizeProfile(a);
+    const B = normalizeProfile(b);
+    if ((B.updatedAt || 0) >= (A.updatedAt || 0)) return B;
+    return A;
   }
 
   function formatPhaseName(kind, major, minor) {
@@ -217,6 +313,7 @@ const Phases = (() => {
     if (!settings || typeof settings !== "object") return settings;
     if (!settings.dayGoals || typeof settings.dayGoals !== "object") settings.dayGoals = {};
     if (!settings.weights || typeof settings.weights !== "object") settings.weights = {};
+    ensureProfile(settings);
     if (Array.isArray(settings.phases) && settings.phases.length) {
       for (const p of settings.phases) {
         if (!p) continue;
@@ -738,6 +835,9 @@ const Phases = (() => {
     DEFAULT_GOALS,
     KINDS,
     KIND_LABEL,
+    SEX_OPTIONS,
+    ACTIVITY_OPTIONS,
+    ACTIVITY_LABEL,
     BANDS,
     normalizeGoals,
     goalsEqual,
@@ -758,6 +858,12 @@ const Phases = (() => {
     applyPhaseLabel,
     ensurePhaseVersion,
     normalizeKind,
+    ageFromDob,
+    normalizeProfile,
+    ensureProfile,
+    latestWeightKg,
+    profileReadyForAi,
+    mergeProfiles,
     dayBefore,
     scoreDayTotals,
     scoreRange,

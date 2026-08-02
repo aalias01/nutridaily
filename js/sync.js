@@ -135,6 +135,7 @@ const Sync = (() => {
     let dayGoals;
     let phases;
     let weights;
+    let profile;
     if (localReset > remoteReset) {
       const remoteEv = (remote.events || []).filter((e) => (e.ts || 0) >= localReset);
       const remotePf = (remote.personalFoods || []).filter((f) => (f.updatedAt || 0) >= localReset);
@@ -143,6 +144,7 @@ const Sync = (() => {
       dayGoals = mergeDayGoals(local.dayGoals, filterDayGoalsAfter(remote.dayGoals, localReset));
       phases = mergePhases(local.phases, filterPhasesAfter(remote.phases, localReset));
       weights = mergeWeights(local.weights, filterWeightsAfter(remote.weights, localReset));
+      profile = mergeProfiles(local.profile, remote.profile);
     } else if (remoteReset > localReset) {
       const localEv = (local.events || []).filter((e) => (e.ts || 0) >= remoteReset);
       const localPf = (local.personalFoods || []).filter((f) => (f.updatedAt || 0) >= remoteReset);
@@ -151,12 +153,14 @@ const Sync = (() => {
       dayGoals = mergeDayGoals(filterDayGoalsAfter(local.dayGoals, remoteReset), remote.dayGoals);
       phases = mergePhases(filterPhasesAfter(local.phases, remoteReset), remote.phases);
       weights = mergeWeights(filterWeightsAfter(local.weights, remoteReset), remote.weights);
+      profile = mergeProfiles(local.profile, remote.profile);
     } else {
       events = mergeEvents(local.events, remote.events);
       personalFoods = mergePersonal(local.personalFoods, remote.personalFoods);
       dayGoals = mergeDayGoals(local.dayGoals, remote.dayGoals);
       phases = mergePhases(local.phases, remote.phases);
       weights = mergeWeights(local.weights, remote.weights);
+      profile = mergeProfiles(local.profile, remote.profile);
     }
     const goalsLocalNewer = (local.goalsUpdatedAt || 0) >= (remote.goalsUpdatedAt || 0);
     const merged = {
@@ -168,6 +172,7 @@ const Sync = (() => {
       dayGoals,
       phases,
       weights,
+      profile,
       goals: goalsLocalNewer ? local.goals : remote.goals,
       goalsUpdatedAt: Math.max(local.goalsUpdatedAt || 0, remote.goalsUpdatedAt || 0),
     };
@@ -176,6 +181,13 @@ const Sync = (() => {
       differsFromLocal: fingerprint(merged) !== fingerprint(local),
       differsFromRemote: fingerprint(merged) !== fingerprint(remote),
     };
+  }
+
+  function mergeProfiles(a, b) {
+    if (typeof Phases !== "undefined" && Phases.mergeProfiles) return Phases.mergeProfiles(a, b);
+    const A = a || {};
+    const B = b || {};
+    return ((B.updatedAt || 0) >= (A.updatedAt || 0)) ? { ...B } : { ...A };
   }
 
   function fingerprint(doc) {
@@ -194,7 +206,9 @@ const Sync = (() => {
       const w = doc.weights[d] || {};
       return `${d}:${w.updatedAt || 0}:${w.kg || ""}:${w.cleared ? 1 : 0}`;
     }).join(",");
-    return `${doc.resetAt || 0}|${ev}|${pf}|${dg}|${ph}|${wt}|${JSON.stringify(doc.goals || {})}`;
+    const pr = doc.profile || {};
+    const profileFp = `${pr.updatedAt || 0}:${pr.dob || ""}:${pr.sex || ""}:${pr.heightCm || ""}:${pr.activity || ""}`;
+    return `${doc.resetAt || 0}|${ev}|${pf}|${dg}|${ph}|${wt}|${profileFp}|${JSON.stringify(doc.goals || {})}`;
   }
 
   // ---------- doc <-> app state ----------
@@ -208,6 +222,7 @@ const Sync = (() => {
       dayGoals: deps.getDayGoals ? deps.getDayGoals() : {},
       phases: deps.getPhases ? deps.getPhases() : [],
       weights: deps.getWeights ? deps.getWeights() : {},
+      profile: deps.getProfile ? deps.getProfile() : {},
       goals: deps.getGoals(),
       goalsUpdatedAt: deps.getGoalsUpdatedAt ? deps.getGoalsUpdatedAt() : 0,
     };
@@ -224,6 +239,9 @@ const Sync = (() => {
     }
     if (deps.setWeights) {
       if (doc.weights && typeof doc.weights === "object") deps.setWeights(doc.weights);
+    }
+    if (deps.setProfile && doc.profile && typeof doc.profile === "object") {
+      deps.setProfile(doc.profile);
     }
     if (deps.onRemoteApplied) deps.onRemoteApplied();
   }
@@ -335,7 +353,7 @@ const Sync = (() => {
 
   return {
     init, connect, disconnect, resume, schedulePush, fullSync, state,
-    mergeDocs, mergeEvents, mergePersonal, mergeDayGoals, mergePhases, mergeWeights,
+    mergeDocs, mergeEvents, mergePersonal, mergeDayGoals, mergePhases, mergeWeights, mergeProfiles,
     activeDayGoals, markReset, getResetAt, fingerprint, DOC_VERSION,
   };
 })();

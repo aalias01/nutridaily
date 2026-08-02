@@ -17,6 +17,7 @@ const App = (() => {
       dayGoals: {},
       phases: [],
       weights: {},
+      profile: {},
     },
     personalFoods: [],
     viewDay: null, // YYYY-MM-DD
@@ -104,6 +105,7 @@ const App = (() => {
     if (!state.settings.theme) state.settings.theme = "light";
     if (!state.settings.dayGoals || typeof state.settings.dayGoals !== "object") state.settings.dayGoals = {};
     if (!state.settings.weights || typeof state.settings.weights !== "object") state.settings.weights = {};
+    Phases.ensureProfile(state.settings);
     try { state.personalFoods = JSON.parse(localStorage.getItem(PERSONAL_KEY) || "[]"); }
     catch (e) { state.personalFoods = []; }
     state.viewDay = Ledger.todayKey();
@@ -938,6 +940,19 @@ const App = (() => {
       }
     }
     if (UI.$("#set-phase-major")) UI.$("#set-phase-major").checked = false;
+    const profile = Phases.ensureProfile(state.settings);
+    if (UI.$("#set-dob")) UI.$("#set-dob").value = profile.dob || "";
+    if (UI.$("#set-sex")) UI.$("#set-sex").value = profile.sex || "";
+    if (UI.$("#set-height")) UI.$("#set-height").value = profile.heightCm != null ? profile.heightCm : "";
+    if (UI.$("#set-activity")) UI.$("#set-activity").value = profile.activity || "";
+    if (UI.$("#set-profile-notes")) UI.$("#set-profile-notes").value = profile.notes || "";
+    const ageHint = UI.$("#profile-age-hint");
+    if (ageHint) {
+      const age = Phases.ageFromDob(profile.dob, Ledger.todayKey());
+      ageHint.textContent = age != null
+        ? `Age today: ${age}. Log weight on Today so AI targets can use it.`
+        : "Add date of birth, sex, height, and activity. Log weight on Today.";
+    }
     UI.$("#set-imperial").checked = !!state.settings.imperial;
     UI.$("#set-gclient").value = localStorage.getItem("nd_gclient") || "";
     const theme = state.settings.theme || "light";
@@ -950,6 +965,106 @@ const App = (() => {
         ? "Using the deploy default Client ID. Paste below only to override."
         : "No deploy Client ID yet. Paste a Web Client ID here, or set GOOGLE_CLIENT_ID on Vercel.";
     if (!baked && !override) UI.$("#client-id-details").open = true;
+  }
+
+  function persistProfile(profile) {
+    state.settings.profile = Phases.normalizeProfile({ ...profile, updatedAt: Date.now() });
+    saveSettings();
+    Sync.schedulePush();
+  }
+
+  function saveProfileFromSettingsFields() {
+    const height = Number(UI.$("#set-height") && UI.$("#set-height").value);
+    persistProfile({
+      dob: (UI.$("#set-dob") && UI.$("#set-dob").value) || "",
+      sex: (UI.$("#set-sex") && UI.$("#set-sex").value) || "",
+      heightCm: Number.isFinite(height) ? height : null,
+      activity: (UI.$("#set-activity") && UI.$("#set-activity").value) || "",
+      notes: (UI.$("#set-profile-notes") && UI.$("#set-profile-notes").value) || "",
+    });
+    syncSettingsForm();
+  }
+
+  function saveProfileFromAiSheet() {
+    const height = Number(UI.$("#ai-height") && UI.$("#ai-height").value);
+    persistProfile({
+      dob: (UI.$("#ai-dob") && UI.$("#ai-dob").value) || "",
+      sex: (UI.$("#ai-sex") && UI.$("#ai-sex").value) || "",
+      heightCm: Number.isFinite(height) ? height : null,
+      activity: (UI.$("#ai-activity") && UI.$("#ai-activity").value) || "",
+      notes: (UI.$("#ai-notes") && UI.$("#ai-notes").value) || "",
+    });
+  }
+
+  function sheetWeightKg() {
+    const el = UI.$("#ai-weight");
+    const n = el ? Number(el.value) : NaN;
+    if (Number.isFinite(n) && n > 0) return n;
+    return Phases.latestWeightKg(state.settings, Ledger.todayKey());
+  }
+
+  function refreshAiCopyGate() {
+    const btn = UI.$("#btn-copy-phase-prompt");
+    const hint = UI.$("#ai-missing-hint");
+    if (!btn) return;
+    const height = Number(UI.$("#ai-height") && UI.$("#ai-height").value);
+    const profile = Phases.normalizeProfile({
+      dob: (UI.$("#ai-dob") && UI.$("#ai-dob").value) || "",
+      sex: (UI.$("#ai-sex") && UI.$("#ai-sex").value) || "",
+      heightCm: Number.isFinite(height) ? height : null,
+      activity: (UI.$("#ai-activity") && UI.$("#ai-activity").value) || "",
+      notes: (UI.$("#ai-notes") && UI.$("#ai-notes").value) || "",
+      updatedAt: Date.now(),
+    });
+    const ready = Phases.profileReadyForAi(
+      { ...state.settings, profile },
+      { todayKey: Ledger.todayKey(), weightKg: sheetWeightKg() }
+    );
+    btn.disabled = !ready.ok;
+    btn.setAttribute("aria-disabled", ready.ok ? "false" : "true");
+    if (hint) {
+      hint.textContent = ready.ok
+        ? "Ready to copy. Paste into ChatGPT or Claude, then paste the PHASE reply below."
+        : `Copy is disabled until you add: ${ready.missing.join(", ")}.`;
+    }
+    return ready;
+  }
+
+  function openAiTargetsSheet() {
+    const profile = Phases.ensureProfile(state.settings);
+    if (UI.$("#ai-dob")) UI.$("#ai-dob").value = profile.dob || "";
+    if (UI.$("#ai-sex")) UI.$("#ai-sex").value = profile.sex || "";
+    if (UI.$("#ai-height")) UI.$("#ai-height").value = profile.heightCm != null ? profile.heightCm : "";
+    if (UI.$("#ai-activity")) UI.$("#ai-activity").value = profile.activity || "";
+    if (UI.$("#ai-notes")) UI.$("#ai-notes").value = profile.notes || "";
+    const w = Phases.latestWeightKg(state.settings, Ledger.todayKey());
+    if (UI.$("#ai-weight")) UI.$("#ai-weight").value = w != null ? w : "";
+    const kind = selectedPhaseKind();
+    if (UI.$("#ai-kind-label")) UI.$("#ai-kind-label").textContent = Phases.KIND_LABEL[kind] || kind;
+    if (UI.$("#ai-phase-paste")) UI.$("#ai-phase-paste").value = "";
+    if (UI.$("#ai-phase-options")) UI.$("#ai-phase-options").innerHTML = "";
+    refreshAiCopyGate();
+    UI.openSheet("sheet-phase-targets");
+  }
+
+  function renderAiPhaseOptions(parsed) {
+    const box = UI.$("#ai-phase-options");
+    if (!box) return;
+    if (!parsed || !parsed.ok) {
+      box.innerHTML = "";
+      return;
+    }
+    box.innerHTML = parsed.options.map((o, i) => {
+      const g = o.goals;
+      return `<div class="phase-option">
+        <h4>${UI.esc(o.label)} · ${Math.round(g.kcal)} kcal</h4>
+        <p class="muted small">P${Math.round(g.protein)} · C${Math.round(g.carbs)} · F${Math.round(g.fat)} · Fiber ${Math.round(g.fiber)} · Na ${Math.round(g.sodium)}</p>
+        <p class="muted small">${UI.esc(o.reason)}</p>
+        <p class="muted small">${UI.esc(o.sources)}</p>
+        <button type="button" class="btn full ai-apply-opt" data-opt="${i}">Apply to phase targets</button>
+      </div>`;
+    }).join("");
+    box._parsed = parsed;
   }
 
   function openSettings() {
@@ -1055,6 +1170,7 @@ const App = (() => {
           delete state.settings.model;
           state.settings.goals = { ...DEFAULT_GOALS, ...(state.settings.goals || {}) };
           if (!state.settings.weights || typeof state.settings.weights !== "object") state.settings.weights = {};
+          Phases.ensureProfile(state.settings);
           Phases.ensureMigrated(
             state.settings,
             Phases.earliestDayFromEvents(Ledger.allEvents()),
@@ -1231,6 +1347,86 @@ const App = (() => {
       syncSettingsForm();
       UI.toast(`Started ${started.name}`);
     });
+
+    const profileFields = ["#set-dob", "#set-sex", "#set-height", "#set-activity", "#set-profile-notes"];
+    for (const sel of profileFields) {
+      const el = UI.$(sel);
+      if (!el) continue;
+      el.addEventListener("change", saveProfileFromSettingsFields);
+      if (el.tagName === "TEXTAREA" || el.type === "text" || el.type === "number") {
+        el.addEventListener("blur", saveProfileFromSettingsFields);
+      }
+    }
+
+    if (UI.$("#btn-ai-targets")) {
+      UI.$("#btn-ai-targets").addEventListener("click", openAiTargetsSheet);
+    }
+    if (UI.$("#ai-targets-close")) {
+      UI.$("#ai-targets-close").addEventListener("click", () => UI.closeSheet("sheet-phase-targets"));
+    }
+    const aiFields = ["#ai-dob", "#ai-sex", "#ai-height", "#ai-activity", "#ai-weight", "#ai-notes"];
+    for (const sel of aiFields) {
+      const el = UI.$(sel);
+      if (!el) continue;
+      el.addEventListener("input", refreshAiCopyGate);
+      el.addEventListener("change", () => {
+        if (sel !== "#ai-weight") saveProfileFromAiSheet();
+        refreshAiCopyGate();
+        syncSettingsForm();
+      });
+    }
+    if (UI.$("#btn-copy-phase-prompt")) {
+      UI.$("#btn-copy-phase-prompt").addEventListener("click", () => {
+        const ready = refreshAiCopyGate();
+        if (!ready || !ready.ok) {
+          UI.toast("Fill the required profile fields first");
+          return;
+        }
+        saveProfileFromAiSheet();
+        const text = PhasePrompt.buildTargetPrompt({
+          kind: selectedPhaseKind(),
+          age: ready.age,
+          profile: ready.profile,
+          weightKg: ready.weightKg,
+          notes: (UI.$("#ai-notes") && UI.$("#ai-notes").value) || "",
+        });
+        navigator.clipboard.writeText(text).then(() => UI.toast("AI targets prompt copied")).catch(() => {
+          window.prompt("Select all and copy (Cmd/Ctrl+C):", text);
+        });
+      });
+    }
+    if (UI.$("#btn-parse-phase")) {
+      UI.$("#btn-parse-phase").addEventListener("click", () => {
+        const raw = (UI.$("#ai-phase-paste") && UI.$("#ai-phase-paste").value) || "";
+        const parsed = PhasePrompt.parsePhaseBlock(raw);
+        if (!parsed.ok) {
+          UI.toast(parsed.error || "Could not parse");
+          renderAiPhaseOptions(null);
+          return;
+        }
+        renderAiPhaseOptions(parsed);
+        UI.toast(`${parsed.options.length} options ready`);
+      });
+    }
+    if (UI.$("#ai-phase-options")) {
+      UI.$("#ai-phase-options").addEventListener("click", (e) => {
+        const btn = e.target.closest(".ai-apply-opt");
+        if (!btn) return;
+        const parsed = UI.$("#ai-phase-options")._parsed;
+        const opt = parsed && parsed.options[Number(btn.dataset.opt)];
+        if (!opt) return;
+        const g = opt.goals;
+        UI.$("#set-kcal").value = g.kcal;
+        UI.$("#set-protein").value = g.protein;
+        UI.$("#set-carbs").value = g.carbs;
+        UI.$("#set-fat").value = g.fat;
+        UI.$("#set-fiber").value = g.fiber;
+        if (UI.$("#set-sodium")) UI.$("#set-sodium").value = g.sodium;
+        if (parsed.kind) setKindSeg("#phase-kind-seg", parsed.kind, "phase");
+        UI.closeSheet("sheet-phase-targets");
+        UI.toast(`Applied ${opt.label}. Tap Save phase to keep it.`);
+      });
+    }
 
     UI.$("#btn-weight-save").addEventListener("click", saveWeightFromField);
     UI.$("#day-weight").addEventListener("keydown", (e) => {
@@ -1671,6 +1867,7 @@ const App = (() => {
         dayGoals: {},
         phases: [],
         weights: {},
+        profile: {},
       };
       state.viewDay = Ledger.todayKey();
       state.lastCalendarToday = state.viewDay;
@@ -1757,6 +1954,11 @@ const App = (() => {
       getWeights: () => state.settings.weights || {},
       setWeights: (w) => {
         state.settings.weights = w && typeof w === "object" ? w : {};
+        saveSettings();
+      },
+      getProfile: () => Phases.ensureProfile(state.settings),
+      setProfile: (p) => {
+        state.settings.profile = Phases.normalizeProfile(p);
         saveSettings();
       },
       onStatus: (s, detail) => {

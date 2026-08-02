@@ -306,8 +306,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
   margin-bottom: 6px;
 }
 .phase-title-row strong { font-size: 16px; letter-spacing: -0.02em; }
-.phase-kind-seg { display: flex; width: 100%; margin: 10px 0 12px; }
-.phase-kind-seg button { flex: 1; }
+.phase-kind-seg { display: flex; width: 100%; margin: 10px 0 12px; flex-wrap: wrap; }
+.phase-kind-seg button { flex: 1; min-width: 22%; }
 .phase-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .phase-revision-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 16px; max-height: 50vh; overflow: auto; }
 .rev-row {
@@ -321,6 +321,43 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
   color: var(--accent-ink); border: 1px solid rgba(61, 153, 112, 0.35);
   padding: 2px 7px; border-radius: 999px;
 }
+.profile-card { margin-top: 4px; }
+.profile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.profile-card textarea, #sheet-phase-targets textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+}
+.disclaimer {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 0 0 10px;
+}
+.btn:disabled, .btn[disabled] {
+  opacity: 0.42;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.phase-option-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.phase-option {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+}
+.phase-option h4 { margin: 0 0 4px; font-size: 14px; }
+.phase-option .muted { margin: 0 0 8px; }
+.sheet-card-tall { max-height: min(92vh, 720px); overflow: auto; }
 .phase-meta-grid {
   display: grid;
   grid-template-columns: 1.6fr 1fr;
