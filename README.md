@@ -21,10 +21,14 @@ Or open the hosted URL. Install from Settings → **Home screen** (Chrome Instal
 
 ## First-time flow
 
-1. Tap **+** (or **Add** on Foods) → **New food from ChatGPT paste**.
+**Common foods (no ChatGPT):** Today → **+** → pick from **Common foods** (banana, apple, eggs, rice, …) or search the catalog → enter grams / pieces → Save. First pick copies it into My Foods.
+
+**Homemade dishes:**
+
+1. Tap **+** → **Homemade dish (ChatGPT paste)**.
 2. **Copy ChatGPT prompt**, paste it into ChatGPT, then describe your dish.
 3. Copy ChatGPT’s reply into the app → **Import** → review macros → **Save food**.
-4. On Today, tap **+**, pick the food, enter grams (or serving / piece / batch), save.
+4. Log it anytime with grams or a serving.
 
 ## What gets tracked
 

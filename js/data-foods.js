@@ -167,4 +167,11 @@ const FOOD_DB = [
   { id: "soup-veg", name: "vegetable soup", aliases: ["soup", "vegetable soup"], per100: { kcal: 40, p: 1.5, c: 6.5, f: 1, fb: 1.4, na: 320 }, units: { bowl: 300, cup: 240 }, cat: "dish" },
 ];
 
+/** Everyday items surfaced in the Add sheet without ChatGPT. Order = display order. */
+const FOOD_COMMON_IDS = [
+  "banana", "apple", "egg", "chicken-breast", "greek-yogurt-nonfat", "oats-dry",
+  "brown-rice", "white-rice", "chapati", "bread-ww", "salmon", "avocado",
+  "milk-whole", "almonds", "olive-oil", "broccoli",
+];
+
 if (typeof module !== "undefined") module.exports = FOOD_DB;

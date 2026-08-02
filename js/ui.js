@@ -120,10 +120,15 @@ const UI = (() => {
   function renderPicker(personal, query, showCatalog) {
     const q = String(query || "").trim();
     const root = $("#pick-list");
+    const DB = typeof FOOD_DB !== "undefined" ? FOOD_DB : [];
+    const byId = new Map(DB.map((f) => [f.id, f]));
+    const personalActive = Foods.active(personal);
+    const ownedCatalogIds = new Set(personalActive.map((f) => f.catalogId).filter(Boolean));
+
     const recent = q ? [] : Foods.recent(personal, 8);
     const recentIds = new Set(recent.map((f) => f.id));
     const freq = q ? [] : Foods.frequent(personal, 8, recentIds);
-    let all = Foods.active(personal);
+    let all = personalActive;
     if (q) {
       all = all.filter((f) => FoodMatch.scoreMatch(q, f.name) >= 0.35 || (f.aliases || []).some((a) => FoodMatch.scoreMatch(q, a) >= 0.35))
         .sort((a, b) => FoodMatch.scoreMatch(q, b.name) - FoodMatch.scoreMatch(q, a.name));
@@ -131,44 +136,51 @@ const UI = (() => {
       all = Foods.sortForPicker(personal).filter((f) => !recentIds.has(f.id) && !freq.find((x) => x.id === f.id));
     }
 
-    const section = (title, items) => {
+    const personalRow = (f) =>
+      `<button type="button" class="log-row" data-action="pick-food" data-id="${esc(f.id)}">
+        <div class="r-name">${esc(f.name)}</div>
+        <span class="mini">${fmt(f.per100.kcal)} /100g</span>
+      </button>`;
+    const catalogRow = (f) =>
+      `<button type="button" class="log-row" data-action="pick-catalog" data-id="${esc(f.id)}">
+        <div class="r-name">${esc(f.name)}</div>
+        <span class="mini">${fmt(f.per100.kcal)} /100g</span>
+      </button>`;
+
+    const section = (title, items, rowFn) => {
       if (!items.length) return "";
-      return `<div class="pick-section"><div class="meal-label">${esc(title)}</div>${items.map((f) =>
-        `<button type="button" class="log-row" data-action="pick-food" data-id="${esc(f.id)}">
-          <div class="r-name">${esc(f.name)}</div>
-          <span class="mini">${fmt(f.per100.kcal)} /100g</span>
-        </button>`
-      ).join("")}</div>`;
+      return `<div class="pick-section"><div class="meal-label">${esc(title)}</div>${items.map(rowFn).join("")}</div>`;
     };
 
     let html = "";
     if (!q) {
-      html += section("Recent", recent);
-      html += section("Frequent", freq);
-      html += section("All foods", all.slice(0, 40));
+      html += section("Recent", recent, personalRow);
+      html += section("Frequent", freq, personalRow);
+      html += section("My foods", all.slice(0, 40), personalRow);
+      if (showCatalog) {
+        const commonIds = typeof FOOD_COMMON_IDS !== "undefined" ? FOOD_COMMON_IDS : [];
+        const common = commonIds
+          .map((id) => byId.get(id))
+          .filter((f) => f && !ownedCatalogIds.has(f.id));
+        html += section("Common foods", common, catalogRow);
+        html += `<p class="muted small pick-hint">Banana, eggs, rice, and more — no ChatGPT needed. Search the full catalog above, or paste a homemade dish below.</p>`;
+      }
     } else {
-      html += section("Matches", all.slice(0, 40));
-    }
-
-    if (showCatalog) {
-      const DB = typeof FOOD_DB !== "undefined" ? FOOD_DB : [];
-      let cats = DB;
-      if (q) {
-        cats = DB.filter((f) => FoodMatch.scoreMatch(q, f.name) >= 0.45 || (f.aliases || []).some((a) => FoodMatch.scoreMatch(q, a) >= 0.45))
+      html += section("My foods", all.slice(0, 40), personalRow);
+      if (showCatalog) {
+        const cats = DB.filter((f) =>
+          !ownedCatalogIds.has(f.id) &&
+          (FoodMatch.scoreMatch(q, f.name) >= 0.4 || (f.aliases || []).some((a) => FoodMatch.scoreMatch(q, a) >= 0.4))
+        )
           .sort((a, b) => FoodMatch.scoreMatch(q, b.name) - FoodMatch.scoreMatch(q, a.name))
-          .slice(0, 20);
-      } else cats = [];
-      if (cats.length) {
-        html += `<div class="pick-section"><div class="meal-label">Reference catalog</div>${cats.map((f) =>
-          `<button type="button" class="log-row" data-action="pick-catalog" data-id="${esc(f.id)}">
-            <div class="r-name">${esc(f.name)} <span class="tag tag-mine">catalog</span></div>
-            <span class="mini">${fmt(f.per100.kcal)} /100g</span>
-          </button>`
-        ).join("")}</div>`;
+          .slice(0, 25);
+        html += section("Catalog", cats, catalogRow);
       }
     }
 
-    if (!html) html = `<div class="empty small">No foods yet. Paste a ChatGPT block to add one.</div>`;
+    if (!html) {
+      html = `<div class="empty small">Search common foods (banana, apple, eggs…), or paste a ChatGPT dish below.</div>`;
+    }
     root.innerHTML = html;
   }
 
