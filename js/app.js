@@ -1052,6 +1052,24 @@ const App = (() => {
       syncSettingsForm();
       UI.toast("Override cleared");
     });
+    const persistClientId = () => {
+      const gc = (UI.$("#set-gclient") && UI.$("#set-gclient").value.trim()) || "";
+      if (gc) localStorage.setItem("nd_gclient", gc);
+      else localStorage.removeItem("nd_gclient");
+      syncSettingsForm();
+    };
+    if (UI.$("#set-gclient")) {
+      UI.$("#set-gclient").addEventListener("change", persistClientId);
+      UI.$("#set-gclient").addEventListener("blur", persistClientId);
+    }
+    if (UI.$("#set-imperial")) {
+      UI.$("#set-imperial").addEventListener("change", () => {
+        state.settings.imperial = UI.$("#set-imperial").checked;
+        saveSettings();
+        syncWeightField();
+        UI.toast(state.settings.imperial ? "Ounces on" : "Grams only");
+      });
+    }
     UI.$("#btn-save-settings").addEventListener("click", () => {
       const today = Ledger.todayKey();
       Phases.ensureMigrated(state.settings, Phases.earliestDayFromEvents(Ledger.allEvents()), today);
@@ -1068,16 +1086,11 @@ const App = (() => {
         sodium: Number(UI.$("#set-sodium") && UI.$("#set-sodium").value) || 0,
       };
       const changed = Phases.appendRevision(state.settings, nextGoals, today);
-      state.settings.imperial = UI.$("#set-imperial").checked;
-      const gc = UI.$("#set-gclient").value.trim();
-      if (gc) localStorage.setItem("nd_gclient", gc);
-      else localStorage.removeItem("nd_gclient");
       saveSettings();
       Sync.schedulePush();
-      applyTheme();
       refreshAll();
       syncSettingsForm();
-      UI.toast(changed ? "Targets updated from today" : "Saved");
+      UI.toast(changed ? "Targets updated from today" : "Phase saved");
     });
 
     UI.$("#btn-start-phase").addEventListener("click", () => {

@@ -138,7 +138,6 @@
     <section id="view-settings" class="view">
       <div class="view-head">
         <h2>Settings</h2>
-        <button id="btn-save-settings" class="btn" type="button">Save</button>
       </div>
       <div class="settings-panel">
         <div id="install-card" class="installcard card-block"></div>
@@ -195,7 +194,10 @@
             <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
             <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
           </div>
-          <button id="btn-start-phase" class="btn ghost full" type="button">Start new phase…</button>
+          <div class="phase-actions">
+            <button id="btn-save-settings" class="btn full" type="button">Save phase</button>
+            <button id="btn-start-phase" class="btn ghost full" type="button">Start new phase…</button>
+          </div>
         </div>
 
         <label class="set-label">Units</label>

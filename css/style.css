@@ -301,6 +301,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .goals-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .goals-grid span { display: block; margin-bottom: 3px; }
 .phase-card { margin-top: 4px; }
+.phase-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .phase-meta-grid {
   display: grid;
   grid-template-columns: 1.6fr 1fr;
