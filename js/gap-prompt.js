@@ -167,9 +167,9 @@ const GapPrompt = (() => {
       "Task:\n" +
       "- Propose exactly 3 plan OPTIONS with different tradeoffs. I will pick one in the app.\n" +
       "  Use these exact short labels on the Option line. Parentheticals are guidance for you only; do not put them on the Option line.\n" +
-      "  1 | Balanced (closest on protein + kcal/carbs/fat within preferred portions)\n" +
-      "  2 | Protect protein (prioritize the protein floor even if kcal/carbs/fat drift)\n" +
-      "  3 | Lowest sodium (minimize sodium and avoid kcal overshoot; still meet protein if candidates allow; say so in Note if not)\n" +
+      "  1 | All selected (MUST include every candidate above with a positive qty; best overall fit among full-set plans)\n" +
+      "  2 | Protect protein (may omit foods; prioritize the protein floor even if kcal/carbs/fat drift)\n" +
+      "  3 | Lowest sodium (may omit foods; minimize sodium and avoid kcal overshoot; still meet protein if candidates allow; say so in Note if not)\n" +
       "- Each option must have its own Reachable, Note, Item lines, and Projected line.\n" +
       "- Projected = end-of-day totals for the WHOLE day: everything already logged above PLUS this option's items. Not just the new items.\n" +
       "- Prefer each food's preferred portion range when n ≥ 3. Stay near median/last when history is thin.\n" +
@@ -185,7 +185,10 @@ const GapPrompt = (() => {
       "  Still give honest quantities for that strategy. Do not collapse to a single option when tradeoffs exist.\n" +
       "- Do NOT invent Item lines for foods not listed above. Use each candidate's exact Name.\n" +
       "- Qty must include a unit: e.g. `120 g` or `2 piece` (not a bare number).\n" +
-      "- Omit Item lines for foods that option should skip (do not write 0 g).\n" +
+      "- Option 1 MUST have an Item line for EVERY candidate I selected (all names listed above). Never omit on Option 1.\n" +
+      "  If the full set cannot hit targets cleanly, still include every food, set Reachable appropriately, and explain in Note.\n" +
+      "  I will refine in chat (or deselect in the app) if I want fewer foods — do not silently drop foods from Option 1.\n" +
+      "- Options 2–3 MAY omit Item lines for foods that strategy should skip (do not write 0 g).\n" +
       "- Reference catalog foods use USDA-style averages. If you refine macros for any candidate,\n" +
       "  ALSO emit a NUTRI v1 … END block for that food (same Name) so I can update My Foods.\n" +
       "- Brand-new homemade dishes agreed in chat: emit NUTRI v1, but GAP Items stay limited to selected candidates.\n" +
@@ -196,16 +199,16 @@ const GapPrompt = (() => {
       "Reply exactly in this format:\n\n" +
       "GAP v1\n" +
       `Day: ${day || "<YYYY-MM-DD>"}\n` +
-      "Option: 1 | Balanced\n" +
+      "Option: 1 | All selected\n" +
       "Reachable: yes\n" +
       "Note: <tradeoff in one or two sentences>\n" +
       "Item: <exact candidate name> | <n> g | <meal>\n" +
       "Item: <exact candidate name> | <n> g | <meal>\n" +
       "Projected: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
       "Option: 2 | Protect protein\n" +
-      "(same fields)\n" +
+      "(same fields; may omit some candidates)\n" +
       "Option: 3 | Lowest sodium\n" +
-      "(same fields)\n" +
+      "(same fields; may omit some candidates)\n" +
       "END\n"
     );
   }

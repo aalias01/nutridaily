@@ -523,7 +523,9 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
   ok(/WHOLE day|already logged.*PLUS/i.test(prompt), "Projected is end-of-day totals");
   ok(/protein meets the floor AND projected sodium/i.test(prompt), "Reachable tied to protein + sodium only");
   ok(/Option: 1/.test(prompt) && /3 plan OPTIONS/i.test(prompt), "prompt asks for multiple options");
+  ok(/All selected/i.test(prompt) && /EVERY candidate/i.test(prompt), "option 1 must include every selected food");
   ok(/Protect protein/i.test(prompt) && /Lowest sodium/i.test(prompt), "option labels prioritize protein / lowest sodium");
+  ok(/Options 2–3 MAY omit|may omit foods/i.test(prompt), "options 2–3 may omit foods");
 
   const block = `GAP v1
 Day: 2026-08-02
