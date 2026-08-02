@@ -60,7 +60,6 @@
     </div>
     <div class="head-right">
       <button id="sync-pill" class="pill" title="Cloud backup status" type="button">local only</button>
-      <button id="btn-settings" class="iconbtn" title="Settings" aria-label="Settings" type="button">⚙</button>
     </div>
   </header>
 
@@ -113,6 +112,14 @@
         </div>
       </div>
       <p id="phase-context" class="muted small phase-context"></p>
+      <div class="range-pills nutrient-pills" id="insight-nutrient" aria-label="Chart nutrient">
+        <button type="button" data-nutrient="kcal" class="active">Kcal</button>
+        <button type="button" data-nutrient="protein">Protein</button>
+        <button type="button" data-nutrient="carbs">Carbs</button>
+        <button type="button" data-nutrient="fat">Fat</button>
+        <button type="button" data-nutrient="fiber">Fiber</button>
+        <button type="button" data-nutrient="sodium">Sodium</button>
+      </div>
       <div class="canvas-wrap"><canvas id="trend-canvas"></canvas></div>
       <p id="trend-summary" class="muted"></p>
       <div id="insight-callouts"></div>
@@ -120,12 +127,110 @@
       <div id="top-foods" class="card-block"></div>
       <div id="day-detail"></div>
     </section>
+
+    <section id="view-settings" class="view">
+      <div class="view-head">
+        <h2>Settings</h2>
+        <button id="btn-save-settings" class="btn" type="button">Save</button>
+      </div>
+      <div class="settings-panel">
+        <div id="install-card" class="installcard card-block"></div>
+
+        <label class="set-label">Appearance</label>
+        <div class="set-row theme-row">
+          <span class="muted small">Mode</span>
+          <span class="seg" id="theme-seg">
+            <button type="button" data-theme-opt="auto">auto</button>
+            <button type="button" data-theme-opt="light">light</button>
+            <button type="button" data-theme-opt="dark">dark</button>
+          </span>
+        </div>
+
+        <label class="set-label">Google Drive sync</label>
+        <p class="muted small drive-blurb">Meals save on this device automatically. Sign-in is optional: it keeps a copy in <b>your</b> Google Drive so another phone or a cleared browser cache can restore it. Nothing is sent anywhere except your own Drive.</p>
+        <div class="row">
+          <button id="btn-drive-connect" class="btn ghost" type="button">Sign in with Google</button>
+          <button id="btn-drive-sync" class="btn ghost" type="button" style="display:none">Sync now</button>
+          <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
+        </div>
+        <div id="drive-status" class="muted small"></div>
+        <p id="drive-reconnect-hint" class="muted small" hidden>After reopening the app (especially on iPhone), Drive may pause until you tap <b>Reconnect</b> on the banner or the sync pill. Logging still works on this device meanwhile.</p>
+        <details class="dev-details" id="client-id-details">
+          <summary class="muted small">Advanced: override Client ID</summary>
+          <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
+          <div class="muted small" id="client-id-hint">On the live deploy, a Client ID is injected at build time. Paste below only to override (forks / local). Leave empty to use the deploy default.</div>
+          <button id="btn-clear-gclient" class="linkbtn" type="button">Clear override</button>
+        </details>
+
+        <label class="set-label">Active phase</label>
+        <div class="card-block phase-card">
+          <p class="muted small" id="phase-save-hint">Saving changed targets starts a new version from today. Past days keep the old targets in Insights.</p>
+          <div class="phase-meta-grid">
+            <div class="phase-field">
+              <label class="small muted" for="set-phase-name">Name</label>
+              <input id="set-phase-name" type="text" maxlength="48" placeholder="e.g. Spring cut">
+            </div>
+            <div class="phase-field">
+              <label class="small muted" for="set-phase-kind">Kind</label>
+              <select id="set-phase-kind" aria-label="Phase kind">
+                <option value="maintain">Maintain</option>
+                <option value="cut">Cut</option>
+                <option value="bulk">Bulk</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+          </div>
+          <div class="goals-grid">
+            <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="800" step="50"></div>
+            <div><label class="small muted" for="set-protein">Protein g</label><input id="set-protein" type="number" min="0" step="5"></div>
+            <div><label class="small muted" for="set-carbs">Carbs g</label><input id="set-carbs" type="number" min="0" step="5"></div>
+            <div><label class="small muted" for="set-fat">Fat g</label><input id="set-fat" type="number" min="0" step="5"></div>
+            <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
+            <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
+          </div>
+          <button id="btn-start-phase" class="btn ghost full" type="button">Start new phase…</button>
+        </div>
+
+        <label class="set-label">Units</label>
+        <label class="check-row"><input id="set-imperial" type="checkbox"> Show ounces when logging</label>
+
+        <label class="set-label">AI estimate prompt</label>
+        <p class="muted small">Works with ChatGPT, Claude, or any LLM that returns a NUTRI v1 block.</p>
+        <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy AI prompt</button>
+
+        <label class="set-label">Data</label>
+        <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
+        <div class="row">
+          <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
+          <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
+          <button id="btn-clear" class="btn ghost danger" type="button">Clear all</button>
+        </div>
+
+        <div class="card-block about-card">
+          <h3>About NutriDaily</h3>
+          <p class="muted small">Personal nutrition tracker. Common foods use USDA-style reference averages; homemade dishes come from an AI paste you review. Log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
+        </div>
+      </div>
+    </section>
   </main>
 
   <nav class="bottom-tabs" aria-label="Main">
-    <button class="tab active" data-view="today" type="button">Today</button>
-    <button class="tab" data-view="foods" type="button">Foods</button>
-    <button class="tab" data-view="insights" type="button">Insights</button>
+    <button class="tab active" data-view="today" type="button">
+      <svg class="ico" viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="2"/><path d="M6 9.2l2 2 4-4.2"/></svg>
+      Today
+    </button>
+    <button class="tab" data-view="foods" type="button">
+      <svg class="ico" viewBox="0 0 18 18" aria-hidden="true"><path d="M3 5h12M3 9h12M3 13h8"/><circle cx="14.5" cy="13" r="1.5"/></svg>
+      Foods
+    </button>
+    <button class="tab" data-view="insights" type="button">
+      <svg class="ico" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 14V8M9 14V3.5M14 14V10" stroke-linecap="round"/></svg>
+      Insights
+    </button>
+    <button class="tab" data-view="settings" type="button">
+      <svg class="ico" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="2.5"/><path d="M9 1.8v2.2M9 14v2.2M1.8 9h2.2M14 9h2.2M3.4 3.4l1.6 1.6M13 13l1.6 1.6M14.6 3.4L13 5M5 13l-1.6 1.6"/></svg>
+      Settings
+    </button>
   </nav>
 
   <!-- Add food picker sheet -->
@@ -180,6 +285,8 @@
         <div><span class="small muted">Protein g</span><input id="np-protein" type="number" min="0" step="5"></div>
         <div><span class="small muted">Carbs g</span><input id="np-carbs" type="number" min="0" step="5"></div>
         <div><span class="small muted">Fat g</span><input id="np-fat" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Fiber g</span><input id="np-fiber" type="number" min="0" step="1"></div>
+        <div><span class="small muted">Sodium mg</span><input id="np-sodium" type="number" min="0" step="50"></div>
       </div>
       <div class="row end">
         <button id="np-cancel" class="btn ghost" type="button">Cancel</button>
@@ -322,94 +429,6 @@ END</pre>
   </div>
 
   <div id="info-banner" class="info-banner" hidden role="status"></div>
-
-  <div id="settings-modal" role="dialog" aria-modal="true">
-    <div class="modal-card">
-      <h2>Settings</h2>
-
-      <div id="install-card" class="installcard card-block"></div>
-
-      <label>Appearance</label>
-      <div class="set-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">
-        <span class="muted small">Mode</span>
-        <span class="seg" id="theme-seg">
-          <button type="button" data-theme-opt="auto">auto</button>
-          <button type="button" data-theme-opt="light">light</button>
-          <button type="button" data-theme-opt="dark">dark</button>
-        </span>
-      </div>
-
-      <label>Google Drive sync</label>
-      <p class="muted small drive-blurb">Meals save on this device automatically. Sign-in is optional: it keeps a copy in <b>your</b> Google Drive so another phone or a cleared browser cache can restore it. Nothing is sent anywhere except your own Drive.</p>
-      <div class="row">
-        <button id="btn-drive-connect" class="btn ghost" type="button">Sign in with Google</button>
-        <button id="btn-drive-sync" class="btn ghost" type="button" style="display:none">Sync now</button>
-        <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
-      </div>
-      <div id="drive-status" class="muted small"></div>
-      <p id="drive-reconnect-hint" class="muted small" hidden>After reopening the app (especially on iPhone), Drive may pause until you tap <b>Reconnect</b> on the banner or the sync pill. Logging still works on this device meanwhile.</p>
-      <details class="dev-details" id="client-id-details">
-        <summary class="muted small">Advanced: override Client ID</summary>
-        <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
-        <div class="muted small" id="client-id-hint">On the live deploy, a Client ID is injected at build time. Paste your own here to override (forks / local). Leave empty to use the deploy default.</div>
-        <button id="btn-clear-gclient" class="linkbtn" type="button">Clear override</button>
-      </details>
-
-      <label>Active phase</label>
-      <div class="card-block phase-card">
-        <p class="muted small" id="phase-save-hint">Saving changed targets starts a new version from today. Past days keep the old targets in Insights.</p>
-        <div class="goals-grid phase-meta-grid">
-          <div style="grid-column: span 2">
-            <label class="small muted" for="set-phase-name">Name</label>
-            <input id="set-phase-name" type="text" maxlength="48" placeholder="e.g. Spring cut">
-          </div>
-          <div>
-            <span class="small muted">Kind</span>
-            <select id="set-phase-kind" aria-label="Phase kind">
-              <option value="maintain">Maintain</option>
-              <option value="cut">Cut</option>
-              <option value="bulk">Bulk</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
-        </div>
-        <div class="goals-grid">
-          <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="800" step="50"></div>
-          <div><label class="small muted" for="set-protein">Protein g</label><input id="set-protein" type="number" min="0" step="5"></div>
-          <div><label class="small muted" for="set-carbs">Carbs g</label><input id="set-carbs" type="number" min="0" step="5"></div>
-          <div><label class="small muted" for="set-fat">Fat g</label><input id="set-fat" type="number" min="0" step="5"></div>
-          <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
-          <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
-        </div>
-        <button id="btn-start-phase" class="btn ghost full" type="button">Start new phase…</button>
-      </div>
-
-      <label>Units</label>
-      <label class="check-row"><input id="set-imperial" type="checkbox"> Show ounces when logging</label>
-
-      <label>AI estimate prompt</label>
-      <p class="muted small">Works with ChatGPT, Claude, or any LLM that returns a NUTRI v1 block.</p>
-      <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy AI prompt</button>
-
-      <label>Data</label>
-      <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
-      <div class="row">
-        <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
-        <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
-        <button id="btn-clear" class="btn ghost danger" type="button">Clear all</button>
-      </div>
-
-      <div class="card-block about-card">
-        <h3>About NutriDaily</h3>
-        <p class="muted small">Personal nutrition tracker. Common foods use USDA-style reference averages; homemade dishes come from an AI paste you review. Log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
-      </div>
-
-      <div class="row end">
-        <button id="btn-close-settings" class="btn ghost" type="button">Close</button>
-        <button id="btn-save-settings" class="btn" type="button">Save</button>
-      </div>
-    </div>
-  </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
 </div>

@@ -29,6 +29,7 @@ const App = (() => {
     saveAsNew: false,
     editFoodDirect: false, // opened review without AI paste step
     insightDays: 14, // number or "phase"
+    insightNutrient: "kcal",
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
     yesterdayKey: null,
   };
@@ -245,6 +246,7 @@ const App = (() => {
       if (kind === "reconnect") localStorage.setItem(RECONNECT_HIDE_DAY_KEY, Ledger.todayKey());
       else localStorage.setItem(SIGNIN_SEEN_KEY, "1");
       refreshInfoBanner();
+      refreshSettingsTabNudge();
     });
     const recon = UI.$("#banner-reconnect");
     if (recon) recon.addEventListener("click", async () => {
@@ -259,7 +261,7 @@ const App = (() => {
       refreshInfoBanner();
     });
     const go = UI.$("#banner-settings");
-    if (go) go.addEventListener("click", () => openSettings());
+    if (go) go.addEventListener("click", () => switchView("settings"));
   }
 
   const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
@@ -283,6 +285,7 @@ const App = (() => {
     if (!document.querySelector("#view-insights.active")) return;
     UI.renderTrends({
       daysBack: state.insightDays,
+      nutrient: state.insightNutrient || "kcal",
       settings: state.settings,
       todayKey: Ledger.todayKey(),
       goalsForDay: (day) => Phases.goalsForDay(day, state.settings),
@@ -354,9 +357,23 @@ const App = (() => {
   function switchView(name) {
     document.querySelectorAll(".bottom-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
     document.querySelectorAll("main .view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
+    const hud = UI.$("#hud");
+    if (hud) hud.hidden = name !== "today";
+    const dateNav = document.querySelector(".date-nav");
+    if (dateNav) dateNav.classList.toggle("settings-mode", name === "settings");
     if (name === "foods") refreshFoods();
     if (name === "insights") refreshInsights();
     if (name === "today") refreshDay();
+    if (name === "settings") {
+      syncSettingsForm();
+      refreshDriveStatus();
+      refreshInstallCard();
+      refreshSettingsTabNudge();
+    }
+  }
+
+  function isSettingsView() {
+    return !!document.querySelector("#view-settings.active");
   }
 
   function openQuickKcal(prefill) {
@@ -884,10 +901,15 @@ const App = (() => {
   }
 
   function openSettings() {
-    syncSettingsForm();
-    refreshDriveStatus();
-    refreshInstallCard();
-    UI.$("#settings-modal").classList.add("open");
+    switchView("settings");
+  }
+
+  function refreshSettingsTabNudge() {
+    const tab = document.querySelector('.bottom-tabs .tab[data-view="settings"]');
+    if (!tab) return;
+    const st = Sync.state();
+    const nudge = !st.enabled && !localStorage.getItem(SIGNIN_SEEN_KEY);
+    tab.classList.toggle("tab-nudge", nudge);
   }
 
   function refreshDriveStatus() {
@@ -1011,8 +1033,6 @@ const App = (() => {
       UI.closeSheet("sheet-add");
       openPaste();
     });
-    UI.$("#btn-settings").addEventListener("click", openSettings);
-    UI.$("#btn-close-settings").addEventListener("click", () => UI.$("#settings-modal").classList.remove("open"));
     UI.$("#theme-seg").addEventListener("click", (e) => {
       const btn = e.target.closest("[data-theme-opt]");
       if (!btn) return;
@@ -1050,8 +1070,8 @@ const App = (() => {
       saveSettings();
       Sync.schedulePush();
       applyTheme();
-      UI.$("#settings-modal").classList.remove("open");
       refreshAll();
+      syncSettingsForm();
       UI.toast(changed ? "Targets updated from today" : "Saved");
     });
 
@@ -1064,13 +1084,18 @@ const App = (() => {
       UI.$("#np-protein").value = g.protein;
       UI.$("#np-carbs").value = g.carbs;
       UI.$("#np-fat").value = g.fat;
+      UI.$("#np-fiber").value = g.fiber;
+      UI.$("#np-sodium").value = g.sodium;
       UI.$("#np-goals").hidden = true;
       UI.openSheet("sheet-new-phase");
+      setTimeout(() => { const el = UI.$("#np-name"); if (el) el.focus(); }, 50);
     });
     UI.$("#np-copy").addEventListener("change", () => {
       UI.$("#np-goals").hidden = UI.$("#np-copy").checked;
     });
-    UI.$("#np-cancel").addEventListener("click", () => UI.closeSheet("sheet-new-phase"));
+    UI.$("#np-cancel").addEventListener("click", () => {
+      UI.closeSheet("sheet-new-phase");
+    });
     UI.$("#np-save").addEventListener("click", () => {
       const today = Ledger.todayKey();
       const copy = UI.$("#np-copy").checked;
@@ -1079,8 +1104,8 @@ const App = (() => {
         protein: Number(UI.$("#np-protein").value) || 0,
         carbs: Number(UI.$("#np-carbs").value) || 0,
         fat: Number(UI.$("#np-fat").value) || 0,
-        fiber: state.settings.goals.fiber,
-        sodium: state.settings.goals.sodium,
+        fiber: Number(UI.$("#np-fiber").value) || 0,
+        sodium: Number(UI.$("#np-sodium").value) || 0,
       };
       Phases.startPhase(state.settings, {
         name: UI.$("#np-name").value.trim() || undefined,
@@ -1092,8 +1117,8 @@ const App = (() => {
       saveSettings();
       Sync.schedulePush();
       UI.closeSheet("sheet-new-phase");
-      UI.$("#settings-modal").classList.remove("open");
       refreshAll();
+      syncSettingsForm();
       UI.toast("New phase started");
     });
 
@@ -1277,6 +1302,16 @@ const App = (() => {
       UI.$("#insight-range").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
       refreshInsights();
     });
+    const nutPills = UI.$("#insight-nutrient");
+    if (nutPills) {
+      nutPills.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-nutrient]");
+        if (!btn) return;
+        state.insightNutrient = btn.dataset.nutrient;
+        nutPills.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+        refreshInsights();
+      });
+    }
     const canvas = UI.$("#trend-canvas");
     if (canvas) {
       canvas.style.cursor = "pointer";
@@ -1425,11 +1460,6 @@ const App = (() => {
 
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      const modal = UI.$("#settings-modal");
-      if (modal && modal.classList.contains("open")) {
-        modal.classList.remove("open");
-        return;
-      }
       const top = UI.topSheetId();
       if (!top) return;
       UI.closeSheet(top);
@@ -1525,7 +1555,8 @@ const App = (() => {
         else if (s === "error" || s === "warn") UI.setSyncPill("warn", detail || "sync issue");
         else UI.setSyncPill("local", "local only");
         refreshInfoBanner();
-        if (UI.$("#settings-modal").classList.contains("open")) refreshDriveStatus();
+        refreshSettingsTabNudge();
+        if (isSettingsView()) refreshDriveStatus();
       },
       onRemoteApplied: () => refreshAll(),
     });
@@ -1538,11 +1569,11 @@ const App = (() => {
     window.addEventListener("beforeinstallprompt", (ev) => {
       ev.preventDefault();
       deferredInstall = ev;
-      if (UI.$("#settings-modal").classList.contains("open")) refreshInstallCard();
+      if (isSettingsView()) refreshInstallCard();
     });
     window.addEventListener("appinstalled", () => {
       deferredInstall = null;
-      if (UI.$("#settings-modal").classList.contains("open")) refreshInstallCard();
+      if (isSettingsView()) refreshInstallCard();
     });
     window.addEventListener("online", () => {
       if (Sync.state().enabled) Sync.schedulePush();
@@ -1550,6 +1581,7 @@ const App = (() => {
     initSync();
     refreshAll();
     refreshInfoBanner();
+    refreshSettingsTabNudge();
     if (!localStorage.getItem(ONB_KEY) && !activeFoods().length && !Ledger.allEvents().length) {
       UI.showOnboarding(true);
     }

@@ -530,6 +530,7 @@ const UI = (() => {
   /**
    * @param {object} opts
    * @param {number|string} opts.daysBack — number of days, or "phase"
+   * @param {string} opts.nutrient — kcal|protein|carbs|fat|fiber|sodium
    * @param {object} opts.settings
    * @param {string} opts.todayKey
    * @param {(day:string)=>object} opts.goalsForDay
@@ -539,6 +540,7 @@ const UI = (() => {
     if (!canvas) return;
     const settings = (opts && opts.settings) || {};
     const todayKey = (opts && opts.todayKey) || Ledger.todayKey();
+    const nutrient = (opts && opts.nutrient) || "kcal";
     const goalsForDay = (opts && opts.goalsForDay) || ((day) =>
       (typeof Phases !== "undefined" ? Phases.goalsForDay(day, settings) : (settings.goals || {})));
     const end = new Date(todayKey + "T12:00:00");
@@ -564,6 +566,17 @@ const UI = (() => {
       }
     }
 
+    const nutKey = {
+      kcal: { total: (t) => t.kcal.mean, goal: (g) => g.kcal, unit: "kcal", label: "kcal", overMul: 1.10, underMul: 0.90 },
+      protein: { total: (t) => t.p.mean, goal: (g) => g.protein, unit: "g", label: "protein", overMul: 1.20, underMul: 0.95 },
+      carbs: { total: (t) => t.c.mean, goal: (g) => g.carbs, unit: "g", label: "carbs", overMul: 1.15, underMul: 0.85 },
+      fat: { total: (t) => t.f.mean, goal: (g) => g.fat, unit: "g", label: "fat", overMul: 1.15, underMul: 0.85 },
+      fiber: { total: (t) => t.fb.mean, goal: (g) => g.fiber, unit: "g", label: "fiber", overMul: 1.30, underMul: 0.90 },
+      sodium: { total: (t) => t.na.mean, goal: (g) => g.sodium, unit: "mg", label: "sodium", overMul: 1.05, underMul: 0 },
+    }[nutrient] || {
+      total: (t) => t.kcal.mean, goal: (g) => g.kcal, unit: "kcal", label: "kcal", overMul: 1.10, underMul: 0.90,
+    };
+
     const totalsMap = {};
     keys.forEach((day) => { totalsMap[day] = Ledger.totalsFor(day); });
     const points = keys.map((day) => {
@@ -571,10 +584,15 @@ const UI = (() => {
       const g = goalsForDay(day);
       return {
         day,
+        value: t.count ? nutKey.total(t) : null,
         kcal: t.count ? t.kcal.mean : null,
         p: t.count ? t.p.mean : null,
+        c: t.count ? t.c.mean : null,
+        f: t.count ? t.f.mean : null,
+        fb: t.count ? t.fb.mean : null,
+        na: t.count ? t.na.mean : null,
         count: t.count,
-        goalKcal: g.kcal,
+        goal: nutKey.goal(g),
       };
     });
     const logged = points.filter((p) => p.count);
@@ -584,6 +602,13 @@ const UI = (() => {
       ctxHeader.textContent = Phases.phaseContext(settings, todayKey);
     }
 
+    const nutPills = $("#insight-nutrient");
+    if (nutPills) {
+      nutPills.querySelectorAll("button").forEach((b) =>
+        b.classList.toggle("active", b.dataset.nutrient === nutrient)
+      );
+    }
+
     const w = canvas.clientWidth || 320;
     const h = 168;
     canvas.width = w * 2; canvas.height = h * 2;
@@ -591,23 +616,23 @@ const UI = (() => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(2, 2);
     ctx.clearRect(0, 0, w, h);
-    const maxK = Math.max(
-      ...points.map((p) => p.goalKcal || 0),
-      ...logged.map((p) => p.kcal),
+    const maxV = Math.max(
+      ...points.map((p) => p.goal || 0),
+      ...logged.map((p) => p.value),
       1
     ) * 1.15;
     const pad = { l: 8, r: 8, t: 12, b: 28 };
     const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
     const barW = Math.max(2, iw / keys.length - 2);
 
-    // Step goal line (per-day targets)
+    // Step goal line (per-day targets for selected nutrient)
     ctx.strokeStyle = "rgba(61,153,112,0.55)";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     points.forEach((p, i) => {
       const x0 = pad.l + i * (iw / keys.length);
       const x1 = pad.l + (i + 1) * (iw / keys.length);
-      const gy = pad.t + ih * (1 - (p.goalKcal || 0) / maxK);
+      const gy = pad.t + ih * (1 - (p.goal || 0) / maxV);
       if (i === 0) ctx.moveTo(x0, gy);
       else ctx.lineTo(x0, gy);
       ctx.lineTo(x1, gy);
@@ -632,11 +657,11 @@ const UI = (() => {
     }
 
     points.forEach((p, i) => {
-      if (p.kcal == null) return;
+      if (p.value == null) return;
       const x = pad.l + (i + 0.15) * (iw / keys.length);
-      const bh = (p.kcal / maxK) * ih;
-      const over = p.goalKcal && p.kcal > p.goalKcal * 1.10;
-      const under = p.goalKcal && p.kcal < p.goalKcal * 0.90;
+      const bh = (p.value / maxV) * ih;
+      const over = p.goal && p.value > p.goal * nutKey.overMul;
+      const under = nutKey.underMul > 0 && p.goal && p.value < p.goal * nutKey.underMul;
       ctx.fillStyle = over ? "#d0703c" : under ? "#6a8f7a" : "#3d9970";
       ctx.fillRect(x, pad.t + ih - bh, barW, bh);
     });
@@ -651,17 +676,18 @@ const UI = (() => {
     });
     _trendHit = { keys, pad, iw, w };
 
-    const avgK = logged.length ? logged.reduce((s, p) => s + p.kcal, 0) / logged.length : 0;
-    const avgP = logged.length ? logged.reduce((s, p) => s + p.p, 0) / logged.length : 0;
+    const avg = (key) => logged.length ? logged.reduce((s, p) => s + p[key], 0) / logged.length : 0;
+    const avgSel = logged.length ? logged.reduce((s, p) => s + p.value, 0) / logged.length : 0;
     const weekKeys = keys.slice(-7);
     const weekLogged = weekKeys.map((d) => totalsMap[d]).filter((t) => t && t.count);
     const weekAvg = weekLogged.length
-      ? Math.round(weekLogged.reduce((s, t) => s + t.kcal.mean, 0) / weekLogged.length)
+      ? Math.round(weekLogged.reduce((s, t) => s + nutKey.total(t), 0) / weekLogged.length)
       : 0;
     const streak = streakEndingToday();
     const rangeLabel = daysBack === "phase" ? "this phase" : `${keys.length} days`;
+    const unitSuffix = nutKey.unit === "kcal" ? " kcal" : ` ${nutKey.unit}`;
     $("#trend-summary").textContent = logged.length
-      ? `${logged.length} of ${keys.length} days logged (${rangeLabel}) · avg ${fmt(avgK)} kcal · ${fmt(avgP)} g protein · 7d avg ${fmt(weekAvg)} · streak ${streak}d`
+      ? `${logged.length} of ${keys.length} days logged (${rangeLabel}) · avg ${fmt(avgSel)}${unitSuffix} ${nutKey.label} · P ${fmt(avg("p"))} · C ${fmt(avg("c"))} · F ${fmt(avg("f"))} · 7d ${fmt(weekAvg)}${unitSuffix} · streak ${streak}d`
       : "No logged days in this range yet.";
 
     // Scorecard + callouts
@@ -747,9 +773,9 @@ const UI = (() => {
       return;
     }
     root.innerHTML = `<div class="card-block">
-      <b>${esc(label)}</b> · ${fmt(t.kcal.mean)} kcal · P ${fmt(t.p.mean)}
+      <b>${esc(label)}</b> · ${fmt(t.kcal.mean)} kcal · P ${fmt(t.p.mean)} · C ${fmt(t.c.mean)} · F ${fmt(t.f.mean)} · Fb ${fmt(t.fb.mean)} · Na ${fmt(t.na.mean)}
       <ul class="ing-list">${entries.map((e) =>
-        `<li>${esc(e.name)} · ${esc(e.displayQty)} · ${fmt(e.macros.kcal)} kcal</li>`
+        `<li>${esc(e.name)} · ${esc(e.displayQty)} · ${fmt(e.macros.kcal)} kcal · P ${fmt(e.macros.p)}</li>`
       ).join("")}</ul>
       <button type="button" class="btn ghost full" data-action="goto-day" data-day="${esc(dayKey)}">Open this day</button>
     </div>`;
