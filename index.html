@@ -104,7 +104,7 @@
       <div class="sheet-grab"></div>
       <input id="pick-search" type="search" placeholder="Search banana, eggs, rice…" aria-label="Search foods to log">
       <div id="pick-list" class="sheet-list"></div>
-      <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (ChatGPT paste)</button>
+      <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (AI paste)</button>
     </div>
   </div>
 
@@ -115,13 +115,19 @@
       <div class="sheet-grab"></div>
       <h3 id="qty-name"></h3>
       <p id="qty-per100" class="muted small"></p>
+      <p id="qty-source" class="muted small qty-source"></p>
       <div class="qty-row">
         <input id="qty-input" type="text" inputmode="decimal" aria-label="Amount">
         <div id="qty-units" class="unit-chips"></div>
       </div>
       <p id="qty-preview" class="qty-preview"></p>
       <div id="qty-meals" class="unit-chips meal-chips"></div>
-      <button id="qty-save" class="btn full" type="button">Save</button>
+      <div class="row qty-actions">
+        <button id="qty-cancel" class="btn ghost" type="button">Cancel</button>
+        <button id="qty-edit-food" class="btn ghost" type="button">Edit food</button>
+        <button id="qty-save" class="btn" type="button">Save</button>
+      </div>
+      <button id="qty-remove" class="linkbtn danger" type="button" hidden>Remove this log entry</button>
     </div>
   </div>
 
@@ -130,11 +136,11 @@
     <div class="sheet-backdrop" data-close="sheet-paste"></div>
     <div class="sheet-card tall">
       <div class="sheet-grab"></div>
-      <h3 id="paste-title">Add food from ChatGPT</h3>
+      <h3 id="paste-title">Add food from AI paste</h3>
       <div id="paste-step-prompt">
-        <p class="muted small">Copy this prompt into ChatGPT, describe your dish, then paste the reply below.</p>
-        <button id="btn-copy-prompt" class="btn ghost full" type="button">Copy ChatGPT prompt</button>
-        <textarea id="paste-text" rows="8" placeholder="Paste ChatGPT’s reply here — the whole thing is fine, I’ll find the block."></textarea>
+        <p class="muted small">Copy this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.</p>
+        <button id="btn-copy-prompt" class="btn ghost full" type="button">Copy AI prompt</button>
+        <textarea id="paste-text" rows="8" placeholder="Paste the AI reply here (the whole thing is fine; the app finds the NUTRI block)."></textarea>
         <div class="row">
           <button id="btn-clipboard" class="btn ghost" type="button">Paste from clipboard</button>
           <button id="btn-import-paste" class="btn" type="button">Import</button>
@@ -199,8 +205,8 @@ END</pre>
   <div id="onboarding" class="onboarding" hidden>
     <div class="onb-card">
       <h2>Your nutrition tracker</h2>
-      <p>Log common foods (banana, eggs, rice…) from the built-in list — no ChatGPT needed.</p>
-      <p>Homemade dishes: describe them to ChatGPT, paste the answer here, then log by grams.</p>
+      <p>Log common foods (banana, eggs, rice…) from the built-in list. No AI needed for those.</p>
+      <p>Homemade dishes: describe them to an LLM (ChatGPT, Claude, etc.), paste the answer here, then log by grams.</p>
       <p class="muted small">Tracking works fully without signing in. Google Sign-in is optional and only for syncing to your Drive so a cleared browser or second device can restore your log.</p>
       <button id="btn-onb-start" class="btn full" type="button">Add your first food</button>
       <button id="btn-onb-skip" class="linkbtn" type="button">Skip for now</button>
@@ -253,8 +259,9 @@ END</pre>
       <label>Units</label>
       <label class="check-row"><input id="set-imperial" type="checkbox"> Show ounces when logging</label>
 
-      <label>ChatGPT prompt</label>
-      <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy ChatGPT prompt</button>
+      <label>AI estimate prompt</label>
+      <p class="muted small">Works with ChatGPT, Claude, or any LLM that returns a NUTRI v1 block.</p>
+      <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy AI prompt</button>
 
       <label>Data</label>
       <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
@@ -266,7 +273,7 @@ END</pre>
 
       <div class="card-block about-card">
         <h3>About NutriDaily</h3>
-        <p class="muted small">Personal nutrition tracker. Build dishes with a ChatGPT paste, log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
+        <p class="muted small">Personal nutrition tracker. Common foods use USDA-style reference averages; homemade dishes come from an AI paste you review. Log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
       </div>
 
       <div class="row end">

@@ -2,7 +2,7 @@
 
 A personal nutrition tracker. You build a library of dishes you cook, then log by picking a food and entering grams (or a serving). No in-app AI, no API key, no account with us.
 
-Nutrition for new dishes comes from **ChatGPT** (your own subscription): copy a fixed prompt from the app, describe what you cooked, paste the reply back. The app parses a plain-text `NUTRI v1` block, you review it, and it becomes a reusable food with macros per 100 g.
+Nutrition for new dishes comes from an **AI paste** (your own ChatGPT, Claude, or other LLM): copy a fixed prompt from the app, describe what you cooked, paste the reply back. The app parses a plain-text `NUTRI v1` block, you review it, and it becomes a reusable food with macros per 100 g. Common foods show as **Reference · USDA-style avg**; your dishes show as **Yours**.
 
 **Live app:** [https://nutridaily.vercel.app](https://nutridaily.vercel.app)
 
@@ -21,13 +21,13 @@ Or open the hosted URL. Install from Settings → **Home screen** (Chrome Instal
 
 ## First-time flow
 
-**Common foods (no ChatGPT):** Today → **+** → pick from **Common foods** (banana, apple, eggs, rice, …) or search the catalog → enter grams / pieces → Save. First pick copies it into My Foods.
+**Common foods (no AI needed):** Today → **+** → pick from **Common foods** (banana, apple, eggs, rice, …) or search the catalog → enter grams / pieces → Save. First pick copies it into My Foods. Tap **Edit food** to change macros or name. Catalog values are USDA-style averages (good defaults, not brand-specific); override anytime.
 
 **Homemade dishes:**
 
-1. Tap **+** → **Homemade dish (ChatGPT paste)**.
-2. **Copy ChatGPT prompt**, paste it into ChatGPT, then describe your dish.
-3. Copy ChatGPT’s reply into the app → **Import** → review macros → **Save food**.
+1. Tap **+** → **Homemade dish (AI paste)**.
+2. **Copy AI prompt**, paste it into ChatGPT / Claude / any LLM, then describe your dish.
+3. Copy the reply into the app → **Import** → review macros → **Save food**.
 4. Log it anytime with grams or a serving.
 
 ## What gets tracked

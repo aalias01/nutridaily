@@ -97,5 +97,21 @@ console.log("\n[foods] create + log qty");
   ok(updated.id === food.id, "same id");
 }
 
+console.log("\n[provenance]");
+{
+  const chicken = FOOD_DB.find((f) => f.id === "chicken-breast");
+  const ref = Foods.fromCatalog(chicken);
+  ok(Foods.provenance(ref).kind === "ref", "catalog copy → Reference");
+  const edited = Foods.applyUpdate(ref, { ...ref, per100: { ...ref.per100, p: 40 } });
+  ok(Foods.provenance(edited).kind === "edit", "edited catalog → Yours · edited");
+  const ai = Foods.createFromDraft({
+    name: "test stew",
+    per100: { kcal: 100, p: 5, c: 10, f: 3, fb: 1, na: 100 },
+    units: {},
+    raw: "NUTRI v1\nEND",
+  });
+  ok(Foods.provenance(ai).kind === "ai", "paste with raw → AI estimate");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

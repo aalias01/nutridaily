@@ -198,9 +198,44 @@ const Foods = (() => {
       .slice(0, n || 8);
   }
 
+  function per100Close(a, b) {
+    if (!a || !b) return false;
+    const keys = ["kcal", "p", "c", "f", "fb", "na"];
+    return keys.every((k) => Math.abs(Number(a[k] || 0) - Number(b[k] || 0)) < 0.15);
+  }
+
+  /**
+   * Quiet provenance for qty sheet / detail.
+   * Prefer "AI" over "LLM" or a single vendor name in labels.
+   */
+  function provenance(food) {
+    if (!food) return { kind: "custom", label: "Yours · custom" };
+    const hasRaw = !!(food.raw && String(food.raw).trim());
+    if (food.catalogId) {
+      const DB = typeof FOOD_DB !== "undefined" ? FOOD_DB : [];
+      const db = DB.find((f) => f.id === food.catalogId);
+      const untouched = db && per100Close(food.per100, db.per100) && (food.version || 1) === 1 && !hasRaw;
+      if (untouched) {
+        return {
+          kind: "ref",
+          label: "Reference · USDA-style avg",
+          detail: "Curated averages for diary use, not brand-specific lab values.",
+        };
+      }
+      if (hasRaw) {
+        return { kind: "ai", label: "Yours · AI estimate", detail: "Updated from an AI paste; you can edit anytime." };
+      }
+      return { kind: "edit", label: "Yours · edited", detail: "Started from the reference catalog; numbers are yours now." };
+    }
+    if (hasRaw) {
+      return { kind: "ai", label: "Yours · AI estimate", detail: "From an AI paste (ChatGPT, Claude, etc.); review before trusting." };
+    }
+    return { kind: "custom", label: "Yours · custom", detail: "Entered or edited by you." };
+  }
+
   return {
     uid, createFromDraft, applyUpdate, tombstone, touchUse, findByName, active,
-    fromCatalog, entryFromQty, inferMeal, sortForPicker, recent, frequent,
+    fromCatalog, entryFromQty, inferMeal, sortForPicker, recent, frequent, provenance,
   };
 })();
 

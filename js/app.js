@@ -277,10 +277,75 @@ const App = (() => {
 
   function openQty(food, prefill) {
     state.pickFood = food;
-    UI.fillQtySheet(food, !!state.settings.imperial, prefill);
+    UI.fillQtySheet(food, !!state.settings.imperial, {
+      ...(prefill || {}),
+      allowRemove: !!(prefill && prefill.allowRemove),
+    });
     UI.closeSheet("sheet-add");
     UI.openSheet("sheet-qty");
     setTimeout(() => UI.$("#qty-input").focus(), 50);
+  }
+
+  function cancelQty() {
+    UI.closeSheet("sheet-qty");
+    state.pickFood = null;
+    state.editEntryId = null;
+  }
+
+  /** Open the food editor (macros / name / units) for a personal food. */
+  function openEditFood(food) {
+    if (!food) return;
+    let target = findFood(food.id);
+    if (!target && food.per100) {
+      // Ensure catalog picks are editable as personal copies
+      target = Foods.fromCatalog({
+        id: food.catalogId || food.id,
+        name: food.name,
+        aliases: food.aliases || [],
+        cat: food.cat,
+        per100: food.per100,
+        units: food.units || {},
+      });
+      // Prefer existing personal copy by catalogId
+      const existing = state.personalFoods.find((f) => !f.deleted && f.catalogId === target.catalogId);
+      if (existing) target = existing;
+      else {
+        state.personalFoods.push(target);
+        savePersonal();
+      }
+    }
+    if (!target) { UI.toast("Can't edit this food"); return; }
+
+    state.updateFoodId = target.id;
+    state.saveAsNew = false;
+    state.reviewParsed = {
+      canSave: true,
+      food: {
+        name: target.name,
+        aliases: target.aliases || [],
+        cat: target.cat || "dish",
+        per100: { ...target.per100 },
+        units: { ...(target.units || {}) },
+        batch: target.batch ? { ...target.batch } : null,
+        recipe: {
+          ingredients: (target.recipe && target.recipe.ingredients) || [],
+          prep: (target.recipe && target.recipe.prep) || "",
+          notes: (target.recipe && target.recipe.notes) || "",
+        },
+        confidence: target.confidence || "medium",
+        sd: target.sd || 0.12,
+        raw: target.raw || "",
+      },
+      warnings: [],
+      rejects: [],
+    };
+    UI.closeSheet("sheet-qty");
+    UI.closeSheet("sheet-detail");
+    UI.closeSheet("sheet-add");
+    UI.openSheet("sheet-paste");
+    UI.showReview(state.reviewParsed, { updateId: target.id, forceEnable: true });
+    UI.$("#paste-title").textContent = "Edit food";
+    validateReviewSave();
   }
 
   function saveQty() {
@@ -323,7 +388,7 @@ const App = (() => {
     state.reviewParsed = null;
     UI.$("#paste-text").value = "";
     UI.showPastePrompt();
-    if (state.updateFoodId) UI.$("#paste-title").textContent = "Update from ChatGPT";
+    if (state.updateFoodId) UI.$("#paste-title").textContent = "Update from AI paste";
     UI.openSheet("sheet-paste");
   }
 
@@ -611,6 +676,17 @@ const App = (() => {
       btn.classList.add("active");
     });
     UI.$("#qty-save").addEventListener("click", saveQty);
+    UI.$("#qty-cancel").addEventListener("click", cancelQty);
+    UI.$("#qty-edit-food").addEventListener("click", () => openEditFood(state.pickFood));
+    UI.$("#qty-remove").addEventListener("click", () => {
+      if (!state.editEntryId) return;
+      if (!confirm("Remove this log entry?")) return;
+      Ledger.removeEntry(state.viewDay, state.editEntryId, "removed");
+      Sync.schedulePush();
+      cancelQty();
+      refreshDay();
+      UI.toast("Removed");
+    });
 
     UI.$("#btn-copy-prompt").addEventListener("click", copyPrompt);
     UI.$("#btn-settings-copy-prompt").addEventListener("click", () => {
@@ -679,12 +755,14 @@ const App = (() => {
             version: entry.foodVersion || 1,
           };
         }
-        openQty(food, { qty: entry.qty || entry.grams, unit: entry.unit || "g", meal: entry.meal });
+        openQty(food, { qty: entry.qty || entry.grams, unit: entry.unit || "g", meal: entry.meal, allowRemove: true });
       } else if (action === "food-detail") {
         openDetail(id);
       } else if (action === "log-this") {
         UI.closeSheet("sheet-detail");
         openQty(findFood(id));
+      } else if (action === "edit-food") {
+        openEditFood(findFood(id));
       } else if (action === "update-food") {
         UI.closeSheet("sheet-detail");
         openPaste({ updateId: id });

@@ -176,8 +176,12 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
   background: var(--bg); color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .uchip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.qty-source { margin: 2px 0 10px; }
 .qty-preview { text-align: center; font-weight: 650; font-size: 15px; margin: 8px 0 14px; }
 .meal-chips { margin-bottom: 14px; }
+.qty-actions { margin-top: 4px; }
+.qty-actions .btn { flex: 1; }
+#qty-remove { display: block; width: 100%; text-align: center; margin-top: 10px; }
 
 #paste-text, #rev-ingredients, #rev-prep, #rev-notes, .sheet-card textarea {
   width: 100%; margin: 8px 0; padding: 12px; border-radius: 12px; border: 1px solid var(--line);

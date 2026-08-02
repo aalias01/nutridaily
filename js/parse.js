@@ -385,7 +385,7 @@ const NutriParse = (() => {
       return {
         found: false,
         results: [],
-        error: "I couldn't find a NUTRI v1 block in that. ChatGPT may have replied in its own format.",
+        error: "I couldn't find a NUTRI v1 block in that. The AI may have replied in its own format; ask it to use NUTRI v1 … END.",
       };
     }
     const results = blocks.map((b) => parseBlock(b, original));

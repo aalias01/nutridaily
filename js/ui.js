@@ -101,7 +101,7 @@ const UI = (() => {
     }
     const root = $("#foods-list");
     if (!foods.length) {
-      root.innerHTML = `<div class="empty">${q ? "No matches." : "No foods yet.<br><span class=\"muted small\">Add one from a ChatGPT paste.</span>"}</div>`;
+      root.innerHTML = `<div class="empty">${q ? "No matches." : "No foods yet.<br><span class=\"muted small\">Add one from an AI paste, or log a common food from Today.</span>"}</div>`;
       return;
     }
     root.innerHTML = foods.map((f) => {
@@ -163,7 +163,7 @@ const UI = (() => {
           .map((id) => byId.get(id))
           .filter((f) => f && !ownedCatalogIds.has(f.id));
         html += section("Common foods", common, catalogRow);
-        html += `<p class="muted small pick-hint">Banana, eggs, rice, and more — no ChatGPT needed. Search the full catalog above, or paste a homemade dish below.</p>`;
+        html += `<p class="muted small pick-hint">Banana, eggs, rice, and more from the reference catalog (USDA-style averages). Search above, or paste a homemade dish below.</p>`;
       }
     } else {
       html += section("My foods", all.slice(0, 40), personalRow);
@@ -179,7 +179,7 @@ const UI = (() => {
     }
 
     if (!html) {
-      html = `<div class="empty small">Search common foods (banana, apple, eggs…), or paste a ChatGPT dish below.</div>`;
+      html = `<div class="empty small">Search common foods (banana, apple, eggs…), or paste a homemade dish below.</div>`;
     }
     root.innerHTML = html;
   }
@@ -187,6 +187,12 @@ const UI = (() => {
   function fillQtySheet(food, imperial, prefill) {
     $("#qty-name").textContent = food.name;
     $("#qty-per100").textContent = `per 100 g: ${fmt(food.per100.kcal)} kcal · P ${food.per100.p} · C ${food.per100.c} · F ${food.per100.f}`;
+    const prov = Foods.provenance(food);
+    const src = $("#qty-source");
+    if (src) {
+      src.textContent = prov.label;
+      src.title = prov.detail || "";
+    }
     const units = ["g"];
     if (food.units && food.units.serving) units.push("serving");
     if (food.units && food.units.piece) units.push("piece");
@@ -206,6 +212,8 @@ const UI = (() => {
     ).join("");
     $("#qty-input").value = prefill && prefill.qty != null ? prefill.qty : (food.units && food.units.serving ? food.units.serving : 100);
     updateQtyPreview(food);
+    const removeBtn = $("#qty-remove");
+    if (removeBtn) removeBtn.hidden = !(prefill && prefill.allowRemove);
   }
 
   function selectedUnit() {
@@ -231,7 +239,7 @@ const UI = (() => {
   function showPastePrompt() {
     $("#paste-step-prompt").hidden = false;
     $("#paste-step-review").hidden = true;
-    $("#paste-title").textContent = "Add food from ChatGPT";
+    $("#paste-title").textContent = "Add food from AI paste";
   }
 
   function showReview(parsed, opts) {
@@ -320,8 +328,10 @@ const UI = (() => {
     const serv = food.units && food.units.serving;
     const mServ = serv ? FoodMatch.computeMacros(food.per100, serv) : null;
     const ings = ((food.recipe && food.recipe.ingredients) || []).map((i) => `<li>${esc(i.text)}</li>`).join("");
+    const prov = Foods.provenance(food);
     $("#detail-body").innerHTML = `
       <h3>${esc(food.name)}</h3>
+      <p class="muted small">${esc(prov.label)}${prov.detail ? " · " + esc(prov.detail) : ""}</p>
       <p class="muted small">Logged ${food.useCount || 0} times${food.lastUsedAt ? " · last " + new Date(food.lastUsedAt).toLocaleDateString() : ""} · v${food.version || 1}</p>
       <div class="card-block">
         <div><b>Per 100 g</b>: ${fmt(food.per100.kcal)} kcal · P ${food.per100.p} · C ${food.per100.c} · F ${food.per100.f} · Fb ${food.per100.fb} · Na ${food.per100.na}</div>
@@ -330,7 +340,8 @@ const UI = (() => {
       ${ings ? `<div class="card-block"><b>Ingredients</b><ul class="ing-list">${ings}</ul>${food.recipe.prep ? `<p class="small">${esc(food.recipe.prep)}</p>` : ""}</div>` : ""}
       <div class="col-actions">
         <button type="button" class="btn full" data-action="log-this" data-id="${esc(food.id)}">Log this</button>
-        <button type="button" class="btn ghost full" data-action="update-food" data-id="${esc(food.id)}">Update from ChatGPT</button>
+        <button type="button" class="btn ghost full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>
+        <button type="button" class="btn ghost full" data-action="update-food" data-id="${esc(food.id)}">Update from AI paste</button>
         <button type="button" class="btn ghost full" data-action="copy-update-prompt" data-id="${esc(food.id)}">Copy update prompt</button>
         <button type="button" class="btn ghost full danger" data-action="delete-food" data-id="${esc(food.id)}">Delete</button>
       </div>`;

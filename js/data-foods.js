@@ -2,7 +2,10 @@
  * per100 = per 100 g edible portion: kcal, p(rotein), c(arbs), f(at), fb(fiber) g, na(sodium) mg.
  * units = food-specific gram weights for household measures.
  * cat = category, used for plausibility checks.
- * Values from USDA FoodData Central (standard reference / survey averages).
+ *
+ * Source: USDA FoodData Central style averages (standard reference / survey),
+ * rounded for diary use. Good for everyday logging; not lab-certified for a
+ * specific brand or cooking method. Users can Edit food to override any entry.
  */
 const FOOD_DB = [
   // ---- Poultry / meat (cooked unless noted) ----
