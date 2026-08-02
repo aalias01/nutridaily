@@ -1227,7 +1227,7 @@ const UI = (() => {
     return bits.length ? `Gap: ${bits.join(" · ")}` : "Targets already met (or no goals set).";
   }
 
-  /** Live end-of-day projection line for the plan sheet. Fiber/carbs/fat omitted to stay one line. */
+  /** Live end-of-day projection line for the plan sheet. */
   function formatPlanProjection(projected, goals, opts) {
     if (!projected) return "";
     const o = opts || {};
@@ -1241,6 +1241,9 @@ const UI = (() => {
     const bits = [
       `~${pair("", "kcal", "")} kcal`,
       pair("P", "protein", ""),
+      pair("C", "carbs", ""),
+      pair("F", "fat", ""),
+      pair("Fb", "fiber", ""),
       pair("Na", "sodium", ""),
     ].filter(Boolean);
     const flags = [];

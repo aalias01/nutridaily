@@ -892,7 +892,7 @@ const App = (() => {
           : `${UI.fmt(g)} g`)
         : `${it.qty} ${it.unit || "g"}`;
       const sub = macros
-        ? `${it.meal || "snack"} · ${UI.fmt(macros.kcal)} kcal · P ${UI.fmt(macros.p)}`
+        ? `${it.meal || "snack"} · ${UI.fmt(macros.kcal)} kcal · P ${UI.fmt(macros.p)} · C ${UI.fmt(macros.c)} · F ${UI.fmt(macros.f)} · Fb ${UI.fmt(macros.fb)} · Na ${UI.fmt(macros.na || 0)}`
         : (it.meal || "snack");
       return { id: it.id, name: it.name, qtyLabel, sub, status: it.status };
     }));
