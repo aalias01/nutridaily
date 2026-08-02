@@ -262,9 +262,18 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .ing-list { margin: 6px 0 0; padding-left: 18px; }
 .ing-list li { margin-bottom: 4px; }
 
-.canvas-wrap { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 6px 4px; box-shadow: var(--shadow); }
+.canvas-wrap {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 6px 4px; box-shadow: var(--shadow);
+  max-width: 100%; overflow: hidden;
+}
 .chart-section-label { margin: 14px 0 6px; font-weight: 650; color: var(--ink); }
-#trend-canvas { display: block; width: 100%; }
+#trend-canvas, #weight-canvas { display: block; width: 100%; max-width: 100%; height: auto; }
+#trend-summary, #weight-summary {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .card-block { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin: 10px 0; box-shadow: var(--shadow); }
 .range-pills { display: flex; gap: 4px; }
 .range-pills button {
