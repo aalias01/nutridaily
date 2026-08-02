@@ -867,6 +867,7 @@ const Phases = (() => {
     profileReadyForAi,
     mergeProfiles,
     dayBefore,
+    classify,
     scoreDayTotals,
     scoreRange,
     callouts,

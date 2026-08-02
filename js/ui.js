@@ -118,7 +118,10 @@ const UI = (() => {
       const g = Number(goal) || 0;
       const pct = g ? Math.min(100, (mean / g) * 100) : 0;
       fill.style.width = pct + "%";
-      fill.classList.toggle("over", g && mean > g * 1.05);
+      // Warn only on "over" (ceiling/range). Floor nutrients (protein, fiber) never warn when high.
+      // Do not warn on "under" — Today is in-progress, so under is normal mid-day.
+      const band = Phases.BANDS[key];
+      fill.classList.toggle("over", !!band && Phases.classify(mean, g, band) === "over");
       const right = goalLabel(goal, key, unit);
       if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${right}` : `${fmt(mean)}`;
       else val.textContent = g ? `${fmt(mean)} / ${right}` : unit ? `${fmt(mean)} ${unit}` : `${fmt(mean)}`;
@@ -135,16 +138,7 @@ const UI = (() => {
     set("c", totals.c.mean, goals.carbs, "carbs", "g");
     set("f", totals.f.mean, goals.fat, "fat", "g");
     set("fb", totals.fb.mean, goals.fiber, "fiber", "g");
-    {
-      const fill = $("#f-sodium"), val = $("#v-sodium");
-      const mean = totals.na.mean, g = Number(goals.sodium) || 0;
-      if (fill && val) {
-        fill.style.width = (g ? Math.min(100, (mean / g) * 100) : 0) + "%";
-        fill.classList.toggle("over", g && mean > g * 1.05);
-        const right = goalLabel(goals.sodium, "sodium", "mg");
-        val.textContent = g ? `${fmt(mean)} / ${right}` : `${fmt(mean)} mg`;
-      }
-    }
+    set("sodium", totals.na.mean, goals.sodium, "sodium", "mg");
     const naLine = $("#v-na");
     if (naLine) naLine.textContent = "";
   }

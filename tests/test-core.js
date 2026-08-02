@@ -270,6 +270,12 @@ console.log("\n[7] Phases / goalsForDay");
   ok(scored.kcal.status === "hit", "kcal within ±10% is hit");
   ok(scored.protein.status === "under", "protein below floor is under");
 
+  // classify dirs: Today HUD warns only on "over"; floor overshoot must stay hit
+  ok(Phases.classify(160, 140, Phases.BANDS.protein) === "hit", "floor: protein over target is hit");
+  ok(Phases.classify(2500, 2300, Phases.BANDS.sodium) === "over", "ceiling: sodium over target is over");
+  ok(Phases.classify(1800, 2200, Phases.BANDS.kcal) === "under", "range: kcal below band is under");
+  ok(Phases.classify(2500, 2200, Phases.BANDS.kcal) === "over", "range: kcal above band is over");
+
   const merged = Phases.mergePhases(
     [{ id: "ph1", updatedAt: 100, startDay: "2026-01-01", endDay: null, revisions: [{ id: "r1", effectiveFrom: "2026-01-01", goals: { kcal: 2000 } }] }],
     [{ id: "ph1", updatedAt: 200, startDay: "2026-01-01", endDay: null, revisions: [{ id: "r1", effectiveFrom: "2026-01-01", goals: { kcal: 2000 } }, { id: "r2", effectiveFrom: "2026-03-01", goals: { kcal: 2500 } }] }]
