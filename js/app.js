@@ -1511,14 +1511,54 @@ const App = (() => {
       e.target.value = "";
     });
     UI.$("#btn-clear").addEventListener("click", () => {
-      if (!confirm("Clear all foods and logs on this device? If Drive sync is on, the cloud copy will be wiped on the next sync.")) return;
+      if (!confirm("Clear foods and meal logs on this device? Phases, weight, and settings stay. If Drive sync is on, the cloud copy of logs/foods will be wiped on the next sync.")) return;
       Sync.markReset(Date.now());
       Ledger.clearAll();
       state.personalFoods = [];
       savePersonal();
       refreshAll();
       Sync.fullSync(false).catch(() => {});
-      UI.toast("Cleared");
+      UI.toast("Logs cleared");
+    });
+
+    UI.$("#btn-factory-reset").addEventListener("click", () => {
+      if (!confirm("Start completely fresh? This deletes meal logs, foods, phases, day bumps, weight history, and resets goals.")) return;
+      if (!confirm("Last chance. Export first if you want a backup. This cannot be undone. Continue?")) return;
+      Sync.markReset(Date.now());
+      Ledger.clearAll();
+      state.personalFoods = [];
+      savePersonal();
+      state.settings = {
+        goals: { ...DEFAULT_GOALS },
+        goalsUpdatedAt: Date.now(),
+        imperial: false,
+        theme: "light",
+        dayGoals: {},
+        phases: [],
+        weights: {},
+      };
+      state.viewDay = Ledger.todayKey();
+      state.lastCalendarToday = state.viewDay;
+      state.insightDays = 14;
+      state.insightNutrient = "kcal";
+      Phases.ensureMigrated(state.settings, null, state.viewDay);
+      saveSettings();
+      applyTheme();
+      localStorage.removeItem(ONB_KEY);
+      localStorage.removeItem(SIGNIN_SEEN_KEY);
+      localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
+      localStorage.setItem(FIRST_SEEN_KEY, String(Date.now()));
+      // Keep Drive connection and Client ID override so the wipe can sync up
+      refreshAll();
+      syncSettingsForm();
+      refreshDriveStatus();
+      refreshInstallCard();
+      refreshSettingsTabNudge();
+      refreshInfoBanner();
+      Sync.fullSync(false).catch(() => {});
+      switchView("today");
+      UI.showOnboarding(true);
+      UI.toast("Started fresh");
     });
 
     UI.$("#btn-drive-connect").addEventListener("click", () => connectDrive());
