@@ -9,6 +9,8 @@ const UI = (() => {
   let _sheetStack = [];
   let _trendHit = null; // { keys, pad, iw, w }
   let _weightHit = null; // { keys, pad, iw, w, byDay, unit }
+  let expandedEntryId = null;
+  let expandedDayKey = null;
 
   function toast(msg, opts) {
     const el = $("#toast");
@@ -154,8 +156,25 @@ const UI = (() => {
     return new Date(e.addedTs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   }
 
+  /** Portion-scaled P/C/F/Fb/Na for Today cards and qty preview. */
+  function fmtMacros(m) {
+    if (!m) return "";
+    return `P ${m.p} · C ${m.c} · F ${m.f} · Fb ${m.fb} · Na ${fmt(m.na || 0)}`;
+  }
+
+  function toggleEntryExpand(id) {
+    expandedEntryId = expandedEntryId === id ? null : id;
+  }
+
   function renderDayLog(dayKey, entries) {
     const root = $("#day-log");
+    if (dayKey !== expandedDayKey) {
+      expandedEntryId = null;
+      expandedDayKey = dayKey;
+    }
+    if (expandedEntryId && !entries.some((e) => e.id === expandedEntryId)) {
+      expandedEntryId = null;
+    }
     if (!entries.length) {
       root.innerHTML = `<div class="empty">Nothing logged yet.<br><span class="muted small">Tap + to add a food. Swipe left/right to change days.</span></div>`;
       return;
@@ -171,17 +190,29 @@ const UI = (() => {
       const rows = groups[meal].map((e) => {
         const edited = e.history && e.history.length ? `<span class="tag tag-edit">edited</span>` : "";
         const t = entryTime(e);
-        return `<div class="log-row-wrap">
-          <button type="button" class="log-row" data-action="edit-entry" data-id="${esc(e.id)}">
-            <div>
-              <div class="r-name">${esc(e.name)} ${edited}</div>
-              <div class="r-qty">${esc(e.displayQty)}${t ? ` · ${esc(t)}` : ""}</div>
-            </div>
-            <div class="r-macros">
-              <span class="mini">${fmt(e.macros.kcal)} kcal</span>
-              <span class="mini">P ${e.macros.p}</span>
-            </div>
-          </button>
+        const isExp = e.id === expandedEntryId;
+        const expanded = isExp
+          ? `<div class="r-expanded">
+              <div class="r-contrib">${esc(fmtMacros(e.macros))}</div>
+              <button type="button" class="linkbtn edit-entry-btn" data-action="edit-entry" data-id="${esc(e.id)}">Edit</button>
+            </div>`
+          : "";
+        return `<div class="log-row-wrap${isExp ? " is-expanded" : ""}">
+          <div class="log-row-stack">
+            <button type="button" class="log-row${isExp ? " expanded" : ""}" data-action="toggle-entry" data-id="${esc(e.id)}">
+              <div class="r-top">
+                <div>
+                  <div class="r-name">${esc(e.name)} ${edited}</div>
+                  <div class="r-qty">${esc(e.displayQty)}${t ? ` · ${esc(t)}` : ""}</div>
+                </div>
+                <div class="r-macros">
+                  <span class="mini">${fmt(e.macros.kcal)} kcal</span>
+                  <span class="mini">P ${e.macros.p}</span>
+                </div>
+              </div>
+            </button>
+            ${expanded}
+          </div>
           <button type="button" class="linkbtn again-btn" data-action="log-again" data-id="${esc(e.id)}" title="Log again">again</button>
         </div>`;
       }).join("");
@@ -317,7 +348,7 @@ const UI = (() => {
 
   function fillQtySheet(food, imperial, prefill) {
     $("#qty-name").textContent = food.name;
-    $("#qty-per100").textContent = `per 100 g: ${fmt(food.per100.kcal)} kcal · P ${food.per100.p} · C ${food.per100.c} · F ${food.per100.f}`;
+    $("#qty-per100").textContent = `per 100 g: ${fmt(food.per100.kcal)} kcal · ${fmtMacros(food.per100)}`;
     const prov = Foods.provenance(food);
     const src = $("#qty-source");
     if (src) {
@@ -391,7 +422,7 @@ const UI = (() => {
       qtyLine = `${Math.round(entry.grams)} g (${oz} oz)`;
       entry.displayQty = qtyLine;
     }
-    $("#qty-preview").textContent = `${qtyLine} · ${fmt(entry.macros.kcal)} kcal · P ${entry.macros.p} · C ${entry.macros.c} · F ${entry.macros.f}`;
+    $("#qty-preview").textContent = `${qtyLine} · ${fmt(entry.macros.kcal)} kcal · ${fmtMacros(entry.macros)}`;
     return entry;
   }
 
@@ -1147,7 +1178,7 @@ const UI = (() => {
 
   return {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
-    renderDayLog, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
+    renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
     syncReviewLogAsUI, renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
   };

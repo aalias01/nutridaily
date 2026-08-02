@@ -1939,6 +1939,9 @@ const App = (() => {
         const food = existing || Foods.fromCatalog(db);
         state.pendingCatalogFood = existing ? null : food;
         openQty(food);
+      } else if (action === "toggle-entry") {
+        UI.toggleEntryExpand(id);
+        UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
       } else if (action === "edit-entry") {
         const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);
         if (!entry) return;
@@ -2056,7 +2059,7 @@ const App = (() => {
     }, { passive: true });
 
     UI.$("#day-log").addEventListener("contextmenu", (e) => {
-      const row = e.target.closest("[data-action='edit-entry']");
+      const row = e.target.closest("[data-action='toggle-entry']");
       if (!row) return;
       e.preventDefault();
       removeEntryWithUndo(state.viewDay, row.dataset.id);
