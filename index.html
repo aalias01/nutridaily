@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#3d9970">
+<title>NutriChat — food diary</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥗</text></svg>">
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="date-nav">
+      <button id="btn-day-prev" class="iconbtn" type="button" aria-label="Previous day">‹</button>
+      <div>
+        <div class="brand">NutriChat</div>
+        <div class="day" id="day-label"></div>
+      </div>
+      <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
+    </div>
+    <div class="head-right">
+      <button id="sync-pill" class="pill" title="Cloud backup status" type="button">local only</button>
+      <button id="btn-settings" class="iconbtn" title="Settings" aria-label="Settings" type="button">⚙</button>
+    </div>
+  </header>
+
+  <section id="hud" aria-label="Day totals">
+    <div class="kcal-block">
+      <div><span id="v-kcal-big">0</span><span class="kcal-unit"> kcal</span></div>
+      <div class="range" id="kcal-range">—</div>
+      <div class="bar big"><div class="fill" id="f-kcal"></div></div>
+      <div class="m-val small" id="v-kcal"></div>
+    </div>
+    <div class="macros">
+      <div class="macro"><div class="m-top"><span>Protein</span><span class="m-val" id="v-p"></span></div><div class="bar"><div class="fill p" id="f-p"></div></div></div>
+      <div class="macro"><div class="m-top"><span>Carbs</span><span class="m-val" id="v-c"></span></div><div class="bar"><div class="fill c" id="f-c"></div></div></div>
+      <div class="macro"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
+      <div class="macro"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
+    </div>
+    <div class="sodium-line muted small" id="v-na"></div>
+  </section>
+
+  <main>
+    <section id="view-today" class="view active">
+      <div id="day-log" class="day-log"></div>
+      <button id="fab-add" class="fab" type="button" aria-label="Add food">+</button>
+    </section>
+
+    <section id="view-foods" class="view">
+      <div class="view-head">
+        <h2>My Foods</h2>
+        <button id="btn-add-food" class="btn" type="button">+ Add</button>
+      </div>
+      <input id="foods-search" type="search" placeholder="Search your foods" aria-label="Search foods">
+      <div id="foods-list"></div>
+    </section>
+
+    <section id="view-insights" class="view">
+      <div class="view-head">
+        <h2>Insights</h2>
+        <div class="range-pills" id="insight-range">
+          <button type="button" data-days="14" class="active">14 d</button>
+          <button type="button" data-days="30">30 d</button>
+          <button type="button" data-days="90">90 d</button>
+        </div>
+      </div>
+      <div class="canvas-wrap"><canvas id="trend-canvas"></canvas></div>
+      <p id="trend-summary" class="muted"></p>
+      <div id="top-foods" class="card-block"></div>
+      <div id="day-detail"></div>
+    </section>
+  </main>
+
+  <nav class="bottom-tabs" aria-label="Main">
+    <button class="tab active" data-view="today" type="button">Today</button>
+    <button class="tab" data-view="foods" type="button">Foods</button>
+    <button class="tab" data-view="insights" type="button">Insights</button>
+  </nav>
+
+  <!-- Add food picker sheet -->
+  <div id="sheet-add" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-add"></div>
+    <div class="sheet-card">
+      <div class="sheet-grab"></div>
+      <input id="pick-search" type="search" placeholder="Search foods" aria-label="Search foods to log">
+      <div id="pick-list" class="sheet-list"></div>
+      <button id="btn-paste-new" class="btn ghost full" type="button">+ New food from ChatGPT paste</button>
+    </div>
+  </div>
+
+  <!-- Quantity sheet -->
+  <div id="sheet-qty" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-qty"></div>
+    <div class="sheet-card">
+      <div class="sheet-grab"></div>
+      <h3 id="qty-name"></h3>
+      <p id="qty-per100" class="muted small"></p>
+      <div class="qty-row">
+        <input id="qty-input" type="text" inputmode="decimal" aria-label="Amount">
+        <div id="qty-units" class="unit-chips"></div>
+      </div>
+      <p id="qty-preview" class="qty-preview"></p>
+      <div id="qty-meals" class="unit-chips meal-chips"></div>
+      <button id="qty-save" class="btn full" type="button">Save</button>
+    </div>
+  </div>
+
+  <!-- Paste / review sheet -->
+  <div id="sheet-paste" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-paste"></div>
+    <div class="sheet-card tall">
+      <div class="sheet-grab"></div>
+      <h3 id="paste-title">Add food from ChatGPT</h3>
+      <div id="paste-step-prompt">
+        <p class="muted small">Copy this prompt into ChatGPT, describe your dish, then paste the reply below.</p>
+        <button id="btn-copy-prompt" class="btn ghost full" type="button">Copy ChatGPT prompt</button>
+        <textarea id="paste-text" rows="8" placeholder="Paste ChatGPT’s reply here — the whole thing is fine, I’ll find the block."></textarea>
+        <div class="row">
+          <button id="btn-clipboard" class="btn ghost" type="button">Paste from clipboard</button>
+          <button id="btn-import-paste" class="btn" type="button">Import</button>
+        </div>
+        <details class="example-details">
+          <summary class="muted small">What does this look like?</summary>
+          <pre class="example-pre">NUTRI v1
+Name: Garlic shrimp skillet
+Batch: 760 g total, 4 servings
+Totals: 1153 kcal | P 139.2 | C 15.6 | F 56.4 | Fiber 1.2 | Sodium 2555
+Per 100 g: 151.7 kcal | P 18.3 | C 2.1 | F 7.4 | Fiber 0.2 | Sodium 336
+…
+END</pre>
+        </details>
+        <button id="btn-manual-food" class="linkbtn" type="button">Enter manually instead</button>
+      </div>
+      <div id="paste-step-review" hidden>
+        <div id="review-banners"></div>
+        <label>Name<input id="rev-name" type="text"></label>
+        <label>Aliases <span class="muted small">(comma-separated)</span><input id="rev-aliases" type="text"></label>
+        <label>Category
+          <select id="rev-cat">
+            <option>dish</option><option>meat</option><option>protein</option><option>grain</option>
+            <option>legume</option><option>veg</option><option>fruit</option><option>dairy</option>
+            <option>fat</option><option>nuts</option><option>bev</option><option>snack</option>
+          </select>
+        </label>
+        <div class="goals-grid rev-macros">
+          <div><span class="small muted">kcal /100g</span><input id="rev-kcal" type="text" inputmode="decimal"></div>
+          <div><span class="small muted">Protein</span><input id="rev-p" type="text" inputmode="decimal"></div>
+          <div><span class="small muted">Carbs</span><input id="rev-c" type="text" inputmode="decimal"></div>
+          <div><span class="small muted">Fat</span><input id="rev-f" type="text" inputmode="decimal"></div>
+          <div><span class="small muted">Fiber</span><input id="rev-fb" type="text" inputmode="decimal"></div>
+          <div><span class="small muted">Sodium mg</span><input id="rev-na" type="text" inputmode="decimal"></div>
+        </div>
+        <label>Serving size (g)<input id="rev-serving" type="text" inputmode="decimal"></label>
+        <label>Piece size (g)<input id="rev-piece" type="text" inputmode="decimal"></label>
+        <label>Batch grams<input id="rev-batch-g" type="text" inputmode="decimal"></label>
+        <label>Batch servings<input id="rev-batch-s" type="text" inputmode="decimal"></label>
+        <label>Ingredients (one per line)<textarea id="rev-ingredients" rows="4"></textarea></label>
+        <label>Prep<textarea id="rev-prep" rows="2"></textarea></label>
+        <label>Notes<textarea id="rev-notes" rows="2"></textarea></label>
+        <div id="review-dup" class="banner info" hidden></div>
+        <div class="row end">
+          <button id="btn-review-back" class="btn ghost" type="button">Back</button>
+          <button id="btn-review-save" class="btn" type="button">Save food</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Food detail sheet -->
+  <div id="sheet-detail" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-detail"></div>
+    <div class="sheet-card tall">
+      <div class="sheet-grab"></div>
+      <div id="detail-body"></div>
+    </div>
+  </div>
+
+  <!-- Onboarding -->
+  <div id="onboarding" class="onboarding" hidden>
+    <div class="onb-card">
+      <h2>Your food diary</h2>
+      <p>Starts empty. You build a library of dishes you cook.</p>
+      <p>New dish? Describe it to ChatGPT, paste the answer here. No API key needed.</p>
+      <p class="muted small">Everything stays on your phone. Connect Google Drive later for backup.</p>
+      <button id="btn-onb-start" class="btn full" type="button">Add your first food</button>
+      <button id="btn-onb-skip" class="linkbtn" type="button">Skip for now</button>
+    </div>
+  </div>
+
+  <div id="settings-modal" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <h2>Settings</h2>
+
+      <label>Account & cloud backup <span class="muted small">(your data, in your own Google Drive)</span></label>
+      <div class="row">
+        <button id="btn-drive-connect" class="btn ghost" type="button">Connect Google Drive</button>
+        <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
+      </div>
+      <div id="drive-status" class="muted small"></div>
+      <details class="dev-details">
+        <summary class="muted small">Developer: OAuth Client ID</summary>
+        <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
+        <div class="muted small">One-time setup per deployment — see README.</div>
+      </details>
+
+      <label>Daily goals</label>
+      <div class="goals-grid">
+        <div><span class="small muted">Calories</span><input id="set-kcal" type="number" min="800" step="50"></div>
+        <div><span class="small muted">Protein g</span><input id="set-protein" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Carbs g</span><input id="set-carbs" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Fat g</span><input id="set-fat" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Fiber g</span><input id="set-fiber" type="number" min="0" step="1"></div>
+      </div>
+
+      <label>Units</label>
+      <label class="check-row"><input id="set-imperial" type="checkbox"> Show ounces when logging</label>
+
+      <label>ChatGPT prompt</label>
+      <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy ChatGPT prompt</button>
+
+      <label>Data <span class="muted small">(export to back up)</span></label>
+      <div class="row">
+        <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
+        <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
+        <button id="btn-clear" class="btn ghost danger" type="button">Clear all</button>
+      </div>
+
+      <div class="row end">
+        <button id="btn-close-settings" class="btn ghost" type="button">Close</button>
+        <button id="btn-save-settings" class="btn" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="js/config.js"></script>
+<script src="js/data-foods.js"></script>
+<script src="js/foodmatch.js"></script>
+<script src="js/parse.js"></script>
+<script src="js/foods.js"></script>
+<script src="js/share.js"></script>
+<script src="js/ledger.js"></script>
+<script src="js/gdrive.js"></script>
+<script src="js/sync.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+<script>
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+</script>
+</body>
+</html>

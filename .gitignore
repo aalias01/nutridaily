@@ -1,0 +1,21 @@
+# macOS / iCloud noise
+.DS_Store
+*.icloud
+
+# editor
+.vscode/
+.idea/
+
+# never commit secrets or personal data exports
+*.local.js
+nutrichat-export-*.json
+
+# internal docs and planning (developer-only)
+docs_local/
+
+# deploy / deps
+node_modules/
+.vercel
+
+# legacy Gemini eval harness (not used by diary UX)
+evals/
