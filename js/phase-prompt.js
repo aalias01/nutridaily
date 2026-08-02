@@ -37,7 +37,11 @@ const PhasePrompt = (() => {
     const sex = p.sex || "unspecified";
     const height = p.heightCm != null ? `${p.heightCm} cm` : "unknown";
     const activity = activityLabel(p.activity) || p.activity || "unknown";
-    const weight = ctx.weightKg != null ? `${ctx.weightKg} kg` : "unknown";
+    const weight = ctx.weightKg != null
+      ? (ctx.weightUnit === "kg"
+        ? `${Number(ctx.weightKg).toFixed(1)} kg`
+        : `${(Number(ctx.weightKg) / 0.45359237).toFixed(1)} lb`)
+      : "unknown";
     const age = ctx.age != null ? String(ctx.age) : "unknown";
 
     return (

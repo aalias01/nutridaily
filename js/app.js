@@ -13,6 +13,7 @@ const App = (() => {
       goals: { ...DEFAULT_GOALS },
       goalsUpdatedAt: 0,
       imperial: false,
+      weightUnit: "lb",
       theme: "light",
       dayGoals: {},
       phases: [],
@@ -103,6 +104,9 @@ const App = (() => {
     } catch (e) {}
     state.settings.goals = { ...DEFAULT_GOALS, ...(state.settings.goals || {}) };
     if (!state.settings.theme) state.settings.theme = "light";
+    if (state.settings.weightUnit !== "kg" && state.settings.weightUnit !== "lb") {
+      state.settings.weightUnit = "lb";
+    }
     if (!state.settings.dayGoals || typeof state.settings.dayGoals !== "object") state.settings.dayGoals = {};
     if (!state.settings.weights || typeof state.settings.weights !== "object") state.settings.weights = {};
     Phases.ensureProfile(state.settings);
@@ -288,14 +292,37 @@ const App = (() => {
 
   function refreshInsights() {
     if (!document.querySelector("#view-insights.active")) return;
-    UI.renderTrends({
+    const opts = {
       daysBack: state.insightDays,
       nutrient: state.insightNutrient || "kcal",
       phaseId: state.insightPhaseId,
       settings: state.settings,
       todayKey: Ledger.todayKey(),
       goalsForDay: (day) => Phases.goalsForDay(day, state.settings),
-    });
+    };
+    UI.renderTrends(opts);
+    UI.renderWeightTrend(opts);
+  }
+
+  const LB_PER_KG = 1 / 0.45359237;
+  const KG_PER_LB = 0.45359237;
+
+  function bodyWeightUnit() {
+    return state.settings.weightUnit === "kg" ? "kg" : "lb";
+  }
+
+  function kgToDisplay(kg) {
+    if (kg == null || !Number.isFinite(Number(kg))) return null;
+    const n = Number(kg);
+    return bodyWeightUnit() === "kg"
+      ? Math.round(n * 10) / 10
+      : Math.round(n * LB_PER_KG * 10) / 10;
+  }
+
+  function displayToKg(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return bodyWeightUnit() === "kg" ? n : n * KG_PER_LB;
   }
 
   function syncWeightField() {
@@ -303,10 +330,10 @@ const App = (() => {
     const unit = UI.$("#weight-unit");
     if (!input) return;
     const kg = Phases.weightForDay(state.settings, state.viewDay);
-    const imperial = !!state.settings.imperial;
-    if (unit) unit.textContent = imperial ? "lb" : "kg";
+    if (unit) unit.textContent = bodyWeightUnit();
     if (kg == null) { input.value = ""; return; }
-    input.value = imperial ? (kg / 0.45359237).toFixed(1) : String(Math.round(kg * 10) / 10);
+    const shown = kgToDisplay(kg);
+    input.value = bodyWeightUnit() === "kg" ? String(shown) : shown.toFixed(1);
   }
 
   function saveWeightFromField() {
@@ -319,11 +346,16 @@ const App = (() => {
       UI.toast("Weight cleared");
       return;
     }
-    let n = parseAmount(raw);
-    if (!Number.isFinite(n) || n <= 0) { UI.toast("Enter a valid weight"); return; }
-    if (state.settings.imperial) n = n * 0.45359237; // lb → kg
-    if (n < 25 || n > 400) { UI.toast("Weight looks out of range"); return; }
-    state.settings.weights[state.viewDay] = { kg: Math.round(n * 100) / 100, updatedAt: Date.now() };
+    const entered = parseAmount(raw);
+    const kg = displayToKg(entered);
+    if (kg == null) { UI.toast("Enter a valid weight"); return; }
+    if (kg < 25 || kg > 400) { UI.toast("Weight looks out of range"); return; }
+    const lb = Math.round(kg * LB_PER_KG * 10) / 10;
+    state.settings.weights[state.viewDay] = {
+      kg: Math.round(kg * 100) / 100,
+      lb,
+      updatedAt: Date.now(),
+    };
     saveSettings();
     Sync.schedulePush();
     UI.toast("Weight saved");
@@ -954,6 +986,8 @@ const App = (() => {
         : "Add date of birth, sex, height, and activity. Log weight on Today.";
     }
     UI.$("#set-imperial").checked = !!state.settings.imperial;
+    const wu = bodyWeightUnit();
+    UI.$$("#weight-unit-seg [data-weight-unit]").forEach((b) => b.classList.toggle("on", b.dataset.weightUnit === wu));
     UI.$("#set-gclient").value = localStorage.getItem("nd_gclient") || "";
     const theme = state.settings.theme || "light";
     UI.$$("#theme-seg [data-theme-opt]").forEach((b) => b.classList.toggle("on", b.dataset.themeOpt === theme));
@@ -999,7 +1033,10 @@ const App = (() => {
   function sheetWeightKg() {
     const el = UI.$("#ai-weight");
     const n = el ? Number(el.value) : NaN;
-    if (Number.isFinite(n) && n > 0) return n;
+    if (Number.isFinite(n) && n > 0) {
+      const kg = displayToKg(n);
+      if (kg != null) return kg;
+    }
     return Phases.latestWeightKg(state.settings, Ledger.todayKey());
   }
 
@@ -1038,7 +1075,12 @@ const App = (() => {
     if (UI.$("#ai-activity")) UI.$("#ai-activity").value = profile.activity || "";
     if (UI.$("#ai-notes")) UI.$("#ai-notes").value = profile.notes || "";
     const w = Phases.latestWeightKg(state.settings, Ledger.todayKey());
-    if (UI.$("#ai-weight")) UI.$("#ai-weight").value = w != null ? w : "";
+    const wu = bodyWeightUnit();
+    if (UI.$("#ai-weight-label")) UI.$("#ai-weight-label").textContent = `Weight (${wu})`;
+    if (UI.$("#ai-weight")) {
+      const shown = w != null ? kgToDisplay(w) : null;
+      UI.$("#ai-weight").value = shown == null ? "" : (wu === "kg" ? String(shown) : shown.toFixed(1));
+    }
     const kind = selectedPhaseKind();
     if (UI.$("#ai-kind-label")) UI.$("#ai-kind-label").textContent = Phases.KIND_LABEL[kind] || kind;
     if (UI.$("#ai-phase-paste")) UI.$("#ai-phase-paste").value = "";
@@ -1229,8 +1271,19 @@ const App = (() => {
       UI.$("#set-imperial").addEventListener("change", () => {
         state.settings.imperial = UI.$("#set-imperial").checked;
         saveSettings();
+        UI.toast(state.settings.imperial ? "Food ounces on" : "Food grams only");
+      });
+    }
+    if (UI.$("#weight-unit-seg")) {
+      UI.$("#weight-unit-seg").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-weight-unit]");
+        if (!btn) return;
+        state.settings.weightUnit = btn.dataset.weightUnit === "kg" ? "kg" : "lb";
+        saveSettings();
+        syncSettingsForm();
         syncWeightField();
-        UI.toast(state.settings.imperial ? "Ounces on" : "Grams only");
+        refreshInsights();
+        UI.toast(state.settings.weightUnit === "kg" ? "Body weight in kg" : "Body weight in lb");
       });
     }
     UI.$("#btn-save-settings").addEventListener("click", () => {
@@ -1388,6 +1441,7 @@ const App = (() => {
           age: ready.age,
           profile: ready.profile,
           weightKg: ready.weightKg,
+          weightUnit: bodyWeightUnit(),
           notes: (UI.$("#ai-notes") && UI.$("#ai-notes").value) || "",
         });
         navigator.clipboard.writeText(text).then(() => UI.toast("AI targets prompt copied")).catch(() => {
@@ -1688,6 +1742,19 @@ const App = (() => {
         if (day) UI.renderDayDetail(day);
       });
     }
+    const wCanvas = UI.$("#weight-canvas");
+    if (wCanvas) {
+      wCanvas.style.cursor = "pointer";
+      wCanvas.addEventListener("click", (e) => {
+        const hit = UI.weightDayAtClientX(e.clientX);
+        const sum = UI.$("#weight-summary");
+        if (!hit || !sum) return;
+        const d = new Date(hit.day + "T12:00:00");
+        const label = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        sum.textContent = `${label} · ${hit.value.toFixed(1)} ${hit.unit}`;
+        UI.renderDayDetail(hit.day);
+      });
+    }
     let resizeT = null;
     window.addEventListener("resize", () => {
       clearTimeout(resizeT);
@@ -1863,6 +1930,7 @@ const App = (() => {
         goals: { ...DEFAULT_GOALS },
         goalsUpdatedAt: Date.now(),
         imperial: false,
+        weightUnit: "lb",
         theme: "light",
         dayGoals: {},
         phases: [],

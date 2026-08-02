@@ -8,6 +8,7 @@ const UI = (() => {
   let _focusStack = [];
   let _sheetStack = [];
   let _trendHit = null; // { keys, pad, iw, w }
+  let _weightHit = null; // { keys, pad, iw, w, byDay, unit }
 
   function toast(msg, opts) {
     const el = $("#toast");
@@ -800,7 +801,11 @@ const UI = (() => {
       }
       if (wDelta) {
         const sign = wDelta.delta >= 0 ? "+" : "";
-        bits.push(`<p class="muted small">Weight: ${wDelta.first.toFixed(1)} → ${wDelta.last.toFixed(1)} kg (${sign}${wDelta.delta.toFixed(1)} kg, ${wDelta.n} weigh-ins).</p>`);
+        const wu = (settings.weightUnit === "kg") ? "kg" : "lb";
+        const f = wu === "kg" ? wDelta.first : wDelta.first / 0.45359237;
+        const l = wu === "kg" ? wDelta.last : wDelta.last / 0.45359237;
+        const d = wu === "kg" ? wDelta.delta : wDelta.delta / 0.45359237;
+        bits.push(`<p class="muted small">Weight: ${f.toFixed(1)} → ${l.toFixed(1)} ${wu} (${sign}${d.toFixed(1)} ${wu}, ${wDelta.n} weigh-ins).</p>`);
       }
       if (callRoot) callRoot.innerHTML = bits.join("") || "";
     }
@@ -823,6 +828,171 @@ const UI = (() => {
       : `<span class="muted">Top foods will appear as you log.</span>`;
   }
 
+  function insightRangeKeys(opts) {
+    const settings = (opts && opts.settings) || {};
+    const todayKey = (opts && opts.todayKey) || Ledger.todayKey();
+    const phaseId = opts && opts.phaseId;
+    const daysBack = opts && opts.daysBack;
+    const end = new Date(todayKey + "T12:00:00");
+    let keys = [];
+    let selectedPhase = null;
+    if (daysBack === "phase" && typeof Phases !== "undefined") {
+      selectedPhase = Phases.phaseById(settings.phases, phaseId) || Phases.activePhase(settings.phases);
+      if (selectedPhase) keys = Phases.phaseDayKeys(selectedPhase, todayKey);
+    }
+    if (!keys.length) {
+      const n = Number(daysBack) || 14;
+      for (let i = n - 1; i >= 0; i--) {
+        const d = new Date(end);
+        d.setDate(d.getDate() - i);
+        keys.push(Ledger.todayKey(d));
+      }
+    }
+    return { keys, selectedPhase, daysBack, todayKey, settings };
+  }
+
+  function renderWeightTrend(opts) {
+    const canvas = $("#weight-canvas");
+    const summary = $("#weight-summary");
+    if (!canvas || !summary) return;
+    if (typeof Phases === "undefined") {
+      summary.textContent = "";
+      return;
+    }
+    const { keys, selectedPhase, daysBack, settings } = insightRangeKeys(opts);
+    const unit = settings.weightUnit === "kg" ? "kg" : "lb";
+    const toDisplay = (kg) => (unit === "kg" ? kg : kg / 0.45359237);
+
+    const byDay = {};
+    const series = keys.map((day) => {
+      const kg = Phases.weightForDay(settings, day);
+      const value = kg == null ? null : toDisplay(kg);
+      if (value != null) byDay[day] = value;
+      return { day, value };
+    });
+    const logged = series.filter((p) => p.value != null);
+
+    const w = canvas.clientWidth || 320;
+    const h = 150;
+    canvas.width = w * 2;
+    canvas.height = h * 2;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(2, 2);
+    ctx.clearRect(0, 0, w, h);
+    const pad = { l: 28, r: 10, t: 12, b: 28 };
+    const iw = w - pad.l - pad.r;
+    const ih = h - pad.t - pad.b;
+    _weightHit = { keys, pad, iw, w, byDay, unit };
+
+    if (logged.length < 2) {
+      summary.textContent = logged.length === 1
+        ? `One weigh-in in range (${logged[0].value.toFixed(1)} ${unit}). Log another day to see a trend.`
+        : "Log weight on Today (2+ days in this range) to see a trend.";
+      ctx.fillStyle = "rgba(100,100,100,0.7)";
+      ctx.font = "12px system-ui,sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Need 2+ weigh-ins", w / 2, h / 2);
+      ctx.textAlign = "start";
+      return;
+    }
+
+    let minV = Math.min(...logged.map((p) => p.value));
+    let maxV = Math.max(...logged.map((p) => p.value));
+    if (maxV - minV < 1) {
+      minV -= 1;
+      maxV += 1;
+    }
+    const padY = (maxV - minV) * 0.12;
+    minV -= padY;
+    maxV += padY;
+    const yAt = (v) => pad.t + ih * (1 - (v - minV) / (maxV - minV));
+    const xAt = (i) => pad.l + (i + 0.5) * (iw / keys.length);
+
+    // Y-axis ticks
+    ctx.fillStyle = "rgba(100,100,100,0.85)";
+    ctx.font = "10px system-ui,sans-serif";
+    ctx.textAlign = "right";
+    const ticks = 3;
+    for (let t = 0; t < ticks; t++) {
+      const v = minV + ((maxV - minV) * t) / (ticks - 1);
+      const y = yAt(v);
+      ctx.strokeStyle = "rgba(120,120,120,0.15)";
+      ctx.beginPath();
+      ctx.moveTo(pad.l, y);
+      ctx.lineTo(pad.l + iw, y);
+      ctx.stroke();
+      ctx.fillText(v.toFixed(0), pad.l - 4, y + 3);
+    }
+    ctx.textAlign = "start";
+
+    // Line through weigh-ins in calendar order
+    ctx.strokeStyle = "#d0703c";
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    let started = false;
+    series.forEach((p, i) => {
+      if (p.value == null) return;
+      const x = xAt(i);
+      const y = yAt(p.value);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    // Hollow dots
+    const cardFill = getComputedStyle(document.documentElement).getPropertyValue("--card").trim() || "#fff";
+    series.forEach((p, i) => {
+      if (p.value == null) return;
+      const x = xAt(i);
+      const y = yAt(p.value);
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = cardFill;
+      ctx.fill();
+      ctx.strokeStyle = "#d0703c";
+      ctx.stroke();
+    });
+
+    // X labels (same spacing heuristic as nutrition chart)
+    ctx.fillStyle = "rgba(100,100,100,0.85)";
+    ctx.font = "10px system-ui,sans-serif";
+    ctx.textAlign = "center";
+    const labelW = 34;
+    const maxLabels = Math.max(2, Math.min(keys.length, Math.floor(iw / labelW)));
+    const labelIdx = [];
+    if (keys.length <= maxLabels) {
+      for (let i = 0; i < keys.length; i++) labelIdx.push(i);
+    } else {
+      for (let k = 0; k < maxLabels; k++) {
+        labelIdx.push(Math.round((k * (keys.length - 1)) / (maxLabels - 1)));
+      }
+    }
+    const seen = new Set();
+    let lastX = -Infinity;
+    labelIdx.forEach((i) => {
+      if (seen.has(i)) return;
+      seen.add(i);
+      const x = xAt(i);
+      if (x - lastX < labelW * 0.9) return;
+      lastX = x;
+      ctx.fillText(keys[i].slice(5), x, h - 8);
+    });
+    ctx.textAlign = "start";
+
+    const first = logged[0];
+    const last = logged[logged.length - 1];
+    const delta = last.value - first.value;
+    const sign = delta >= 0 ? "+" : "";
+    const rangeLabel = daysBack === "phase" && selectedPhase
+      ? selectedPhase.name
+      : `${keys.length} days`;
+    summary.textContent =
+      `${logged.length} weigh-ins (${rangeLabel}) · ${first.value.toFixed(1)} → ${last.value.toFixed(1)} ${unit} (${sign}${delta.toFixed(1)} ${unit}). Tap a point for the day.`;
+  }
+
   function trendDayAtClientX(clientX) {
     if (!_trendHit) return null;
     const canvas = $("#trend-canvas");
@@ -832,6 +1002,29 @@ const UI = (() => {
     if (x < pad.l || x > pad.l + iw) return null;
     const i = Math.min(keys.length - 1, Math.max(0, Math.floor(((x - pad.l) / iw) * keys.length)));
     return keys[i];
+  }
+
+  /** Nearest day with a weigh-in near the tap; null if none close. */
+  function weightDayAtClientX(clientX) {
+    if (!_weightHit) return null;
+    const canvas = $("#weight-canvas");
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const { keys, pad, iw, byDay, unit } = _weightHit;
+    if (x < pad.l || x > pad.l + iw || !keys.length) return null;
+    const i = Math.min(keys.length - 1, Math.max(0, Math.floor(((x - pad.l) / iw) * keys.length)));
+    // Prefer exact day, else nearest weigh-in within ~1.5 day slots
+    if (byDay[keys[i]] != null) return { day: keys[i], value: byDay[keys[i]], unit };
+    let best = null;
+    let bestDist = Infinity;
+    for (let j = 0; j < keys.length; j++) {
+      if (byDay[keys[j]] == null) continue;
+      const dist = Math.abs(j - i);
+      if (dist < bestDist) { bestDist = dist; best = keys[j]; }
+    }
+    if (best == null || bestDist > 2) return null;
+    return { day: best, value: byDay[best], unit };
   }
 
   function renderDayDetail(dayKey) {
@@ -881,6 +1074,6 @@ const UI = (() => {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
     renderDayLog, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
-    renderFoodDetail, renderTrends, trendDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
+    renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
   };
 })();

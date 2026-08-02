@@ -87,7 +87,7 @@
       <div class="weight-row" id="weight-row">
         <label class="weight-label" for="day-weight">Weight</label>
         <input id="day-weight" type="text" inputmode="decimal" placeholder="—" aria-label="Body weight">
-        <span class="muted small" id="weight-unit">kg</span>
+        <span class="muted small" id="weight-unit">lb</span>
         <button type="button" class="linkbtn" id="btn-weight-save">Save</button>
       </div>
       <div id="day-log" class="day-log"></div>
@@ -129,6 +129,9 @@
       </div>
       <div class="canvas-wrap"><canvas id="trend-canvas"></canvas></div>
       <p id="trend-summary" class="muted"></p>
+      <p class="muted small chart-section-label">Weight</p>
+      <div class="canvas-wrap"><canvas id="weight-canvas"></canvas></div>
+      <p id="weight-summary" class="muted"></p>
       <div id="insight-callouts"></div>
       <div id="insight-scorecard" class="card-block"></div>
       <div id="top-foods" class="card-block"></div>
@@ -236,7 +239,14 @@
         </div>
 
         <label class="set-label">Units</label>
-        <label class="check-row"><input id="set-imperial" type="checkbox"> Show ounces when logging</label>
+        <div class="set-row theme-row">
+          <span class="muted small">Body weight</span>
+          <span class="seg" id="weight-unit-seg">
+            <button type="button" data-weight-unit="lb">lb</button>
+            <button type="button" data-weight-unit="kg">kg</button>
+          </span>
+        </div>
+        <label class="check-row"><input id="set-imperial" type="checkbox"> Show ounces when logging food</label>
 
         <label class="set-label">AI estimate prompt</label>
         <p class="muted small">Works with ChatGPT, Claude, or any LLM that returns a NUTRI v1 block.</p>
@@ -396,8 +406,8 @@
           </select>
         </div>
         <div>
-          <label class="small muted" for="ai-weight">Weight (kg)</label>
-          <input id="ai-weight" type="number" min="30" max="400" step="0.1" placeholder="from Today log">
+          <label class="small muted" for="ai-weight" id="ai-weight-label">Weight (lb)</label>
+          <input id="ai-weight" type="number" min="30" max="900" step="0.1" placeholder="from Today log">
         </div>
       </div>
       <label class="small muted" for="ai-notes">Notes (optional)</label>

@@ -723,7 +723,9 @@ const Phases = (() => {
       let weightLabel = "";
       if (w) {
         const sign = w.delta >= 0 ? "+" : "";
-        weightLabel = `${sign}${w.delta.toFixed(1)} kg`;
+        const unit = (settings && settings.weightUnit) === "kg" ? "kg" : "lb";
+        const d = unit === "kg" ? w.delta : w.delta / 0.45359237;
+        weightLabel = `${sign}${d.toFixed(1)} ${unit}`;
       }
       return {
         id: phase.id,
