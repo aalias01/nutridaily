@@ -1192,12 +1192,12 @@ const App = (() => {
   async function shareFoodById(id) {
     const food = findFood(id);
     if (!food) return;
-    const payload = Share.shareText(food);
-    const isUrl = /^https?:\/\//i.test(payload);
+    // url = clean app home (OG/favicon icon in chat); text = short NCR1 code.
+    const data = Share.shareData(food);
+    const clipboard = Share.shareText(food);
     try {
       if (navigator.share) {
-        if (isUrl) await navigator.share({ title: food.name, text: `NutriDaily food: ${food.name}`, url: payload });
-        else await navigator.share({ title: food.name, text: `NutriDaily food: ${food.name}\n${payload}` });
+        await navigator.share(data);
         UI.toast("Share sheet opened");
         return;
       }
@@ -1205,10 +1205,10 @@ const App = (() => {
       if (err && err.name === "AbortError") return;
     }
     try {
-      await navigator.clipboard.writeText(payload);
-      UI.toast("Share link copied");
+      await navigator.clipboard.writeText(clipboard);
+      UI.toast("Food code copied");
     } catch (_) {
-      window.prompt("Copy this food link / code:", payload);
+      window.prompt("Copy this food code:", clipboard);
     }
   }
 

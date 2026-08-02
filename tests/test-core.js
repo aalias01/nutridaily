@@ -357,6 +357,12 @@ console.log("\n[9] Recipe sharing (untrusted input validation)");
   ok(r.food.recipe.ingredients[0].text === "red lentils (400 g)", "ingredients unpack as { text }");
   ok(r.food.source === "shared", "provenance is marked");
 
+  const sd = Share.shareData(dal);
+  ok(sd.url && !/#recipe=/.test(sd.url), "share url is clean app home (for icon preview)");
+  ok(/NCR1\./.test(sd.text), "share text carries the code");
+  const st = Share.shareText(dal);
+  ok(st.includes(sd.url) && st.includes(code), "clipboard message has site url + code");
+
   const withObjIngs = Share.pack({
     name: "obj dal",
     per100: { kcal: 132, p: 7.1, c: 18, f: 3.2, fb: 4, na: 200 },
