@@ -51,6 +51,47 @@ const NutriParse = (() => {
     return PROMPT + "\nThis is my current saved version. Return a corrected block in the same format:\n" + String(raw || "");
   }
 
+  /**
+   * Prompt for refining a saved food (catalog/reference or personal) when no prior NUTRI paste exists.
+   * Prefer this over updatePrompt("") for default/catalog foods.
+   */
+  function foodUpdatePrompt(food) {
+    const f = food || {};
+    const raw = f.raw && String(f.raw).trim();
+    if (raw) return updatePrompt(raw);
+    const p = f.per100 || {};
+    const units = f.units || {};
+    const unitBits = Object.keys(units)
+      .filter((k) => Number(units[k]) > 0)
+      .map((k) => `${k}=${units[k]}g`)
+      .join(", ");
+    const prov = (typeof Foods !== "undefined" && Foods.provenance)
+      ? Foods.provenance(f)
+      : null;
+    const sourceLine = prov && prov.kind === "ref"
+      ? "Source: reference catalog (USDA-style averages — please refine from reliable nutrition data).\n"
+      : "Source: my saved food (no prior AI paste on file).\n";
+    return (
+      PROMPT +
+      "\n" +
+      "Refine this existing food for my NutriDaily library. Keep the Name recognizable (same or clearer).\n" +
+      "Return a corrected NUTRI v1 block with updated Per 100 g / Totals math, Piece/Log as if countable,\n" +
+      "and Notes listing sources or assumptions. Prefer USDA FoodData Central or similar; no fake URLs.\n\n" +
+      sourceLine +
+      "Current saved values:\n" +
+      `Name: ${f.name || ""}\n` +
+      (Array.isArray(f.aliases) && f.aliases.length ? `Aliases: ${f.aliases.join(", ")}\n` : "") +
+      `Category: ${f.cat || "dish"}\n` +
+      `Per 100 g: ${Math.round(p.kcal || 0)} kcal | P ${p.p ?? 0} | C ${p.c ?? 0} | F ${p.f ?? 0} | Fiber ${p.fb ?? 0} | Sodium ${p.na ?? 0}\n` +
+      (f.logAs ? `Log as: ${f.logAs}\n` : "") +
+      (units.piece ? `Piece: ${units.piece}\n` : "") +
+      (unitBits ? `Known units: ${unitBits}\n` : "") +
+      (f.countLabel ? `Count as: ${f.countLabel}\n` : "") +
+      "\nMy dish:\n" +
+      String(f.name || "") + "\n"
+    );
+  }
+
   function preprocess(text) {
     let s = String(text || "");
     s = s.replace(/\u00a0/g, " ");
@@ -447,7 +488,7 @@ const NutriParse = (() => {
     return { found: true, results };
   }
 
-  return { PROMPT, updatePrompt, parse, preprocess, extractBlocks, parseMacros, parseBatch };
+  return { PROMPT, updatePrompt, foodUpdatePrompt, parse, preprocess, extractBlocks, parseMacros, parseBatch };
 })();
 
 if (typeof module !== "undefined") module.exports = NutriParse;

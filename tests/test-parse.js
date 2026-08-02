@@ -160,5 +160,19 @@ console.log("\n[provenance]");
   ok(Foods.provenance(ai).kind === "ai", "paste with raw → AI estimate");
 }
 
+console.log("\n[parse] catalog refine prompt");
+{
+  globalThis.Foods = Foods;
+  const almonds = FOOD_DB.find((f) => f.id === "almonds");
+  const food = Foods.fromCatalog(almonds);
+  const text = NutriParse.foodUpdatePrompt(food);
+  ok(/NUTRI v1/.test(text), "refine prompt asks for NUTRI v1");
+  ok(/almonds/i.test(text), "refine prompt includes food name");
+  ok(/USDA|reference catalog/i.test(text), "refine prompt marks reference source");
+  ok(/579/.test(text) || /Per 100 g/.test(text), "refine prompt includes current per100");
+  const withRaw = { ...food, raw: "NUTRI v1\nName: almonds\nEND" };
+  ok(NutriParse.foodUpdatePrompt(withRaw).includes("current saved version"), "uses updatePrompt when raw exists");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -104,14 +104,20 @@ const GapPrompt = (() => {
     }).join("; ");
 
     let candBlock = "(no candidates selected)\n";
+    const refineNames = [];
     if (candidates.length) {
       candBlock = candidates.map((c, i) => {
         const piece = c.pieceGrams != null && Number.isFinite(c.pieceGrams)
           ? `; piece = ${fmtNum(c.pieceGrams)} g`
           : "";
         const logAs = c.logAs ? `; logAs ${c.logAs}` : "";
+        const src = c.provenance === "ref"
+          ? "Reference · USDA-style avg (may refine with NUTRI v1)"
+          : (c.provenance === "ai" ? "Yours · AI estimate" : "Yours");
+        if (c.provenance === "ref" || c.refine) refineNames.push(c.name);
         return (
           `${i + 1}. ${c.name}\n` +
+          `   Source: ${src}\n` +
           `   Per 100 g: ${per100Line(c.per100)}\n` +
           `   Typical portion: ${portionLine(c.portion)}${piece}${logAs}`
         );
@@ -144,12 +150,18 @@ const GapPrompt = (() => {
       "- If the candidate set cannot hit targets within preferred ranges, set Reachable: no, explain briefly in Note,\n" +
       "  and still propose the best honest quantities. I may add another food in the app and re-copy this prompt,\n" +
       "  or we can iterate in chat (raise qty / swap) before you emit the final block.\n" +
-      "- Do NOT invent plan Item lines for foods not listed above.\n" +
-      "- If during our chat we agree on a brand-new homemade dish not in the list, ALSO emit a separate NUTRI v1 … END\n" +
-      "  food block (same format NutriDaily uses for homemade dishes) so I can import it into My Foods. Still keep GAP items\n" +
-      "  limited to the candidate names I selected (or tell me to re-select after importing).\n" +
-      "- Plain numbers only. One GAP v1 block for the final answer.\n\n" +
-      "Reply with ONE fenced code block for the plan (and optional NUTRI v1 blocks if needed), exactly:\n\n" +
+      "- Do NOT invent plan Item lines for foods not listed above. Use each candidate's exact Name on Item lines.\n" +
+      "- Qty must include a unit: e.g. `120 g` or `2 piece` (not a bare number).\n" +
+      "- Omit Item lines for foods I should skip (do not write 0 g).\n" +
+      "- Reference catalog foods use USDA-style averages. If you refine macros for any candidate (especially Reference),\n" +
+      "  ALSO emit a NUTRI v1 … END block for that food (same Name) so I can update My Foods. You may refine several.\n" +
+      "- If during our chat we agree on a brand-new homemade dish not in the list, ALSO emit a NUTRI v1 … END block for it.\n" +
+      "  Still keep GAP Item lines limited to the candidate names I selected (or tell me to re-select after importing).\n" +
+      (refineNames.length
+        ? `- Candidates that especially benefit from a NUTRI refine: ${refineNames.join("; ")}.\n`
+        : "") +
+      "- Plain numbers only. One GAP v1 block for the final answer (plus optional NUTRI blocks).\n\n" +
+      "Reply with the GAP plan (and optional NUTRI v1 blocks if needed), exactly:\n\n" +
       "GAP v1\n" +
       `Day: ${day || "<YYYY-MM-DD>"}\n` +
       "Reachable: yes\n" +

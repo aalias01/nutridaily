@@ -451,9 +451,9 @@
       </div>
 
       <div id="gap-step-prompt" hidden>
-        <p class="muted small">Copy the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply. Optional <code>NUTRI v1</code> blocks for brand-new dishes are OK.</p>
+        <p class="muted small" id="gap-prompt-hint">Copy the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply. Optional <code>NUTRI v1</code> blocks refine Reference catalog foods or add brand-new dishes.</p>
         <button id="btn-gap-copy-prompt" class="btn full" type="button">Copy gap prompt</button>
-        <textarea id="gap-paste" rows="7" placeholder="Paste the GAP v1 … END reply here"></textarea>
+        <textarea id="gap-paste" rows="7" placeholder="Paste the GAP v1 … END reply here (plus optional NUTRI v1 blocks)"></textarea>
         <div class="col-actions">
           <button id="btn-gap-parse" class="btn full" type="button">Parse plan</button>
           <button id="btn-gap-back-select" class="btn ghost full" type="button">Back to food pick</button>

@@ -17,6 +17,7 @@ const App = (() => {
       theme: "light",
       dayGoals: {},
       dayPlans: {},
+      gapDrafts: {}, // day -> { selected: [{foodId,catalogId,name}], step, updatedAt }
       phases: [],
       weights: {},
       profile: {},
@@ -119,6 +120,7 @@ const App = (() => {
     }
     if (!state.settings.dayGoals || typeof state.settings.dayGoals !== "object") state.settings.dayGoals = {};
     if (!state.settings.dayPlans || typeof state.settings.dayPlans !== "object") state.settings.dayPlans = {};
+    if (!state.settings.gapDrafts || typeof state.settings.gapDrafts !== "object") state.settings.gapDrafts = {};
     if (!state.settings.weights || typeof state.settings.weights !== "object") state.settings.weights = {};
     Phases.ensureProfile(state.settings);
     try { state.personalFoods = JSON.parse(localStorage.getItem(PERSONAL_KEY) || "[]"); }
@@ -454,6 +456,7 @@ const App = (() => {
   function buildGapCandidatesFromSelection() {
     return Object.values(state.gapSelected).map((food) => {
       const portion = food.id ? Ledger.portionStats(food.id) : { n: 0 };
+      const prov = Foods.provenance(food);
       return {
         id: food.id || null,
         name: food.name,
@@ -461,9 +464,59 @@ const App = (() => {
         logAs: food.logAs || (FoodMatch.prefersPieceLog(food) ? "piece" : "grams"),
         pieceGrams: FoodMatch.pieceGrams(food),
         portion: portion.n ? portion : null,
+        provenance: prov && prov.kind === "ref" ? "ref" : (prov && prov.kind === "ai" ? "ai" : "yours"),
+        refine: !!(prov && prov.kind === "ref"),
         food,
       };
     });
+  }
+
+  function persistGapDraft(step) {
+    if (!state.settings.gapDrafts || typeof state.settings.gapDrafts !== "object") {
+      state.settings.gapDrafts = {};
+    }
+    const selected = Object.values(state.gapSelected).map((f) => ({
+      foodId: f.id || null,
+      catalogId: f.catalogId || null,
+      name: f.name,
+    }));
+    if (!selected.length) {
+      delete state.settings.gapDrafts[state.viewDay];
+    } else {
+      state.settings.gapDrafts[state.viewDay] = {
+        selected,
+        step: step || state.gapStep || "select",
+        updatedAt: Date.now(),
+      };
+    }
+    saveSettings();
+    Sync.schedulePush();
+  }
+
+  function clearGapDraft(day) {
+    if (!state.settings.gapDrafts) return;
+    delete state.settings.gapDrafts[day || state.viewDay];
+    saveSettings();
+  }
+
+  function restoreGapDraft() {
+    const draft = state.settings.gapDrafts && state.settings.gapDrafts[state.viewDay];
+    if (!draft || !Array.isArray(draft.selected) || !draft.selected.length) return null;
+    state.gapSelected = {};
+    const DB = typeof FOOD_DB !== "undefined" ? FOOD_DB : [];
+    for (const c of draft.selected) {
+      let food = c.foodId ? findFood(c.foodId) : null;
+      if (!food && c.catalogId) {
+        food = state.personalFoods.find((f) => !f.deleted && f.catalogId === c.catalogId) || null;
+        if (!food) {
+          const db = DB.find((f) => f.id === c.catalogId);
+          if (db) food = Foods.fromCatalog(db);
+        }
+      }
+      if (!food && c.name) food = Foods.findByName(state.personalFoods, c.name);
+      if (food) state.gapSelected[gapFoodKey(food)] = food;
+    }
+    return Object.keys(state.gapSelected).length ? draft : null;
   }
 
   function buildGapPromptText() {
@@ -547,10 +600,12 @@ const App = (() => {
     for (const f of personalRows.slice(0, 60)) {
       const key = gapFoodKey(f);
       const stats = gapPortionFor(f.id);
+      const prov = Foods.provenance(f);
       const hist = stats.n
         ? GapPrompt.portionLine(stats)
         : `${UI.fmt(f.per100.kcal)} kcal/100g`;
-      rows.push({ key, name: f.name, sub: hist, selected: !!state.gapSelected[key], food: f, kind: "personal" });
+      const tag = prov && prov.kind === "ref" ? "Reference · USDA avg · " : "";
+      rows.push({ key, name: f.name, sub: `${tag}${hist}`, selected: !!state.gapSelected[key], food: f, kind: "personal" });
     }
 
     const personalNames = new Set(personal.map((f) => String(f.name || "").toLowerCase()));
@@ -573,7 +628,7 @@ const App = (() => {
       rows.push({
         key,
         name: db.name,
-        sub: `Catalog · ${UI.fmt(db.per100.kcal)} kcal/100g`,
+        sub: `Reference · USDA avg · ${UI.fmt(db.per100.kcal)} kcal/100g`,
         selected: !!existing,
         food,
         kind: "catalog",
@@ -592,6 +647,7 @@ const App = (() => {
     if (!row) return;
     if (state.gapSelected[key]) delete state.gapSelected[key];
     else state.gapSelected[key] = row.food;
+    persistGapDraft("select");
     refreshGapSelectList();
   }
 
@@ -601,6 +657,14 @@ const App = (() => {
     if (step === "select") {
       refreshGapRemainingBlurb();
       refreshGapSelectList();
+    } else if (step === "prompt") {
+      persistGapDraft("prompt");
+      const hint = UI.$("#gap-prompt-hint");
+      if (hint) {
+        hint.textContent =
+          "Copy the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final GAP v1 … END reply. " +
+          "Optional NUTRI v1 blocks refine Reference catalog foods or add brand-new dishes.";
+      }
     } else if (step === "plan") {
       renderGapPlanStep();
     }
@@ -629,22 +693,34 @@ const App = (() => {
     const plan = dayPlan(state.viewDay);
     state.gapNutriPending = null;
     state.gapPortionCache = null;
+
+    // Resume paste step after leaving for an LLM (selection is persisted)
+    if (!preferPlan) {
+      const draft = restoreGapDraft();
+      if (draft && draft.step === "prompt" && Object.keys(state.gapSelected).length) {
+        UI.openSheet("sheet-gap", { noAutofocus: true });
+        showGapSheetStep("prompt");
+        return;
+      }
+    }
+
     if (preferPlan && plan && pendingPlanCount(state.viewDay) > 0) {
       restoreGapSelectionFromPlan(plan, true);
       UI.openSheet("sheet-gap", { noAutofocus: true });
       showGapSheetStep("plan");
       return;
     }
-    if (!Object.keys(state.gapSelected).length && plan) {
-      restoreGapSelectionFromPlan(plan, false);
+    if (!Object.keys(state.gapSelected).length) {
+      if (!restoreGapDraft() && plan) restoreGapSelectionFromPlan(plan, false);
     }
     UI.openSheet("sheet-gap", { noAutofocus: true });
     showGapSheetStep("select");
   }
 
   function copyGapPrompt() {
+    persistGapDraft("prompt");
     const text = buildGapPromptText();
-    navigator.clipboard.writeText(text).then(() => UI.toast("Gap prompt copied")).catch(() => {
+    navigator.clipboard.writeText(text).then(() => UI.toast("Gap prompt copied — paste back here when ready")).catch(() => {
       window.prompt("Select all and copy (Cmd/Ctrl+C):", text);
     });
   }
@@ -668,8 +744,9 @@ const App = (() => {
       if (pending && pending.length) {
         const names = pending.map((r) => (r.food && r.food.name) || "food").join(", ");
         banner.hidden = false;
-        banner.innerHTML = `Also found ${pending.length} new food(s) in the paste (${UI.esc(names)}). ` +
-          `<button type="button" class="linkbtn" id="btn-gap-import-nutri">Import into My Foods</button>`;
+        banner.innerHTML = `Also found ${pending.length} NUTRI block(s) (${UI.esc(names)}). ` +
+          `Use to refine Reference catalog foods or add new dishes. ` +
+          `<button type="button" class="linkbtn" id="btn-gap-import-nutri">Import / refine</button>`;
         const btn = UI.$("#btn-gap-import-nutri");
         if (btn) btn.onclick = () => importGapNutriFoods();
       } else {
@@ -778,6 +855,7 @@ const App = (() => {
       projected: parsed.projected || null,
     };
     saveDayPlan(state.viewDay, plan);
+    clearGapDraft(state.viewDay);
     if (parsed.warnings && parsed.warnings.length) {
       UI.toast(parsed.warnings[0]);
     }
@@ -809,15 +887,37 @@ const App = (() => {
     const pending = state.gapNutriPending || [];
     if (!pending.length) return;
     let added = 0;
+    let updated = 0;
     for (const r of pending) {
-      if (!r.food) continue;
-      const dup = Foods.findByName(state.personalFoods, r.food.name);
-      if (dup) continue;
-      const food = Foods.createFromDraft(r.food);
+      if (!r.food || !r.canSave) continue;
+      const draft = { ...r.food, raw: (r.raw || r.food.raw || "").slice(0, 12000) };
+      // Prefer updating a selected / library food with the same name (catalog refine)
+      let existing = Object.values(state.gapSelected).find((f) =>
+        String(f.name || "").toLowerCase() === String(draft.name || "").toLowerCase()
+      ) || null;
+      if (existing && existing.id) existing = findFood(existing.id) || existing;
+      if (!existing) existing = Foods.findByName(state.personalFoods, draft.name);
+      if (existing && existing.id && !String(existing.id).startsWith("orphan-")) {
+        const idx = state.personalFoods.findIndex((f) => f.id === existing.id);
+        const next = Foods.applyUpdate(existing, draft);
+        if (idx >= 0) state.personalFoods[idx] = next;
+        else state.personalFoods.push(next);
+        state.gapSelected[gapFoodKey(next)] = next;
+        // Refresh plan item foodIds that pointed at the old copy
+        const plan = dayPlan(state.viewDay);
+        if (plan && Array.isArray(plan.items)) {
+          const items = plan.items.map((it) => {
+            if (String(it.name || "").toLowerCase() !== String(next.name).toLowerCase()) return it;
+            return { ...it, foodId: next.id, name: next.name };
+          });
+          saveDayPlan(state.viewDay, { ...plan, items });
+        }
+        updated += 1;
+        continue;
+      }
+      const food = Foods.createFromDraft(draft);
       state.personalFoods.push(food);
-      // If selection referenced this name without id, attach
-      const key = gapFoodKey(food);
-      state.gapSelected[key] = food;
+      state.gapSelected[gapFoodKey(food)] = food;
       added += 1;
     }
     savePersonal();
@@ -825,7 +925,10 @@ const App = (() => {
     state.gapNutriPending = null;
     refreshFoods();
     renderGapPlanStep();
-    UI.toast(added ? `Added ${added} food${added === 1 ? "" : "s"} to My Foods` : "No new foods to add");
+    const bits = [];
+    if (updated) bits.push(`updated ${updated}`);
+    if (added) bits.push(`added ${added}`);
+    UI.toast(bits.length ? `My Foods: ${bits.join(", ")}` : "No foods to import");
   }
 
   function openGapItemQty(itemId) {
@@ -867,9 +970,10 @@ const App = (() => {
   }
 
   function clearGapPlan() {
-    if (!dayPlan(state.viewDay)) return;
+    if (!dayPlan(state.viewDay) && !(state.settings.gapDrafts && state.settings.gapDrafts[state.viewDay])) return;
     if (!confirm("Clear this day’s gap plan?")) return;
     saveDayPlan(state.viewDay, null);
+    clearGapDraft(state.viewDay);
     state.gapNutriPending = null;
     state.gapSelected = {};
     state.gapPendingItemId = null;
@@ -1287,7 +1391,7 @@ const App = (() => {
     let text = NutriParse.PROMPT;
     if (state.updateFoodId) {
       const f = findFood(state.updateFoodId);
-      if (f) text = NutriParse.updatePrompt(f.raw || "");
+      if (f) text = NutriParse.foodUpdatePrompt(f);
     }
     navigator.clipboard.writeText(text).then(() => UI.toast("Prompt copied")).catch(() => {
       UI.showPromptFallback(text);
@@ -2608,7 +2712,7 @@ const App = (() => {
       } else if (action === "copy-update-prompt") {
         const f = findFood(id);
         if (!f) return;
-        const text = NutriParse.updatePrompt(f.raw || "");
+        const text = NutriParse.foodUpdatePrompt(f);
         navigator.clipboard.writeText(text).then(() => UI.toast("Update prompt copied")).catch(() => {
           UI.closeSheet("sheet-detail");
           openPaste({ updateId: id, intent: "library" });
@@ -2687,6 +2791,7 @@ const App = (() => {
       state.personalFoods = [];
       savePersonal();
       state.settings.dayPlans = {};
+      state.settings.gapDrafts = {};
       state.gapSelected = {};
       state.gapPendingItemId = null;
       state.gapPendingDay = null;
@@ -2713,6 +2818,7 @@ const App = (() => {
         theme: "light",
         dayGoals: {},
         dayPlans: {},
+        gapDrafts: {},
         phases: [],
         weights: {},
         profile: {},
