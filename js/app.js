@@ -678,14 +678,15 @@ const App = (() => {
     for (const db of catalogPool) {
       const key = `cat:${db.id}`;
       if (seen.has(key)) continue;
-      const existing = state.gapSelected[key];
-      const food = existing || Foods.fromCatalog(db);
-      otherRows.push(gapSelectRowForFood(food, key, "catalog"));
+      otherRows.push(gapSelectRowForFood(Foods.fromCatalog(db), key, "catalog"));
       seen.add(key);
     }
 
     const rows = selectedRows.concat(otherRows);
-    UI.renderGapSelectList(rows.map((r) => ({ key: r.key, name: r.name, sub: r.sub, selected: r.selected })));
+    UI.renderGapSelectList(
+      rows.map((r) => ({ key: r.key, name: r.name, sub: r.sub, selected: r.selected })),
+      { queryActive: !!needle }
+    );
     refreshGapSelectList._rows = rows;
     const btn = UI.$("#btn-gap-to-prompt");
     if (btn) btn.disabled = Object.keys(state.gapSelected).length < 1;
@@ -698,10 +699,16 @@ const App = (() => {
     const selecting = !state.gapSelected[key];
     if (selecting) state.gapSelected[key] = row.food;
     else delete state.gapSelected[key];
-    // After a pick, clear search so selected stay visible at the top of the full list
+    const search = UI.$("#gap-food-search");
     if (selecting) {
-      const search = UI.$("#gap-food-search");
-      if (search && search.value) search.value = "";
+      // Clear search so selected stay visible at the top; remember query for undo
+      if (search && search.value) {
+        refreshGapSelectList._lastQuery = search.value;
+        search.value = "";
+      }
+    } else if (search && !search.value && refreshGapSelectList._lastQuery) {
+      // Restore prior query so a just-deselected catalog hit doesn't vanish
+      search.value = refreshGapSelectList._lastQuery;
     }
     persistGapDraft("select");
     refreshGapSelectList();

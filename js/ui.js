@@ -1210,10 +1210,12 @@ const UI = (() => {
   /**
    * Multi-select food list for gap plan.
    * rows: [{ key, name, sub, selected }] — selected rows are expected first.
+   * opts.queryActive: true when a search string is present (show empty results under selected).
    */
-  function renderGapSelectList(rows) {
+  function renderGapSelectList(rows, opts) {
     const root = $("#gap-select-list");
     if (!root) return;
+    const queryActive = !!(opts && opts.queryActive);
     if (!rows || !rows.length) {
       root.innerHTML = `<div class="empty small">No foods match. Add foods to My Foods or search the catalog.</div>`;
       return;
@@ -1236,6 +1238,8 @@ const UI = (() => {
     if (rest.length) {
       if (selected.length) html += `<div class="meal-label">Foods</div>`;
       html += rest.map(rowHtml).join("");
+    } else if (selected.length && queryActive) {
+      html += `<div class="empty small">No foods match. Try a different search.</div>`;
     }
     root.innerHTML = html;
   }
