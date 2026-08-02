@@ -1,4 +1,4 @@
-/* NutriChat — personal food library (CRUD + copy-on-write versioning). */
+/* NutriDaily — personal food library (CRUD + copy-on-write versioning). */
 const Foods = (() => {
   const HISTORY_CAP = 5;
 

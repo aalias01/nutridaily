@@ -1,4 +1,4 @@
-/* NutriChat — NUTRI v1 paste parser.
+/* NutriDaily — NUTRI v1 paste parser.
  * Deterministic only. ChatGPT lives outside the app; this module owns numbers.
  */
 const NutriParse = (() => {

@@ -1,4 +1,4 @@
-/* NutriChat core tests — run with: node tests/test-core.js
+/* NutriDaily core tests — run with: node tests/test-core.js
  * Covers the deterministic layer: food resolution, unit math, macro math,
  * uncertainty propagation, event-sourced ledger reduction, verifier rules.
  */

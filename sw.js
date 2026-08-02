@@ -1,13 +1,11 @@
-/* NutriChat service worker — app-shell caching for installable/offline use.
- * Strategy: same-origin GETs are served stale-while-revalidate; cross-origin
- * (Google sign-in, Drive) always goes to the network untouched.
- */
-const CACHE = "nutrichat-v2";
+/* NutriDaily service worker — app-shell caching for installable/offline use. */
+const CACHE = "nutridaily-v3";
 const SHELL = [
   ".", "index.html", "css/style.css", "manifest.webmanifest",
   "js/config.js", "js/data-foods.js", "js/foodmatch.js", "js/parse.js", "js/foods.js",
   "js/share.js", "js/ledger.js", "js/gdrive.js", "js/sync.js", "js/ui.js", "js/app.js",
-  "icons/icon-192.png", "icons/icon-512.png",
+  "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png",
+  "icons/apple-touch-icon.png", "icons/favicon-32.png", "icons/favicon-48.png",
 ];
 
 self.addEventListener("install", (e) => {

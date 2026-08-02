@@ -1,4 +1,4 @@
-/* NutriChat — DOM rendering for the diary UI. */
+/* NutriDaily — DOM rendering for the diary UI. */
 const UI = (() => {
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => [...document.querySelectorAll(sel)];

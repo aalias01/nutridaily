@@ -1,4 +1,4 @@
-/* NutriChat — classic food diary */
+/* NutriDaily — classic food diary. Theme via data-theme (default light). */
 :root {
   --bg: #f6f5f1;
   --card: #ffffff;
@@ -14,8 +14,18 @@
   --shadow: 0 1px 3px rgba(35, 40, 45, 0.07);
   --tab-h: 56px;
 }
+:root[data-theme="dark"] {
+  --bg: #16181b;
+  --card: #1f2226;
+  --ink: #e8e6e1;
+  --muted: #9aa0a8;
+  --line: #2c3036;
+  --accent: #4cae81;
+  --accent-ink: #6cc39a;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #16181b;
     --card: #1f2226;
     --ink: #e8e6e1;
@@ -231,6 +241,12 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 }
 .check-row { display: flex !important; align-items: center; gap: 8px; font-weight: 500 !important; }
 .check-row input { width: auto !important; }
+.seg { display: inline-flex; gap: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 2px; }
+.seg button {
+  border: none; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 650;
+  padding: 7px 12px; min-height: 36px; border-radius: 8px; cursor: pointer; text-transform: capitalize;
+}
+.seg button.on { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .row.end { justify-content: flex-end; margin-top: 16px; }
 .row input { flex: 1; }

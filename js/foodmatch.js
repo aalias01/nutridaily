@@ -1,4 +1,4 @@
-/* NutriChat — deterministic food resolution & nutrition math.
+/* NutriDaily — deterministic food resolution & nutrition math.
  * Resolution priority: personal foods > curated DB (reference catalog).
  */
 const FoodMatch = (() => {

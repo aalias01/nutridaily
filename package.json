@@ -1,7 +1,7 @@
 {
-  "name": "nutrichat",
+  "name": "nutridaily",
   "private": true,
-  "description": "NutriChat food diary (static)",
+  "description": "NutriDaily nutrition tracker (static)",
   "scripts": {
     "build": "node scripts/inject-client-id.js",
     "test": "node tests/test-core.js && node tests/test-parse.js"

@@ -1,7 +1,7 @@
 {
-  "name": "NutriChat — Food Diary",
-  "short_name": "NutriChat",
-  "description": "Personal food diary. Build dishes with ChatGPT paste, log by grams, keep an event ledger on your device (optional Google Drive backup).",
+  "name": "NutriDaily",
+  "short_name": "NutriDaily",
+  "description": "Personal nutrition tracker. Build dishes with ChatGPT paste, log by grams, optional Google Drive backup.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

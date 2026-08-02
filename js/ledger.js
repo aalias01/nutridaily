@@ -1,11 +1,12 @@
-/* NutriChat — event-sourced day ledger.
+/* NutriDaily — event-sourced day ledger.
  * Every change is an immutable event: add | amend | remove.
  * State (entries, totals) is always derived by reduction — never stored.
  * Uncertainty: each entry has sd (relative). Totals carry a ±1σ interval,
  * σ_total = sqrt(Σ (value_i · sd_i)²) — independent errors assumption.
  */
 const Ledger = (() => {
-  const KEY = "nc_events_v1";
+  const KEY = "nd_events_v1";
+  const LEGACY_KEY = "nc_events_v1";
 
   const store = (() => {
     if (typeof localStorage !== "undefined") return localStorage;
@@ -17,8 +18,14 @@ const Ledger = (() => {
 
   function _load() {
     if (_cache) return _cache;
-    try { _cache = JSON.parse(store.getItem(KEY) || "[]"); }
-    catch (e) { _cache = []; }
+    try {
+      let raw = store.getItem(KEY);
+      if (raw == null && store.getItem(LEGACY_KEY) != null) {
+        raw = store.getItem(LEGACY_KEY);
+        store.setItem(KEY, raw);
+      }
+      _cache = JSON.parse(raw || "[]");
+    } catch (e) { _cache = []; }
     return _cache;
   }
   function _save() { store.setItem(KEY, JSON.stringify(_cache)); }

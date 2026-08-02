@@ -1,19 +1,19 @@
-/* NutriChat — Google account + Drive storage (BYO cloud).
+/* NutriDaily — Google account + Drive storage (BYO cloud).
  * Uses Google Identity Services token flow (client-side only, no app server).
  * Scope drive.file: the app can ONLY see files it created — one JSON doc
- * in a visible "NutriChat" folder in the USER'S OWN Drive.
+ * in a visible "NutriDaily" folder in the USER'S OWN Drive.
  */
 const GDrive = (() => {
   const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email";
-  const FILE_NAME = "nutrichat-data.json";
-  const FOLDER_NAME = "NutriChat";
-  const TOKEN_KEY = "nc_gtoken_v1"; // sessionStorage: token survives reloads, not browser restarts
+  const FILE_NAME = "nutridaily-data.json";
+  const FOLDER_NAME = "NutriDaily";
+  const TOKEN_KEY = "nd_gtoken_v1"; // sessionStorage: token survives reloads, not browser restarts
 
   let tokenClient = null;
   let pending = null; // {resolve, reject} for the in-flight token request
 
   function clientId() {
-    return (localStorage.getItem("nc_gclient") || "").trim() || ((window.NC_CONFIG || {}).googleClientId || "").trim();
+    return (localStorage.getItem("nd_gclient") || "").trim() || ((window.ND_CONFIG || {}).googleClientId || "").trim();
   }
   const libReady = () => !!(window.google && google.accounts && google.accounts.oauth2);
   const onHttp = () => location.protocol === "http:" || location.protocol === "https:";

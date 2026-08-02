@@ -11,11 +11,11 @@ const id = String(process.env.GOOGLE_CLIENT_ID || '').trim();
 const out = path.join(__dirname, '..', 'js', 'config.js');
 
 const body =
-  '/* NutriChat deployment config.\n' +
+  '/* NutriDaily deployment config.\n' +
   ' * Committed copy keeps googleClientId empty. At deploy, scripts/inject-client-id.js\n' +
   ' * may fill this from GOOGLE_CLIENT_ID. Forks: leave empty, or paste Client ID in Settings.\n' +
   ' */\n' +
-  'window.NC_CONFIG = {\n' +
+  'window.ND_CONFIG = {\n' +
   '  googleClientId: ' + JSON.stringify(id) + '\n' +
   '};\n';
 

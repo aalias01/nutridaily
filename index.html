@@ -3,12 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#3d9970">
-<title>NutriChat — food diary</title>
+<meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16181b" media="(prefers-color-scheme: dark)">
+<title>NutriDaily — nutrition tracker</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥗</text></svg>">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<script>
+  // Apply theme before paint (default light, like Daycells)
+  (function () {
+    try {
+      var s = JSON.parse(localStorage.getItem("nd_settings_v1") || "{}");
+      var t = s.theme || "light";
+      if (t === "auto") document.documentElement.removeAttribute("data-theme");
+      else document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+    }
+  })();
+</script>
 </head>
 <body>
 <div class="shell">
@@ -17,7 +33,7 @@
     <div class="date-nav">
       <button id="btn-day-prev" class="iconbtn" type="button" aria-label="Previous day">‹</button>
       <div>
-        <div class="brand">NutriChat</div>
+        <div class="brand">NutriDaily</div>
         <div class="day" id="day-label"></div>
       </div>
       <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
@@ -195,16 +211,27 @@ END</pre>
     <div class="modal-card">
       <h2>Settings</h2>
 
+      <label>Appearance</label>
+      <div class="set-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">
+        <span class="muted small">Mode</span>
+        <span class="seg" id="theme-seg">
+          <button type="button" data-theme-opt="auto">auto</button>
+          <button type="button" data-theme-opt="light">light</button>
+          <button type="button" data-theme-opt="dark">dark</button>
+        </span>
+      </div>
+
       <label>Account & cloud backup <span class="muted small">(your data, in your own Google Drive)</span></label>
       <div class="row">
         <button id="btn-drive-connect" class="btn ghost" type="button">Connect Google Drive</button>
         <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
       </div>
       <div id="drive-status" class="muted small"></div>
-      <details class="dev-details">
-        <summary class="muted small">Developer: OAuth Client ID</summary>
+      <details class="dev-details" id="client-id-details">
+        <summary class="muted small">Advanced: override Client ID</summary>
         <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
-        <div class="muted small">One-time setup per deployment — see README.</div>
+        <div class="muted small" id="client-id-hint">On the live deploy, a Client ID is injected at build time. Paste your own here to override (forks / local). Leave empty to use the deploy default.</div>
+        <button id="btn-clear-gclient" class="linkbtn" type="button">Clear override</button>
       </details>
 
       <label>Daily goals</label>

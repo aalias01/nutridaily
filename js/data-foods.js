@@ -1,4 +1,4 @@
-/* NutriChat — curated food database.
+/* NutriDaily — curated food database.
  * per100 = per 100 g edible portion: kcal, p(rotein), c(arbs), f(at), fb(fiber) g, na(sodium) mg.
  * units = food-specific gram weights for household measures.
  * cat = category, used for plausibility checks.

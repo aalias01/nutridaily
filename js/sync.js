@@ -1,4 +1,4 @@
-/* NutriChat — offline-first sync engine.
+/* NutriDaily — offline-first sync engine.
  * localStorage is the working copy; the user's Google Drive is durability.
  *
  * Merge model (why sync is conflict-free here):
@@ -10,8 +10,8 @@
  *  - goals: newest goalsUpdatedAt wins.
  */
 const Sync = (() => {
-  const ENABLED_KEY = "nc_sync_enabled";
-  const EMAIL_KEY = "nc_sync_email";
+  const ENABLED_KEY = "nd_sync_enabled";
+  const EMAIL_KEY = "nd_sync_email";
   const PUSH_DELAY = 4000;
 
   let deps = null;      // injected accessors { getPersonal, setPersonal, getGoals, setGoals, onStatus, onRemoteApplied }

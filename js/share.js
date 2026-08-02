@@ -1,4 +1,4 @@
-/* NutriChat — serverless recipe sharing.
+/* NutriDaily — serverless recipe sharing.
  * A recipe (name + per-100g macros + serving size + ingredients) packs into a
  * compact code: "NCR1.<base64url JSON>". Shared as a URL fragment
  * (…/index.html#recipe=NCR1.xxx) — fragments are never sent to any server —
@@ -43,7 +43,7 @@ const Share = (() => {
   /** share code (or any text containing one) → { ok, food | err }. Fully validated. */
   function unpack(text) {
     const m = String(text || "").match(/NCR1\.([A-Za-z0-9\-_]+)/);
-    if (!m) return { ok: false, err: "That doesn't look like a NutriChat recipe code." };
+    if (!m) return { ok: false, err: "That doesn't look like a NutriDaily recipe code." };
     let p;
     try { p = JSON.parse(b64urlDecode(m[1])); }
     catch (e) { return { ok: false, err: "Recipe code is corrupted — ask them to share it again." }; }
@@ -76,7 +76,7 @@ const Share = (() => {
     return { ok: true, food };
   }
 
-  /** Full link when hosted; bare code on file:// (still paste-able into any NutriChat). */
+  /** Full link when hosted; bare code on file:// (still paste-able into any NutriDaily). */
   function shareText(food) {
     const code = pack(food);
     if (typeof location !== "undefined" && (location.protocol === "http:" || location.protocol === "https:")) {

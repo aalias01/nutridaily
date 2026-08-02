@@ -1,12 +1,12 @@
-/* NutriChat — diary bootstrap, state, event wiring. */
+/* NutriDaily — diary bootstrap, state, event wiring. */
 const App = (() => {
-  const SETTINGS_KEY = "nc_settings_v1";
-  const PERSONAL_KEY = "nc_personal_v1";
-  const ONB_KEY = "nc_onboarded_v1";
+  const SETTINGS_KEY = "nd_settings_v1";
+  const PERSONAL_KEY = "nd_personal_v1";
+  const ONB_KEY = "nd_onboarded_v1";
   const DEFAULT_GOALS = { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28 };
 
   const state = {
-    settings: { goals: { ...DEFAULT_GOALS }, goalsUpdatedAt: 0, imperial: false },
+    settings: { goals: { ...DEFAULT_GOALS }, goalsUpdatedAt: 0, imperial: false, theme: "light" },
     personalFoods: [],
     viewDay: null, // YYYY-MM-DD
     pickFood: null,
@@ -20,18 +20,46 @@ const App = (() => {
   const activeFoods = () => Foods.active(state.personalFoods);
   const findFood = (id) => state.personalFoods.find((f) => f.id === id && !f.deleted);
 
+  /** One-time migrate from NutriChat (nc_*) keys if present. */
+  function migrateFromNutriChat() {
+    const pairs = [
+      ["nc_settings_v1", SETTINGS_KEY],
+      ["nc_personal_v1", PERSONAL_KEY],
+      ["nc_onboarded_v1", ONB_KEY],
+      ["nc_events_v1", "nd_events_v1"],
+      ["nc_gclient", "nd_gclient"],
+      ["nc_sync_enabled", "nd_sync_enabled"],
+      ["nc_sync_email", "nd_sync_email"],
+    ];
+    for (const [from, to] of pairs) {
+      if (localStorage.getItem(to) == null && localStorage.getItem(from) != null) {
+        localStorage.setItem(to, localStorage.getItem(from));
+      }
+    }
+    const oldTok = sessionStorage.getItem("nc_gtoken_v1");
+    if (oldTok && !sessionStorage.getItem("nd_gtoken_v1")) sessionStorage.setItem("nd_gtoken_v1", oldTok);
+  }
+
+  function applyTheme() {
+    const t = state.settings.theme || "light";
+    if (t === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+  }
+
   function loadState() {
+    migrateFromNutriChat();
     try {
       const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
       Object.assign(state.settings, s);
-      // drop legacy gemini fields if present
       delete state.settings.key;
       delete state.settings.model;
     } catch (e) {}
     state.settings.goals = { ...DEFAULT_GOALS, ...(state.settings.goals || {}) };
+    if (!state.settings.theme) state.settings.theme = "light";
     try { state.personalFoods = JSON.parse(localStorage.getItem(PERSONAL_KEY) || "[]"); }
     catch (e) { state.personalFoods = []; }
     state.viewDay = Ledger.todayKey();
+    applyTheme();
   }
 
   const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
@@ -265,7 +293,17 @@ const App = (() => {
     UI.$("#set-fat").value = g.fat;
     UI.$("#set-fiber").value = g.fiber;
     UI.$("#set-imperial").checked = !!state.settings.imperial;
-    UI.$("#set-gclient").value = localStorage.getItem("nc_gclient") || "";
+    UI.$("#set-gclient").value = localStorage.getItem("nd_gclient") || "";
+    const theme = state.settings.theme || "light";
+    UI.$$("#theme-seg [data-theme-opt]").forEach((b) => b.classList.toggle("on", b.dataset.themeOpt === theme));
+    const baked = ((window.ND_CONFIG || {}).googleClientId || "").trim();
+    const override = (localStorage.getItem("nd_gclient") || "").trim();
+    UI.$("#client-id-hint").textContent = override
+      ? "Using your override Client ID."
+      : baked
+        ? "Using the deploy default Client ID. Paste below only to override."
+        : "No deploy Client ID yet. Paste a Web Client ID here, or set GOOGLE_CLIENT_ID on Vercel.";
+    if (!baked && !override) UI.$("#client-id-details").open = true;
   }
 
   function openSettings() {
@@ -298,7 +336,7 @@ const App = (() => {
     }, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `nutrichat-export-${Ledger.todayKey()}.json`;
+    a.download = `nutridaily-export-${Ledger.todayKey()}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -341,6 +379,20 @@ const App = (() => {
     });
     UI.$("#btn-settings").addEventListener("click", openSettings);
     UI.$("#btn-close-settings").addEventListener("click", () => UI.$("#settings-modal").classList.remove("open"));
+    UI.$("#theme-seg").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-theme-opt]");
+      if (!btn) return;
+      state.settings.theme = btn.dataset.themeOpt;
+      saveSettings();
+      applyTheme();
+      syncSettingsForm();
+    });
+    UI.$("#btn-clear-gclient").addEventListener("click", () => {
+      localStorage.removeItem("nd_gclient");
+      UI.$("#set-gclient").value = "";
+      syncSettingsForm();
+      UI.toast("Override cleared");
+    });
     UI.$("#btn-save-settings").addEventListener("click", () => {
       setGoals({
         kcal: Number(UI.$("#set-kcal").value) || DEFAULT_GOALS.kcal,
@@ -351,9 +403,10 @@ const App = (() => {
       });
       state.settings.imperial = UI.$("#set-imperial").checked;
       const gc = UI.$("#set-gclient").value.trim();
-      if (gc) localStorage.setItem("nc_gclient", gc);
-      else localStorage.removeItem("nc_gclient");
+      if (gc) localStorage.setItem("nd_gclient", gc);
+      else localStorage.removeItem("nd_gclient");
       saveSettings();
+      applyTheme();
       UI.$("#settings-modal").classList.remove("open");
       refreshHUD();
       UI.toast("Saved");
