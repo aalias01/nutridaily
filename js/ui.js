@@ -1176,10 +1176,87 @@ const UI = (() => {
     $("#onboarding").hidden = !show;
   }
 
+  /** Remaining blurb for gap sheet / Today. */
+  function formatGapRemaining(remaining, goals) {
+    if (!remaining) return "";
+    const bits = [];
+    const push = (label, key, unit) => {
+      const r = Number(remaining[key]);
+      if (!Number.isFinite(r)) return;
+      const g = Number(goals && goals[key]) || 0;
+      if (!g && r === 0) return;
+      const sign = r > 0 ? "+" : "";
+      bits.push(`${label} ${sign}${fmt(r)}${unit}`);
+    };
+    push("kcal", "kcal", "");
+    push("P", "protein", "g");
+    push("C", "carbs", "g");
+    push("F", "fat", "g");
+    push("Fiber", "fiber", "g");
+    push("Na", "sodium", "mg");
+    return bits.length ? `Remaining: ${bits.join(" · ")}` : "Targets already met (or no goals set).";
+  }
+
+  /**
+   * Multi-select food list for gap plan.
+   * rows: [{ key, name, sub, selected }]
+   */
+  function renderGapSelectList(rows) {
+    const root = $("#gap-select-list");
+    if (!root) return;
+    if (!rows || !rows.length) {
+      root.innerHTML = `<div class="empty small">No foods match. Add foods to My Foods or search the catalog.</div>`;
+      return;
+    }
+    root.innerHTML = rows.map((r) => `
+      <button type="button" class="gap-select-row${r.selected ? " selected" : ""}" data-action="gap-toggle" data-key="${esc(r.key)}">
+        <input type="checkbox" tabindex="-1" ${r.selected ? "checked" : ""} aria-hidden="true">
+        <div class="gap-meta">
+          <div class="r-name">${esc(r.name)}</div>
+          <div class="r-qty">${esc(r.sub || "")}</div>
+        </div>
+      </button>`).join("");
+  }
+
+  /**
+   * Plan items list. pending first, then logged.
+   * items: [{ id, name, qtyLabel, sub, status }]
+   */
+  function renderGapPlanList(items) {
+    const root = $("#gap-plan-list");
+    if (!root) return;
+    if (!items || !items.length) {
+      root.innerHTML = `<div class="empty small">No plan items yet. Parse a GAP v1 reply.</div>`;
+      return;
+    }
+    root.innerHTML = items.map((it) => {
+      const logged = it.status === "logged";
+      return `
+        <button type="button" class="gap-plan-item${logged ? " logged" : ""}" data-action="log-gap-item" data-id="${esc(it.id)}" ${logged ? "disabled" : ""}>
+          <div class="r-name">${esc(it.name)}</div>
+          <div class="r-qty">${esc(it.qtyLabel || "")}${it.sub ? ` · ${esc(it.sub)}` : ""}${logged ? " · logged" : ""}</div>
+        </button>`;
+    }).join("");
+  }
+
+  function showGapStep(step) {
+    const select = $("#gap-step-select");
+    const prompt = $("#gap-step-prompt");
+    const plan = $("#gap-step-plan");
+    if (select) select.hidden = step !== "select";
+    if (prompt) prompt.hidden = step !== "prompt";
+    if (plan) plan.hidden = step !== "plan";
+    const title = $("#gap-sheet-title");
+    if (title) {
+      title.textContent = step === "plan" ? "Today’s plan" : step === "prompt" ? "AI gap prompt" : "Close the gap";
+    }
+  }
+
   return {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
     syncReviewLogAsUI, renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
+    formatGapRemaining, renderGapSelectList, renderGapPlanList, showGapStep,
   };
 })();

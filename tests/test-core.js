@@ -474,5 +474,149 @@ END`;
   ok(!PhasePrompt.parsePhaseBlock("hello").ok, "rejects non-PHASE text");
 }
 
+console.log("\n[11] GAP AI close-the-gap prompt parse");
+{
+  globalThis.FoodMatch = require("../js/foodmatch.js");
+  const GapPrompt = require("../js/gap-prompt.js");
+  const NutriParse = require("../js/parse.js");
+  const Sync = require("../js/sync.js");
+
+  const candidates = [
+    {
+      id: "pf-rice",
+      name: "rice (cooked)",
+      per100: { kcal: 130, p: 2.7, c: 28, f: 0.3, fb: 0.4, na: 1 },
+      portion: { n: 8, median: 120, p25: 100, p75: 140, last: 110 },
+      pieceGrams: null,
+    },
+    {
+      id: "pf-chicken",
+      name: "chicken breast (cooked)",
+      per100: { kcal: 165, p: 31, c: 0, f: 3.6, fb: 0, na: 74 },
+      portion: { n: 5, median: 150, p25: 120, p75: 180, last: 160 },
+      pieceGrams: null,
+    },
+  ];
+
+  const prompt = GapPrompt.buildGapPrompt({
+    day: "2026-08-02",
+    logged: [{ name: "banana", displayQty: "1 piece", grams: 118, meal: "breakfast", macros: { kcal: 105, p: 1.3, c: 27, f: 0.4, fb: 3.1, na: 1 } }],
+    means: { kcal: 105, protein: 1.3, carbs: 27, fat: 0.4, fiber: 3.1, sodium: 1 },
+    goals: { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 },
+    candidates,
+  });
+  ok(/GAP v1/.test(prompt), "prompt asks for GAP v1 format");
+  ok(/not medical advice/i.test(prompt), "prompt includes medical disclaimer");
+  ok(/rice \(cooked\)/.test(prompt) && /preferred 100–140 g/.test(prompt), "prompt includes candidate portion band");
+  ok(/banana/.test(prompt) && /Totals so far/.test(prompt), "prompt includes logged foods and totals");
+  ok(/Remaining/.test(prompt), "prompt includes remaining macros");
+
+  const block = `GAP v1
+Day: 2026-08-02
+Reachable: no
+Note: Protein still short within preferred ranges; add Greek yogurt next or raise chicken.
+Item: rice (cooked) | 130 g | dinner
+Item: chicken breast (cooked) | 180 g | dinner
+Item: mystery smoothie | 300 g | snack
+Projected: 900 kcal | P 60 | C 120 | F 20 | Fiber 8 | Sodium 400
+END`;
+
+  const scorer = (q, name) => FoodMatch.scoreMatch(q, name);
+  const parsed = GapPrompt.parseGapBlock(block, candidates, scorer);
+  ok(parsed.ok, "parses GAP block");
+  ok(parsed.reachable === false, "Reachable: no preserved");
+  ok(/Protein still short/.test(parsed.note || ""), "note preserved");
+  ok(parsed.items.length === 2, "only candidate foods kept");
+  ok(parsed.items[0].name === "rice (cooked)" && parsed.items[0].grams === 130, "rice qty parsed");
+  ok(parsed.items[1].meal === "dinner" && parsed.items[1].foodId === "pf-chicken", "chicken matched to candidate id");
+  ok((parsed.warnings || []).some((w) => /mystery smoothie/i.test(w)), "unknown food dropped with warning");
+  ok(parsed.projected && parsed.projected.kcal === 900 && parsed.projected.protein === 60, "projected macros parsed");
+  ok(!GapPrompt.parseGapBlock("hello").ok, "rejects non-GAP text");
+
+  const reachAnno = `GAP v1
+Day: 2026-08-02
+Reachable: no — protein still short
+Note: try again
+Item: rice (cooked) | 120 g | dinner
+END`;
+  ok(GapPrompt.parseGapBlock(reachAnno, candidates, scorer).reachable === false, "Reachable: no with annotation");
+
+  const twoBlocks = `GAP v1
+Day: 2026-08-02
+Reachable: no
+Note: draft
+Item: rice (cooked) | 300 g | dinner
+END
+
+GAP v1
+Day: 2026-08-02
+Reachable: yes
+Note: final
+Item: rice (cooked) | 120 g | dinner
+Item: chicken breast (cooked) | 150 g | dinner
+END`;
+  const last = GapPrompt.parseGapBlock(twoBlocks, candidates, scorer);
+  ok(last.ok && last.items.length === 2 && last.items[0].grams === 120, "uses last GAP block, not draft");
+  ok(last.reachable === true && /final/.test(last.note || ""), "last block reachable/note win");
+
+  const fuzzy = `GAP v1
+Day: 2026-08-02
+Reachable: yes
+Note: ok
+Item: brown rice | 110 g | dinner
+END`;
+  const fuzzyParsed = GapPrompt.parseGapBlock(fuzzy, candidates, scorer);
+  ok(fuzzyParsed.ok && fuzzyParsed.items[0].name === "rice (cooked)", "fuzzy match maps to candidate");
+  ok((fuzzyParsed.warnings || []).some((w) => /Matched "brown rice"/i.test(w)), "fuzzy match emits warning");
+
+  const emptyCand = GapPrompt.parseGapBlock(block, [], scorer);
+  ok(!emptyCand.ok, "empty candidates reject invented foods");
+
+  const dual = `Here you go:
+
+NUTRI v1
+Name: Cottage Bowl
+Batch: 400 g total, 2 servings
+Totals: 320 kcal | P 28 | C 24 | F 10 | Fiber 4 | Sodium 480
+Per 100 g: 80 kcal | P 7 | C 6 | F 2.5 | Fiber 1 | Sodium 120
+Log as: grams
+Ingredients:
+- cottage cheese - 200
+Prep: mix
+Notes: test
+Confidence: medium
+END
+
+GAP v1
+Day: 2026-08-02
+Reachable: yes
+Note: Close enough.
+Item: rice (cooked) | 100 g | lunch
+END`;
+  const nutri = NutriParse.parse(dual);
+  ok(nutri.found && nutri.results.length >= 1, "dual paste: NUTRI block found");
+  const gap2 = GapPrompt.parseGapBlock(dual, candidates, scorer);
+  ok(gap2.ok && gap2.items[0].grams === 100, "dual paste: GAP block still parses");
+
+  const dp = Sync.mergeDayPlans(
+    { "2026-08-01": { updatedAt: 100, items: [{ id: "a", status: "pending" }] } },
+    { "2026-08-01": { updatedAt: 200, items: [{ id: "b", status: "logged" }] }, "2026-08-02": { updatedAt: 50, items: [] } }
+  );
+  ok(dp["2026-08-01"].items[0].id === "b", "dayPlans: newer plan wins");
+  ok(dp["2026-08-02"], "dayPlans: unique days union");
+
+  const localDoc = {
+    version: 2, resetAt: 0, events: [], personalFoods: [], dayGoals: {},
+    dayPlans: { "2026-08-02": { updatedAt: 9, items: [{ id: "x", status: "pending" }] } },
+    phases: [], weights: {}, profile: {}, goals: { kcal: 2200 }, goalsUpdatedAt: 1,
+  };
+  const remoteOld = {
+    version: 2, resetAt: 0, events: [], personalFoods: [], dayGoals: {},
+    phases: [], weights: {}, profile: {}, goals: { kcal: 2200 }, goalsUpdatedAt: 1,
+  };
+  const mergedOmit = Sync.mergeDocs(localDoc, remoteOld);
+  ok(mergedOmit.doc.dayPlans && mergedOmit.doc.dayPlans["2026-08-02"], "mergeDocs keeps local dayPlans when remote omits them");
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

@@ -9,6 +9,7 @@
  *    ({deleted:true}) so they propagate across devices instead of resurrecting.
  *  - goals: newest goalsUpdatedAt wins (derived mirror of active phase revision).
  *  - dayGoals: per-day bumps (or legacy absolute overrides) merge by day key, newest updatedAt wins.
+ *  - dayPlans: per-day close-the-gap plans merge by day key, newest updatedAt wins.
  *  - phases: union by id; revisions union by id (append-only goal timeline).
  *  - weights: per-day body weight, newest updatedAt wins.
  *  - resetAt: Clear-all / full Import bumps this. The side with the newer reset
@@ -70,6 +71,11 @@ const Sync = (() => {
     return out;
   }
 
+  /** Same shape as dayGoals: per-day object, newest updatedAt wins. */
+  function mergeDayPlans(a, b) {
+    return mergeDayGoals(a, b);
+  }
+
   function mergePhases(a, b) {
     if (typeof Phases !== "undefined" && Phases.mergePhases) return Phases.mergePhases(a, b);
     return Array.isArray(a) && a.length ? a : (b || []);
@@ -112,6 +118,10 @@ const Sync = (() => {
     return out;
   }
 
+  function filterDayPlansAfter(map, ts) {
+    return filterDayGoalsAfter(map, ts);
+  }
+
   function filterPhasesAfter(phases, ts) {
     if (typeof Phases !== "undefined" && Phases.filterPhasesAfter) return Phases.filterPhasesAfter(phases, ts);
     return (phases || []).filter((p) => (p.updatedAt || 0) >= ts || (p.createdAt || 0) >= ts);
@@ -133,6 +143,7 @@ const Sync = (() => {
     let events;
     let personalFoods;
     let dayGoals;
+    let dayPlans;
     let phases;
     let weights;
     let profile;
@@ -142,6 +153,7 @@ const Sync = (() => {
       events = mergeEvents(local.events, remoteEv);
       personalFoods = mergePersonal(local.personalFoods, remotePf);
       dayGoals = mergeDayGoals(local.dayGoals, filterDayGoalsAfter(remote.dayGoals, localReset));
+      dayPlans = mergeDayPlans(local.dayPlans, filterDayPlansAfter(remote.dayPlans, localReset));
       phases = mergePhases(local.phases, filterPhasesAfter(remote.phases, localReset));
       weights = mergeWeights(local.weights, filterWeightsAfter(remote.weights, localReset));
       profile = mergeProfiles(local.profile, remote.profile);
@@ -151,6 +163,7 @@ const Sync = (() => {
       events = mergeEvents(localEv, remote.events);
       personalFoods = mergePersonal(localPf, remote.personalFoods);
       dayGoals = mergeDayGoals(filterDayGoalsAfter(local.dayGoals, remoteReset), remote.dayGoals);
+      dayPlans = mergeDayPlans(filterDayPlansAfter(local.dayPlans, remoteReset), remote.dayPlans);
       phases = mergePhases(filterPhasesAfter(local.phases, remoteReset), remote.phases);
       weights = mergeWeights(filterWeightsAfter(local.weights, remoteReset), remote.weights);
       profile = mergeProfiles(local.profile, remote.profile);
@@ -158,6 +171,7 @@ const Sync = (() => {
       events = mergeEvents(local.events, remote.events);
       personalFoods = mergePersonal(local.personalFoods, remote.personalFoods);
       dayGoals = mergeDayGoals(local.dayGoals, remote.dayGoals);
+      dayPlans = mergeDayPlans(local.dayPlans, remote.dayPlans);
       phases = mergePhases(local.phases, remote.phases);
       weights = mergeWeights(local.weights, remote.weights);
       profile = mergeProfiles(local.profile, remote.profile);
@@ -170,6 +184,7 @@ const Sync = (() => {
       events,
       personalFoods,
       dayGoals,
+      dayPlans,
       phases,
       weights,
       profile,
@@ -198,6 +213,11 @@ const Sync = (() => {
       const b = o.bumps || {};
       return `${d}:${o.updatedAt || 0}:${o.cleared ? 1 : 0}:${b.kcal || o.kcal || ""}:${b.protein || o.protein || ""}`;
     }).join(",");
+    const dp = Object.keys(doc.dayPlans || {}).sort().map((d) => {
+      const o = doc.dayPlans[d] || {};
+      const pending = (o.items || []).filter((it) => it && it.status === "pending").length;
+      return `${d}:${o.updatedAt || 0}:${pending}:${(o.items || []).length}`;
+    }).join(",");
     const ph = (doc.phases || []).map((p) => {
       const revs = (p.revisions || []).map((r) => r.id).sort().join("+");
       return `${p.id}:${p.updatedAt || 0}:${p.endDay || ""}:${revs}`;
@@ -208,7 +228,7 @@ const Sync = (() => {
     }).join(",");
     const pr = doc.profile || {};
     const profileFp = `${pr.updatedAt || 0}:${pr.dob || ""}:${pr.sex || ""}:${pr.heightCm || ""}:${pr.activity || ""}`;
-    return `${doc.resetAt || 0}|${ev}|${pf}|${dg}|${ph}|${wt}|${profileFp}|${JSON.stringify(doc.goals || {})}`;
+    return `${doc.resetAt || 0}|${ev}|${pf}|${dg}|${dp}|${ph}|${wt}|${profileFp}|${JSON.stringify(doc.goals || {})}`;
   }
 
   // ---------- doc <-> app state ----------
@@ -220,6 +240,7 @@ const Sync = (() => {
       events: Ledger.allEvents(),
       personalFoods: deps.getPersonal(),
       dayGoals: deps.getDayGoals ? deps.getDayGoals() : {},
+      dayPlans: deps.getDayPlans ? deps.getDayPlans() : {},
       phases: deps.getPhases ? deps.getPhases() : [],
       weights: deps.getWeights ? deps.getWeights() : {},
       profile: deps.getProfile ? deps.getProfile() : {},
@@ -234,6 +255,10 @@ const Sync = (() => {
     deps.setPersonal(doc.personalFoods || []);
     if (doc.goals) deps.setGoals(doc.goals, doc.goalsUpdatedAt || 0);
     if (deps.setDayGoals) deps.setDayGoals(doc.dayGoals || {});
+    // Older Drive docs omit dayPlans; do not wipe a newer local map.
+    if (deps.setDayPlans && doc.dayPlans != null && typeof doc.dayPlans === "object") {
+      deps.setDayPlans(doc.dayPlans);
+    }
     if (deps.setPhases) {
       if (Array.isArray(doc.phases)) deps.setPhases(doc.phases);
     }
@@ -353,7 +378,7 @@ const Sync = (() => {
 
   return {
     init, connect, disconnect, resume, schedulePush, fullSync, state,
-    mergeDocs, mergeEvents, mergePersonal, mergeDayGoals, mergePhases, mergeWeights, mergeProfiles,
+    mergeDocs, mergeEvents, mergePersonal, mergeDayGoals, mergeDayPlans, mergePhases, mergeWeights, mergeProfiles,
     activeDayGoals, markReset, getResetAt, fingerprint, DOC_VERSION,
   };
 })();

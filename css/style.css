@@ -384,6 +384,44 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .phase-option h4 { margin: 0 0 4px; font-size: 14px; }
 .phase-option .muted { margin: 0 0 8px; }
 .sheet-card-tall { max-height: min(92vh, 720px); overflow: auto; }
+
+.gap-row {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 4px 0 10px;
+}
+.gap-plan-chip {
+  align-self: flex-start;
+  cursor: pointer;
+  color: var(--accent-ink);
+  border-color: rgba(61, 153, 112, 0.45);
+}
+.gap-select-list { margin: 8px 0 12px; max-height: 45dvh; }
+.gap-select-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  width: 100%; text-align: left;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card); padding: 10px 12px; margin-bottom: 6px;
+  cursor: pointer; color: inherit;
+}
+.gap-select-row.selected {
+  border-color: rgba(61, 153, 112, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(61, 153, 112, 0.25);
+}
+.gap-select-row input { margin-top: 3px; flex: 0 0 auto; }
+.gap-select-row .gap-meta { min-width: 0; flex: 1; }
+.gap-select-row .r-name { font-weight: 600; }
+.gap-plan-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
+.gap-plan-item {
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px; background: var(--card); text-align: left; width: 100%;
+  cursor: pointer; color: inherit;
+}
+.gap-plan-item:disabled { opacity: 0.55; cursor: default; }
+.gap-plan-item .r-name { font-weight: 650; margin: 0 0 2px; }
+.gap-plan-item .r-qty { color: var(--muted); font-size: 12.5px; }
+.gap-plan-item.logged { opacity: 0.55; }
+#gap-paste { width: 100%; margin: 10px 0; }
+#gap-food-search { width: 100%; margin: 6px 0 4px; }
 .phase-meta-grid {
   display: grid;
   grid-template-columns: 1.6fr 1fr;

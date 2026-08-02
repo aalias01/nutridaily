@@ -90,6 +90,10 @@
         <span class="muted small" id="weight-unit">lb</span>
         <button type="button" class="linkbtn" id="btn-weight-save">Save</button>
       </div>
+      <div class="gap-row" id="gap-row">
+        <button type="button" class="btn ghost full" id="btn-close-gap">Close the gap</button>
+        <button type="button" class="pill gap-plan-chip" id="btn-gap-plan" hidden>Plan: 0 left</button>
+      </div>
       <div id="day-log" class="day-log"></div>
       <button id="fab-add" class="fab" type="button" aria-label="Add food">+</button>
     </section>
@@ -425,6 +429,51 @@
     </div>
   </div>
 
+  <!-- Close the gap (AI paste plan) -->
+  <div id="sheet-gap" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-gap"></div>
+    <div class="sheet-card sheet-card-tall">
+      <div class="sheet-grab"></div>
+      <h3 id="gap-sheet-title">Close the gap</h3>
+      <p class="disclaimer">
+        LLM guidance is reference only, not medical advice. Quantities come from a paste you bring back from your own chat.
+      </p>
+
+      <div id="gap-step-select">
+        <p class="muted small">Pick foods you still plan to eat. We’ll copy a prompt with today’s log, targets, remaining macros, and your usual portion ranges.</p>
+        <p class="muted small" id="gap-remaining-blurb"></p>
+        <input id="gap-food-search" type="search" placeholder="Search foods" aria-label="Search foods for gap plan">
+        <div id="gap-select-list" class="sheet-list gap-select-list"></div>
+        <div class="col-actions">
+          <button id="btn-gap-to-prompt" class="btn full" type="button" disabled>Continue with selected</button>
+          <button id="btn-gap-select-cancel" class="btn ghost full" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <div id="gap-step-prompt" hidden>
+        <p class="muted small">Copy the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply. Optional <code>NUTRI v1</code> blocks for brand-new dishes are OK.</p>
+        <button id="btn-gap-copy-prompt" class="btn full" type="button">Copy gap prompt</button>
+        <textarea id="gap-paste" rows="7" placeholder="Paste the GAP v1 … END reply here"></textarea>
+        <div class="col-actions">
+          <button id="btn-gap-parse" class="btn full" type="button">Parse plan</button>
+          <button id="btn-gap-back-select" class="btn ghost full" type="button">Back to food pick</button>
+        </div>
+      </div>
+
+      <div id="gap-step-plan" hidden>
+        <p class="muted small" id="gap-plan-note"></p>
+        <div id="gap-nutri-banner" class="banner warn" hidden></div>
+        <div id="gap-plan-list" class="gap-plan-list"></div>
+        <div class="col-actions">
+          <button id="btn-gap-recalc" class="btn full" type="button">Recalculate with AI</button>
+          <button id="btn-gap-add-foods" class="btn ghost full" type="button">Add more foods</button>
+          <button id="btn-gap-clear-plan" class="btn ghost full" type="button">Clear day plan</button>
+          <button id="btn-gap-plan-close" class="btn ghost full" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Day bump (signed deltas on phase targets) -->
   <div id="sheet-day-goals" class="sheet" hidden>
     <div class="sheet-backdrop" data-close="sheet-day-goals"></div>
@@ -604,6 +653,7 @@ END</pre>
 <script src="js/ledger.js"></script>
 <script src="js/phases.js"></script>
 <script src="js/phase-prompt.js"></script>
+<script src="js/gap-prompt.js"></script>
 <script src="js/gdrive.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/ui.js"></script>
