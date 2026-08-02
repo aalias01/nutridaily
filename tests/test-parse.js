@@ -45,11 +45,58 @@ console.log("\n[parse] shrimp skillet happy path");
   ok(p.food.name === "Garlic shrimp skillet", "name");
   approx(p.food.per100.kcal, 151.7, 0.2, "per100 kcal from totals");
   approx(p.food.per100.p, 18.3, 0.2, "per100 protein");
-  ok(p.food.units.serving === 190, "serving = 760/4", `got ${p.food.units.serving}`);
+  ok(!p.food.units.serving, "batch servings do not invent units.serving", `got ${p.food.units.serving}`);
+  ok(!p.food.units.piece, "skillet has no piece without Log as: piece");
+  ok(p.food.logAs === "grams", "default logAs is grams", `got ${p.food.logAs}`);
   ok(p.food.batch && p.food.batch.grams === 760, "batch grams");
   ok(p.food.recipe.ingredients.length >= 2, "ingredients");
   ok(p.food.sd === 0.05, "sd high+weighed", `got ${p.food.sd}`);
   ok(p.food.derivedFromTotals, "derived from totals");
+}
+
+console.log("\n[parse] piece + log as (countable food)");
+{
+  const text = `NUTRI v1
+Name: Roti Fresh Original Chapati
+Aliases: chapati, roti
+Category: grain
+Batch: 567 g total, 10 servings
+Totals: 1600 kcal | P 40 | C 250 | F 50 | Fiber 20 | Sodium 2000
+Per 100 g: 282 kcal | P 7.1 | C 44.1 | F 8.8 | Fiber 3.5 | Sodium 353
+Piece: 57
+Log as: piece
+Count as: chapati
+Confidence: high
+END`;
+  const p = NutriParse.parse(text).results[0];
+  ok(p.canSave, "chapati can save", (p.rejects || []).join("; "));
+  ok(p.food.units.piece === 57, "piece grams parsed", `got ${p.food.units.piece}`);
+  ok(!p.food.units.serving, "piece does not invent serving", `got ${p.food.units.serving}`);
+  ok(p.food.logAs === "piece", "logAs piece persisted");
+  ok(p.food.countLabel === "chapati", "countLabel persisted", `got ${p.food.countLabel}`);
+  const saved = Foods.createFromDraft({ ...p.food, raw: text });
+  ok(saved.logAs === "piece" && saved.countLabel === "chapati", "createFromDraft keeps logAs/countLabel");
+  const entry = Foods.entryFromQty(saved, 2, "piece", "breakfast");
+  approx(entry.grams, 114, 0.1, "2 pieces → 114 g");
+  ok(/2 chapatis/.test(entry.displayQty), "display uses chapati count", entry.displayQty);
+  ok(FoodMatch.prefersPieceLog(saved), "prefers piece log");
+  ok(!FoodMatch.prefersPieceLog(NutriParse.parse(SHRIMP).results[0].food), "skillet prefers grams");
+}
+
+console.log("\n[parse] log as piece infers piece from batch count");
+{
+  const text = `NUTRI v1
+Name: Store egg
+Category: protein
+Batch: 500 g total, 10 servings
+Totals: 740 kcal | P 62.5 | C 5 | F 50 | Fiber 0 | Sodium 710
+Log as: piece
+Confidence: medium
+END`;
+  const p = NutriParse.parse(text).results[0];
+  ok(!p.food.units.serving, "no serving from batch alone");
+  ok(p.food.units.piece === 50, "piece inferred from batch÷count when Log as: piece", `got ${p.food.units.piece}`);
+  ok(p.food.countLabel === "egg", "countLabel inferred from name", `got ${p.food.countLabel}`);
 }
 
 console.log("\n[parse] no sentinel");

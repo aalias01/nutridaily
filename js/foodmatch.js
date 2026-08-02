@@ -8,6 +8,7 @@ const FoodMatch = (() => {
   // Unit synonyms normalized before lookup in food.units
   const UNIT_SYNONYMS = {
     pc: "piece", pcs: "piece", pieces: "piece", unit: "piece", whole: "piece", count: "piece",
+    chapati: "piece", chapatis: "piece", roti: "piece", rotis: "piece",
     slices: "slice", scoops: "scoop", servings: "serving", bowls: "bowl", katoris: "katori",
     cans: "can", glasses: "glass", bars: "bar", rolls: "roll", containers: "container",
     handfuls: "handful", fillets: "fillet", ears: "ear", cubes: "cube", squares: "square",
@@ -15,6 +16,53 @@ const FoodMatch = (() => {
     batches: "batch", tablespoon: "tbsp", tablespoons: "tbsp", teaspoon: "tsp", teaspoons: "tsp", cups: "cup",
   };
   const DEFAULT_PORTION_G = 100; // last-resort fallback
+  // Discrete items often get Serving size from AI paste but no Piece field.
+  const COUNT_NOUNS = [
+    "chapati", "roti", "paratha", "naan", "tortilla", "dosa", "idli",
+    "egg", "banana", "bagel", "wrap", "slice", "bar", "cookie", "samosa",
+  ];
+
+  /**
+   * Grams per countable piece. Prefer units.piece.
+   * Legacy: units.serving only when food.logAs === "piece".
+   */
+  function pieceGrams(food) {
+    if (!food || !food.units) return null;
+    const p = +food.units.piece;
+    if (Number.isFinite(p) && p > 0) return p;
+    if (food.logAs === "piece") {
+      const s = +food.units.serving;
+      if (Number.isFinite(s) && s > 0) return s;
+    }
+    return null;
+  }
+
+  function countNoun(food) {
+    const stored = food && food.countLabel && String(food.countLabel).trim().toLowerCase();
+    if (stored) return stored.replace(/[^a-z0-9-]/g, "") || "piece";
+    const blob = [food && food.name, ...((food && food.aliases) || [])].join(" ").toLowerCase();
+    for (const n of COUNT_NOUNS) {
+      if (blob.includes(n)) return n;
+    }
+    return "piece";
+  }
+
+  function prefersPieceLog(food) {
+    if (!food) return false;
+    if (food.logAs === "piece") return !!pieceGrams(food);
+    if (food.logAs === "grams") return false;
+    // Catalog / legacy with explicit piece unit only
+    return !!(food.units && +food.units.piece > 0);
+  }
+
+  function pluralCount(noun, qty) {
+    const n = String(noun || "piece");
+    if (qty === 1) return n;
+    if (n === "piece") return "pieces";
+    if (n.endsWith("y") && n.length > 1 && !"aeiou".includes(n[n.length - 2])) return `${n.slice(0, -1)}ies`;
+    if (/(?:s|x|z|ch|sh)$/.test(n)) return `${n}es`;
+    return `${n}s`;
+  }
 
   // Uncertainty (relative std dev) by how the amount & food were determined.
   const SD = {
@@ -97,6 +145,10 @@ const FoodMatch = (() => {
       return { grams: qty * food.batch.grams, how: "unit" };
     }
 
+    if (u === "piece" || !u) {
+      const pg = pieceGrams(food);
+      if (pg) return { grams: qty * pg, how: "unit" };
+    }
     if (u && food && food.units) {
       const fu = food.units[u];
       if (fu) return { grams: qty * fu, how: "unit" };
@@ -109,9 +161,6 @@ const FoodMatch = (() => {
       }
       // generic cup/tbsp of a solid without a food-specific weight → weak estimate
       return { grams: qty * VOLUME_ML[u] * 0.7, how: "guess" };
-    }
-    if (!u || u === "piece") {
-      if (food && food.units && food.units.piece) return { grams: qty * food.units.piece, how: "unit" };
     }
     if (Number(llmGrams) > 0) return { grams: Number(llmGrams), how: "guess" };
     // any single defined unit as proxy, else default
@@ -163,14 +212,21 @@ const FoodMatch = (() => {
   }
 
   /** Human-readable quantity for the receipt card. */
-  function displayQty(quantity, unit, grams) {
+  function displayQty(quantity, unit, grams, food) {
     const qty = Number(quantity) > 0 ? Number(quantity) : 1;
     const u = normalize(unit || "");
+    if (u === "piece") {
+      const noun = countNoun(food);
+      return `${qty} ${pluralCount(noun, qty)} (${Math.round(grams)} g)`;
+    }
     if (u && !MASS_UNITS[u]) return `${qty} ${u}${qty !== 1 && !u.endsWith("s") ? "s" : ""} (${Math.round(grams)} g)`;
     return `${Math.round(grams)} g`;
   }
 
-  return { normalize, tokens, scoreMatch, resolve, toGrams, computeMacros, sdFor, plausibility, displayQty, SD, MASS_UNITS };
+  return {
+    normalize, tokens, scoreMatch, resolve, toGrams, computeMacros, sdFor, plausibility, displayQty,
+    pieceGrams, countNoun, pluralCount, prefersPieceLog, SD, MASS_UNITS,
+  };
 })();
 
 if (typeof module !== "undefined") module.exports = FoodMatch;

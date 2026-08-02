@@ -492,10 +492,13 @@
         <details class="example-details">
           <summary class="muted small">What does this look like?</summary>
           <pre class="example-pre">NUTRI v1
-Name: Garlic shrimp skillet
-Batch: 760 g total, 4 servings
-Totals: 1153 kcal | P 139.2 | C 15.6 | F 56.4 | Fiber 1.2 | Sodium 2555
-Per 100 g: 151.7 kcal | P 18.3 | C 2.1 | F 7.4 | Fiber 0.2 | Sodium 336
+Name: Roti Fresh Original Chapati
+Batch: 567 g total, 10 servings
+Totals: …
+Per 100 g: …
+Piece: 57
+Log as: piece
+Count as: chapati
 …
 END</pre>
         </details>
@@ -523,11 +526,18 @@ END</pre>
           <div><label class="small muted" for="rev-na">Sodium mg</label><input id="rev-na" type="text" inputmode="decimal"></div>
         </div>
         <label>Batch grams<input id="rev-batch-g" type="text" inputmode="decimal"></label>
-        <label>Batch servings<input id="rev-batch-s" type="text" inputmode="decimal"></label>
+        <label>Batch servings <span class="muted small">(recipe math only)</span><input id="rev-batch-s" type="text" inputmode="decimal"></label>
+        <div class="field-block">
+          <span class="small muted">How do you log this?</span>
+          <div id="rev-log-as" class="uchip-row" style="margin-top:6px"></div>
+        </div>
+        <div id="rev-piece-fields">
+          <label>Piece size (g) <span class="muted small">one item</span><input id="rev-piece" type="text" inputmode="decimal"></label>
+          <label>Count as <span class="muted small">e.g. chapati, egg</span><input id="rev-count-as" type="text" autocomplete="off"></label>
+        </div>
         <details class="rev-optional-measures">
-          <summary class="muted small">Optional measures (serving / piece)</summary>
+          <summary class="muted small">Optional serving size (rare)</summary>
           <label>Serving size (g, optional)<input id="rev-serving" type="text" inputmode="decimal"></label>
-          <label>Piece size (g, optional)<input id="rev-piece" type="text" inputmode="decimal"></label>
         </details>
         <label>Ingredients (one per line)<textarea id="rev-ingredients" rows="4"></textarea></label>
         <label>Prep<textarea id="rev-prep" rows="2"></textarea></label>

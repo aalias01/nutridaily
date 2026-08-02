@@ -292,15 +292,23 @@ const UI = (() => {
     root.innerHTML = html;
   }
 
-  /** Weigh-first default: history median/last grams, never library serving. */
+  /** Default qty: piece count when logAs/piece says so; else history grams. */
   function weightPrefillFromHistory(food, imperial) {
     const OZ = 28.349523125;
-    let grams = 100;
+    const pieceG = FoodMatch.pieceGrams(food);
+    const usePiece = FoodMatch.prefersPieceLog(food) && pieceG;
+    let histG = null;
     if (food && food.id && typeof Ledger !== "undefined" && Ledger.portionStats) {
       const stats = Ledger.portionStats(food.id);
-      if (stats.median != null) grams = Math.round(stats.median);
-      else if (stats.last != null) grams = Math.round(stats.last);
+      if (stats.median != null) histG = stats.median;
+      else if (stats.last != null) histG = stats.last;
     }
+    if (usePiece) {
+      let count = 1;
+      if (histG != null && histG > 0) count = Math.max(1, Math.round(histG / pieceG));
+      return { qty: count, unit: "piece" };
+    }
+    const grams = histG != null ? Math.round(histG) : 100;
     if (imperial) {
       return { qty: Math.round((grams / OZ) * 10) / 10, unit: "oz" };
     }
@@ -316,21 +324,22 @@ const UI = (() => {
       src.textContent = prov.label;
       src.title = prov.detail || "";
     }
-    // Weight units first; serving last (optional packaged-style unit).
+    const pieceG = FoodMatch.pieceGrams(food);
+    const servG = food.units && +food.units.serving > 0 ? +food.units.serving : null;
     const units = ["g"];
     if (imperial) units.push("oz");
-    if (food.units && food.units.piece) units.push("piece");
+    if (pieceG) units.push("piece");
     if (food.batch && food.batch.grams) units.push("batch");
-    if (food.units && food.units.serving) units.push("serving");
+    if (servG && !(pieceG && Math.round(servG) === Math.round(pieceG))) units.push("serving");
     const hist = weightPrefillFromHistory(food, !!imperial);
     let unit = (prefill && prefill.unit) || hist.unit;
-    // Keep prefilled unit visible even if food lost that measure (orphan / imperial off)
     if (unit && unit !== "kcal" && !units.includes(unit)) units.push(unit);
     if (unit === "kcal") unit = hist.unit;
+    const noun = FoodMatch.countNoun(food);
     $("#qty-units").innerHTML = units.map((u) => {
       let label = u;
-      if (u === "serving" && food.units.serving) label = `serving (${food.units.serving} g)`;
-      if (u === "piece" && food.units.piece) label = `piece (${food.units.piece} g)`;
+      if (u === "serving" && servG) label = `serving (${Math.round(servG)} g)`;
+      if (u === "piece" && pieceG) label = `${noun} (${Math.round(pieceG)} g)`;
       if (u === "batch" && food.batch) label = `batch (${food.batch.grams} g)`;
       return `<button type="button" class="uchip${u === unit ? " active" : ""}" data-unit="${u}">${esc(label)}</button>`;
     }).join("");
@@ -343,6 +352,13 @@ const UI = (() => {
     updateQtyPreview(food);
     const removeBtn = $("#qty-remove");
     if (removeBtn) removeBtn.hidden = !(prefill && prefill.allowRemove);
+  }
+
+  function syncReviewLogAsUI() {
+    const chip = $("#rev-log-as .uchip.active");
+    const logAs = chip ? chip.dataset.logAs : "grams";
+    const pieceBlock = $("#rev-piece-fields");
+    if (pieceBlock) pieceBlock.hidden = logAs !== "piece";
   }
 
   function selectedUnit() {
@@ -425,10 +441,20 @@ const UI = (() => {
     $("#rev-f").value = f.per100.f;
     $("#rev-fb").value = f.per100.fb;
     $("#rev-na").value = f.per100.na;
-    $("#rev-serving").value = (f.units && f.units.serving) || "";
-    $("#rev-piece").value = (f.units && f.units.piece) || "";
     $("#rev-batch-g").value = (f.batch && f.batch.grams) || "";
     $("#rev-batch-s").value = (f.batch && f.batch.servings) || "";
+    const logAs = f.logAs === "piece" || (f.units && f.units.piece && f.logAs !== "grams") ? "piece" : "grams";
+    const logRoot = $("#rev-log-as");
+    if (logRoot) {
+      logRoot.innerHTML = ["grams", "piece"].map((u) =>
+        `<button type="button" class="uchip${u === logAs ? " active" : ""}" data-log-as="${u}">${u === "piece" ? "by count" : "by grams"}</button>`
+      ).join("");
+    }
+    $("#rev-piece").value = (f.units && f.units.piece) || "";
+    const countEl = $("#rev-count-as");
+    if (countEl) countEl.value = f.countLabel || (logAs === "piece" ? FoodMatch.countNoun(f) : "");
+    $("#rev-serving").value = (f.units && f.units.serving) || "";
+    syncReviewLogAsUI();
     $("#rev-ingredients").value = ((f.recipe && f.recipe.ingredients) || []).map((i) => i.text).join("\n");
     $("#rev-prep").value = (f.recipe && f.recipe.prep) || "";
     $("#rev-notes").value = (f.recipe && f.recipe.notes) || "";
@@ -485,6 +511,8 @@ const UI = (() => {
       const n = Number($(id).value);
       return Number.isFinite(n) ? n : 0;
     };
+    const logChip = $("#rev-log-as .uchip.active");
+    const logAs = (logChip && logChip.dataset.logAs) || "grams";
     const serving = Number($("#rev-serving").value);
     const piece = Number($("#rev-piece").value);
     const batchG = Number($("#rev-batch-g").value);
@@ -492,10 +520,12 @@ const UI = (() => {
     const units = { ...(base && base.units) };
     if (Number.isFinite(serving) && serving > 0) units.serving = serving;
     else delete units.serving;
-    if (Number.isFinite(piece) && piece > 0) units.piece = piece;
-    else delete units.piece;
+    if (logAs === "piece" && Number.isFinite(piece) && piece > 0) units.piece = piece;
+    else if (logAs !== "piece") delete units.piece;
+    else if (!(Number.isFinite(piece) && piece > 0)) delete units.piece;
     if (Number.isFinite(batchG) && batchG > 0) units.batch = batchG;
     else delete units.batch;
+    const countRaw = ($("#rev-count-as") && $("#rev-count-as").value || "").trim().toLowerCase();
     const ingredients = $("#rev-ingredients").value.split("\n").map((t) => t.trim()).filter(Boolean).map((text) => ({ text, grams: null }));
     return {
       name: $("#rev-name").value.trim(),
@@ -503,6 +533,8 @@ const UI = (() => {
       cat: $("#rev-cat").value,
       per100: { kcal: num("#rev-kcal"), p: num("#rev-p"), c: num("#rev-c"), f: num("#rev-f"), fb: num("#rev-fb"), na: num("#rev-na") },
       units,
+      logAs,
+      countLabel: logAs === "piece" ? (countRaw || null) : null,
       batch: Number.isFinite(batchG) && batchG > 0
         ? { grams: batchG, servings: Number.isFinite(batchS) && batchS > 0 ? batchS : 1, weighed: true }
         : null,
@@ -519,13 +551,25 @@ const UI = (() => {
 
   function renderFoodDetail(food, opts) {
     const mode = (opts && opts.mode) === "log" ? "log" : "library";
+    const pieceG = FoodMatch.pieceGrams(food);
     const serv = food.units && food.units.serving;
-    const mServ = serv ? FoodMatch.computeMacros(food.per100, serv) : null;
+    const mPiece = pieceG ? FoodMatch.computeMacros(food.per100, pieceG) : null;
+    const mServ = serv && !(pieceG && Math.round(+serv) === Math.round(pieceG))
+      ? FoodMatch.computeMacros(food.per100, serv)
+      : null;
+    const noun = FoodMatch.countNoun(food);
     const ings = ((food.recipe && food.recipe.ingredients) || []).map((i) => {
       const t = typeof i === "string" ? i : (i && i.text) || "";
       return t ? `<li>${esc(t)}</li>` : "";
     }).join("");
     const prov = Foods.provenance(food);
+    const repairG = pieceG || (serv && +serv > 0 ? +serv : null)
+      || (food.batch && food.batch.grams && food.batch.servings
+        ? Math.round(food.batch.grams / food.batch.servings) : null);
+    const showCountRepair = repairG && food.logAs !== "piece";
+    const countRepair = showCountRepair
+      ? `<button type="button" class="btn ghost full" data-action="enable-count-log" data-id="${esc(food.id)}" data-grams="${Math.round(repairG)}">Log by count (1 ${esc(noun)} = ${Math.round(repairG)} g)</button>`
+      : "";
     const batch = food.batch && food.batch.grams
       ? `<div class="card-block"><b>Batch</b>: ${fmt(food.batch.grams)} g · ${food.batch.servings || 1} servings
           <button type="button" class="btn ghost full" style="margin-top:8px" data-action="scale-batch" data-id="${esc(food.id)}">Scale batch</button>
@@ -539,12 +583,16 @@ const UI = (() => {
         <button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>`
       : `<button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>
         <button type="button" class="btn ghost full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>`;
+    const logHint = food.logAs === "piece" && pieceG
+      ? `<div class="muted small" style="margin-top:6px">Logs by count: 1 ${esc(noun)} = ${Math.round(pieceG)} g${mPiece ? ` · ${fmt(mPiece.kcal)} kcal` : ""}</div>`
+      : `<div class="muted small" style="margin-top:6px">Logs by weight (grams)</div>`;
     $("#detail-body").innerHTML = `
       <h3>${esc(food.name)}</h3>
       <p class="muted small">${esc(prov.label)}${prov.detail ? " · " + esc(prov.detail) : ""}</p>
       <p class="muted small">Logged ${food.useCount || 0} times${food.lastUsedAt ? " · last " + new Date(food.lastUsedAt).toLocaleDateString() : ""} · v${food.version || 1}</p>
       <div class="card-block">
         <div><b>Per 100 g</b>: ${fmt(food.per100.kcal)} kcal · P ${food.per100.p} · C ${food.per100.c} · F ${food.per100.f} · Fb ${food.per100.fb} · Na ${food.per100.na}</div>
+        ${logHint}
         ${mServ ? `<div class="muted small" style="margin-top:6px">Optional serving (${serv} g): ${fmt(mServ.kcal)} kcal · P ${mServ.p}</div>` : ""}
       </div>
       ${batch}
@@ -553,6 +601,7 @@ const UI = (() => {
         ${mode === "log" ? logBtn : ""}
         ${libraryPrimary}
         ${mode === "library" ? logBtn : ""}
+        ${countRepair}
         <button type="button" class="btn ghost full" data-action="update-food" data-id="${esc(food.id)}">Update from AI paste</button>
         <button type="button" class="btn ghost full" data-action="copy-update-prompt" data-id="${esc(food.id)}">Copy update prompt</button>
         <button type="button" class="btn ghost full danger" data-action="delete-food" data-id="${esc(food.id)}">Delete</button>
@@ -1100,6 +1149,6 @@ const UI = (() => {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
     renderDayLog, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
-    renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
+    syncReviewLogAsUI, renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
   };
 })();

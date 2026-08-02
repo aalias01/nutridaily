@@ -509,6 +509,11 @@ const App = (() => {
       if (stats.median != null) grams = Math.round(stats.median);
       else if (stats.last != null) grams = Math.round(stats.last);
     }
+    const pieceG = FoodMatch.pieceGrams(food);
+    if (pieceG && FoodMatch.prefersPieceLog(food) && u === "g") {
+      // switching away from piece: show one piece in grams
+      return Math.round(pieceG);
+    }
     if (u === "oz") return Math.round((grams / OZ) * 10) / 10;
     return grams;
   }
@@ -569,6 +574,8 @@ const App = (() => {
           cat: food.cat || "dish",
           per100: { ...food.per100 },
           units: { ...(food.units || {}) },
+          logAs: food.logAs || (food.units && food.units.piece ? "piece" : "grams"),
+          countLabel: food.countLabel || null,
           batch: food.batch || null,
           recipe: food.recipe || { ingredients: [], prep: "", notes: "" },
           confidence: food.confidence || "medium",
@@ -592,6 +599,8 @@ const App = (() => {
         cat: target.cat || "dish",
         per100: { ...target.per100 },
         units: { ...(target.units || {}) },
+        logAs: target.logAs || (target.units && target.units.piece ? "piece" : "grams"),
+        countLabel: target.countLabel || null,
         batch: target.batch ? { ...target.batch } : null,
         recipe: {
           ingredients: (target.recipe && target.recipe.ingredients) || [],
@@ -1791,6 +1800,17 @@ const App = (() => {
       removeEntryWithUndo(day, id);
     });
 
+    const revLogAs = UI.$("#rev-log-as");
+    if (revLogAs) {
+      revLogAs.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-log-as]");
+        if (!btn) return;
+        revLogAs.querySelectorAll(".uchip").forEach((c) => c.classList.remove("active"));
+        btn.classList.add("active");
+        UI.syncReviewLogAsUI();
+      });
+    }
+
     UI.$("#btn-copy-prompt").addEventListener("click", copyPrompt);
     UI.$("#btn-settings-copy-prompt").addEventListener("click", () => {
       navigator.clipboard.writeText(NutriParse.PROMPT).then(() => UI.toast("Prompt copied")).catch(() => {
@@ -1956,7 +1976,7 @@ const App = (() => {
         const next = {
           ...food,
           batch: { grams, servings, weighed: true },
-          units: { ...(food.units || {}), serving: Math.round(grams / servings) },
+          units: { ...(food.units || {}) },
           updatedAt: Date.now(),
           version: (food.version || 1) + 1,
         };
@@ -1964,6 +1984,19 @@ const App = (() => {
         savePersonal();
         UI.renderFoodDetail(next, { mode: state.detailMode || "library" });
         UI.toast(`Batch → ${Math.round(grams)} g / ${servings} serv`);
+      } else if (action === "enable-count-log") {
+        const food = findFood(id);
+        if (!food) return;
+        const grams = Number(actionEl.dataset.grams);
+        const next = Foods.enableCountLogging(food, grams, FoodMatch.countNoun(food));
+        const idx = state.personalFoods.findIndex((f) => f.id === id);
+        if (idx < 0) return;
+        state.personalFoods[idx] = next;
+        savePersonal();
+        Sync.schedulePush();
+        UI.renderFoodDetail(next, { mode: state.detailMode || "library" });
+        refreshFoods();
+        UI.toast(`Logs by count: 1 ${next.countLabel || "piece"} = ${Math.round(next.units.piece)} g`);
       } else if (action === "food-detail") {
         openDetail(id, "library");
       } else if (action === "log-this") {

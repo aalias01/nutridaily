@@ -5,7 +5,7 @@ const NutriParse = (() => {
   const CATS = new Set(["dish", "meat", "protein", "grain", "legume", "veg", "fruit", "dairy", "fat", "nuts", "bev", "snack"]);
 
   const PROMPT =
-    "You are a nutrition data formatter. I will describe a dish I cooked. Reply with ONE fenced code\n" +
+    "You are a nutrition data formatter. I will describe a dish or packaged food. Reply with ONE fenced code\n" +
     "block and nothing else, in exactly this format:\n\n" +
     "NUTRI v1\n" +
     "Name: <short dish name>\n" +
@@ -14,6 +14,10 @@ const NutriParse = (() => {
     "Batch: <finished weight in grams> g total, <number> servings\n" +
     "Totals: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
     "Per 100 g: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
+    "Piece: <grams per ONE countable item, or omit>\n" +
+    "Log as: <piece | grams>\n" +
+    "Count as: <singular noun I would say, e.g. chapati, egg — omit if Log as: grams>\n" +
+    "Serving: <optional grams; only if different from Piece>\n" +
     "Ingredients:\n" +
     "- <ingredient> - <amount in grams>\n" +
     "Prep: <one or two lines: cooking method, oil used, anything that changes the numbers>\n" +
@@ -21,11 +25,23 @@ const NutriParse = (() => {
     "Confidence: <high | medium | low>\n" +
     "END\n\n" +
     "Rules:\n" +
-    "- Plain numbers only. No ranges, no \"approx\", no units inside the number.\n" +
+    "- Plain numbers only. No ranges, no \"approx\", no units inside the number fields.\n" +
     "- Totals are for the FINISHED dish, after cooking.\n" +
     "- If I told you the finished weight, use it. If I did not, estimate it and write \"(estimated)\"\n" +
     "  after the number, like: Batch: 760 g total (estimated), 4 servings.\n" +
     "- Per 100 g must equal Totals divided by Batch grams, times 100. Do that arithmetic and check it.\n" +
+    "- Batch \"servings\" is recipe math only (how many portions the batch divides into).\n" +
+    "  It is NOT how I log day to day.\n" +
+    "- Log as / Piece (how humans actually log):\n" +
+    "  * Log as: piece — when someone would say a count: \"2 chapatis\", \"3 eggs\", \"1 bar\",\n" +
+    "    \"1 idli\". Then Piece MUST be the grams for exactly ONE of those items.\n" +
+    "  * Log as: grams — when someone weighs a scoop/bowl every time (dal, rice, curry, salad).\n" +
+    "    Omit Piece, or leave it blank.\n" +
+    "- For a pack of identical items (e.g. 10 chapatis, 567 g pack): Batch is the pack weight and\n" +
+    "  count; Piece is pack grams ÷ count (one chapati). Log as: piece.\n" +
+    "- Prefer Piece over Serving for countable foods. Use Serving only if it means something else\n" +
+    "  (e.g. label \"serving\" that is not one piece).\n" +
+    "- Count as is the word I type in the diary (\"2 chapatis\" → Count as: chapati).\n" +
     "- Use USDA-style values. Account for oil absorbed and water lost in cooking.\n" +
     "- Sodium in milligrams. Everything else in grams.\n" +
     "- No commentary before or after the code block.\n\n" +
@@ -76,13 +92,38 @@ const NutriParse = (() => {
     batch: "batch",
     totals: "totals", total: "totals", "whole batch": "totals",
     "per 100 g": "per100", per100: "per100", "per 100g": "per100", "per 100 grams": "per100",
-    serving: "serving",
-    piece: "piece", each: "piece", "per piece": "piece",
+    serving: "serving", "serving size": "serving",
+    piece: "piece", each: "piece", "per piece": "piece", "piece size": "piece",
+    "unit weight": "piece", "each weighs": "piece",
+    "log as": "logAs", "default unit": "logAs", "eaten as": "logAs", "log with": "logAs",
+    "count as": "countAs", "count noun": "countAs", "unit name": "countAs",
     ingredients: "ingredients",
     prep: "prep", preparation: "prep", method: "prep",
     notes: "notes",
     confidence: "confidence",
   };
+
+  /** @returns {"piece"|"grams"|null} */
+  function parseLogAs(value) {
+    const s = String(value || "").trim().toLowerCase();
+    if (!s) return null;
+    if (/\b(piece|count|each|unit|chapati|roti|egg|bar|item)\b/.test(s)) return "piece";
+    if (/\b(g|gram|grams|oz|ounce|weigh|scale|scoop|bowl|serving|servings)\b/.test(s)) return "grams";
+    if (s === "piece" || s === "grams") return s;
+    return null;
+  }
+
+  function inferCountLabel(name, aliases) {
+    if (typeof FoodMatch !== "undefined" && FoodMatch.countNoun) {
+      return FoodMatch.countNoun({ name, aliases, countLabel: "" });
+    }
+    return "piece";
+  }
+
+  function parseGramsField(value) {
+    const n = Number(String(value || "").match(/-?\d+(?:\.\d+)?/)?.[0]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
 
   function keyOf(line) {
     const m = line.match(/^\s*(?:#|>|\*|\u2022)?\s*\**([A-Za-z0-9][A-Za-z0-9\s]*?)\**\s*:\s*(.*)$/);
@@ -322,18 +363,30 @@ const NutriParse = (() => {
     if (cat === "dish" && !ingredientLines.length) warnings.push("No ingredients listed for this dish.");
     if (block.truncated) warnings.push("The paste looks cut off (no END).");
 
+    const logAsParsed = parseLogAs(fields.logAs);
     const units = {};
-    if (fields.serving) {
-      const n = Number(String(fields.serving).match(/-?\d+(?:\.\d+)?/)?.[0]);
-      if (Number.isFinite(n) && n > 0) units.serving = n;
-    } else if (batch.grams && batch.servings) {
-      units.serving = Math.round(batch.grams / batch.servings);
+    const servingG = parseGramsField(fields.serving);
+    let pieceG = parseGramsField(fields.piece);
+    // Only an explicit Serving line (not batch÷servings) may set units.serving.
+    if (servingG) units.serving = servingG;
+    // Log as piece without Piece → derive one item from pack math into piece only.
+    if (!pieceG && logAsParsed === "piece" && batch.grams && batch.servings) {
+      pieceG = Math.round(batch.grams / batch.servings);
     }
-    if (fields.piece) {
-      const n = Number(String(fields.piece).match(/-?\d+(?:\.\d+)?/)?.[0]);
-      if (Number.isFinite(n) && n > 0) units.piece = n;
-    }
+    if (!pieceG && logAsParsed === "piece" && servingG) pieceG = servingG;
+    if (pieceG) units.piece = pieceG;
     if (batch.grams) units.batch = batch.grams;
+
+    const logAs = logAsParsed || (units.piece ? "piece" : "grams");
+    if (logAs === "piece" && !units.piece) {
+      warnings.push("Log as is piece, but Piece grams are missing — add Piece so you can log 1 or 2 items.");
+    }
+
+    let countLabel = null;
+    if (logAs === "piece") {
+      const rawLabel = String(fields.countAs || "").trim().toLowerCase().replace(/[^a-z0-9\s-]/g, "").split(/\s+/)[0];
+      countLabel = rawLabel || inferCountLabel(name, aliases);
+    }
 
     const prep = prepParts.join("\n").slice(0, 1000);
     const notes = notesParts.join("\n").slice(0, 1000);
@@ -349,6 +402,8 @@ const NutriParse = (() => {
       cat,
       per100,
       units,
+      logAs,
+      countLabel,
       batch: batch.grams
         ? { grams: batch.grams, servings: batch.servings || 1, weighed }
         : null,

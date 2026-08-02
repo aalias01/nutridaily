@@ -30,6 +30,10 @@ const Foods = (() => {
       cat: draft.cat || "dish",
       per100: { ...draft.per100 },
       units: { ...(draft.units || {}) },
+      logAs: draft.logAs === "piece" ? "piece" : "grams",
+      countLabel: draft.logAs === "piece" && draft.countLabel
+        ? String(draft.countLabel).trim().toLowerCase().slice(0, 32)
+        : null,
       batch: draft.batch ? { ...draft.batch } : null,
       recipe: {
         ingredients: (draft.recipe && draft.recipe.ingredients) || [],
@@ -66,6 +70,12 @@ const Foods = (() => {
       cat: draft.cat || existing.cat || "dish",
       per100: { ...draft.per100 },
       units: { ...(draft.units || {}) },
+      logAs: draft.logAs === "piece" ? "piece" : (draft.logAs === "grams" ? "grams" : (existing.logAs === "piece" ? "piece" : "grams")),
+      countLabel: (draft.logAs === "piece" || (!draft.logAs && existing.logAs === "piece"))
+        ? (draft.countLabel != null && String(draft.countLabel).trim()
+          ? String(draft.countLabel).trim().toLowerCase().slice(0, 32)
+          : (existing.countLabel || null))
+        : null,
       batch: draft.batch ? { ...draft.batch } : null,
       recipe: {
         ingredients: (draft.recipe && draft.recipe.ingredients) || [],
@@ -79,6 +89,23 @@ const Foods = (() => {
       raw: draft.raw != null ? draft.raw : existing.raw,
       updatedAt: Date.now(),
       deleted: false,
+    };
+  }
+
+  /** One-tap repair: treat serving (or given grams) as one countable piece. */
+  function enableCountLogging(food, pieceGrams, label) {
+    const g = Math.round(+pieceGrams);
+    if (!food || !Number.isFinite(g) || g <= 0) return food;
+    const noun = String(label || (typeof FoodMatch !== "undefined" && FoodMatch.countNoun
+      ? FoodMatch.countNoun(food)
+      : "piece")).trim().toLowerCase().slice(0, 32) || "piece";
+    return {
+      ...food,
+      logAs: "piece",
+      countLabel: noun,
+      units: { ...(food.units || {}), piece: g },
+      updatedAt: Date.now(),
+      version: (food.version || 1) + 1,
     };
   }
 
@@ -115,6 +142,10 @@ const Foods = (() => {
       cat: dbFood.cat || "dish",
       per100: { ...dbFood.per100 },
       units: { ...(dbFood.units || {}) },
+      logAs: dbFood.units && +dbFood.units.piece > 0 ? "piece" : "grams",
+      countLabel: dbFood.units && +dbFood.units.piece > 0
+        ? (typeof FoodMatch !== "undefined" && FoodMatch.countNoun ? FoodMatch.countNoun(dbFood) : "piece")
+        : null,
       batch: null,
       recipe: { ingredients: [], prep: "", notes: "From reference catalog" },
       confidence: "high",
@@ -156,7 +187,7 @@ const Foods = (() => {
       per100: { ...food.per100 },
       cat: food.cat || "dish",
       grams,
-      displayQty: FoodMatch.displayQty(qty, u === "g" || u === "grams" ? "g" : u, grams),
+      displayQty: FoodMatch.displayQty(qty, u === "g" || u === "grams" ? "g" : u, grams, food),
       macros,
       sd,
       meal: meal || inferMeal(),
@@ -237,7 +268,7 @@ const Foods = (() => {
   }
 
   return {
-    uid, createFromDraft, applyUpdate, tombstone, touchUse, findByName, active,
+    uid, createFromDraft, applyUpdate, enableCountLogging, tombstone, touchUse, findByName, active,
     fromCatalog, entryFromQty, inferMeal, sortForPicker, recent, frequent, provenance,
   };
 })();

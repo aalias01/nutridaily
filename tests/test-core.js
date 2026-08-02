@@ -4,6 +4,8 @@
  */
 globalThis.FOOD_DB = require("../js/data-foods.js");
 const FoodMatch = require("../js/foodmatch.js");
+globalThis.FoodMatch = FoodMatch;
+const Foods = require("../js/foods.js");
 const Ledger = require("../js/ledger.js");
 
 let pass = 0, fail = 0;
@@ -165,6 +167,19 @@ console.log("\n[6] Display formatting");
 {
   ok(FoodMatch.displayQty(2, "pieces", 120) === "2 pieces (120 g)", "household qty shows grams too");
   ok(FoodMatch.displayQty(180, "g", 180) === "180 g", "gram qty shown plainly");
+  const rotiLegacy = { name: "Roti Fresh Original Chapati", units: { serving: 57 }, aliases: ["chapati"], logAs: "piece" };
+  ok(FoodMatch.pieceGrams(rotiLegacy) === 57, "pieceGrams uses serving only when logAs=piece");
+  ok(FoodMatch.pieceGrams({ name: "skillet", units: { serving: 190 } }) == null, "serving alone is not a piece");
+  const roti = { name: "Roti Fresh Original Chapati", units: { piece: 57 }, aliases: ["chapati"], logAs: "piece", countLabel: "chapati" };
+  approx(FoodMatch.toGrams(roti, 2, "piece").grams, 114, 0.01, "2 chapatis → 114 g");
+  ok(FoodMatch.displayQty(2, "piece", 114, roti) === "2 chapatis (114 g)", "display uses chapati noun");
+  ok(FoodMatch.displayQty(1, "piece", 57, roti) === "1 chapati (57 g)", "singular chapati label");
+  const repaired = Foods.enableCountLogging(
+    { name: "Roti Fresh", units: { serving: 57 }, logAs: "grams", version: 1 },
+    57,
+    "chapati"
+  );
+  ok(repaired.logAs === "piece" && repaired.units.piece === 57 && repaired.countLabel === "chapati", "enableCountLogging repair");
 }
 
 console.log("\n[7] Phases / goalsForDay");
