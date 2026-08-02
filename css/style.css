@@ -127,7 +127,6 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .mini { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 .mini:first-child { color: var(--ink); font-weight: 650; }
 .tag { font-size: 10px; padding: 1.5px 6px; border-radius: 8px; font-weight: 600; }
-.tag-edit { background: rgba(74, 125, 189, 0.14); color: var(--info); }
 .tag-mine { background: rgba(61, 153, 112, 0.15); color: var(--accent-ink); }
 
 .fab {
@@ -233,10 +232,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .qty-secondary { margin-top: 10px; justify-content: space-between; }
 #qty-remove { display: block; width: 100%; text-align: center; margin-top: 10px; }
 #qty-remove[hidden] { display: none !important; }
-.log-row-wrap { display: flex; align-items: stretch; gap: 4px; }
-.log-row-wrap .log-row-stack { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.log-row-wrap .log-row { flex: 1; }
-.log-row-wrap.is-expanded .log-row {
+.log-row-stack { display: flex; flex-direction: column; }
+.log-row-stack.is-expanded .log-row {
   margin-bottom: 0;
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
@@ -247,10 +244,10 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
   border-radius: 0 0 var(--radius) var(--radius);
   padding: 8px 14px 10px; margin-bottom: 8px; box-shadow: var(--shadow);
 }
-.r-contrib { font-size: 11.5px; color: var(--muted); line-height: 1.35; flex: 1; min-width: 0; }
+.r-expanded-main { flex: 1; min-width: 0; }
+.r-contrib { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+.r-edits { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
 .edit-entry-btn { flex: 0 0 auto; font-size: 12px; padding: 4px 6px; }
-.again-btn { align-self: center; font-size: 11.5px; padding: 4px 6px; flex: 0 0 auto; }
-.log-row-wrap.is-expanded .again-btn { align-self: flex-start; margin-top: 12px; }
 .field-bad { border-color: var(--warn) !important; box-shadow: 0 0 0 1px var(--warn); }
 .toast-action {
   margin-left: 10px; border: none; background: transparent; color: #9fefc0;
@@ -412,6 +409,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .gap-select-row input { margin-top: 3px; flex: 0 0 auto; }
 .gap-select-row .gap-meta { min-width: 0; flex: 1; }
 .gap-select-row .r-name { font-weight: 600; }
+.gap-plan-projection { color: var(--ink); font-weight: 600; margin: 2px 0 10px; }
 .gap-plan-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
 .gap-plan-item {
   border: 1px solid var(--line); border-radius: 12px;

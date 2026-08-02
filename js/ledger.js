@@ -63,6 +63,23 @@ const Ledger = (() => {
 
   function eventsFor(day) { return _load().filter((e) => e.day === day); }
 
+  /** Compare entry vs amend patch → user-facing before/after pairs. */
+  function _diffEntry(prev, patch) {
+    const out = [];
+    const p = patch || {};
+    if (p.name != null && p.name !== prev.name) out.push({ field: "name", from: prev.name, to: p.name });
+    if (p.displayQty != null && p.displayQty !== prev.displayQty) {
+      out.push({ field: "qty", from: prev.displayQty, to: p.displayQty });
+    }
+    if (p.meal != null && p.meal !== prev.meal) out.push({ field: "meal", from: prev.meal, to: p.meal });
+    const toK = p.macros && p.macros.kcal;
+    const fromK = prev.macros && prev.macros.kcal;
+    if (Number.isFinite(toK) && Number.isFinite(fromK) && Math.round(toK) !== Math.round(fromK)) {
+      out.push({ field: "kcal", from: Math.round(fromK), to: Math.round(toK) });
+    }
+    return out;
+  }
+
   /** Reduce a day's events → current entries (with .history of corrections). */
   function entriesFor(day) {
     const map = new Map(); // entryId → entry
@@ -72,7 +89,11 @@ const Ledger = (() => {
       } else if (ev.type === "amend") {
         const cur = map.get(ev.target);
         if (cur) {
-          cur.history.push(ev.label || "amended");
+          cur.history.push({
+            ts: ev.ts,
+            label: ev.label || "amended",
+            changes: _diffEntry(cur, ev.patch),
+          });
           Object.assign(cur, ev.patch);
         }
       } else if (ev.type === "remove") {

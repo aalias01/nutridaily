@@ -848,8 +848,10 @@ const App = (() => {
     const plan = dayPlan(state.viewDay);
     const noteEl = UI.$("#gap-plan-note");
     const banner = UI.$("#gap-nutri-banner");
+    const projEl = UI.$("#gap-plan-projection");
     if (!plan) {
       if (noteEl) noteEl.textContent = "No plan saved for this day yet.";
+      if (projEl) { projEl.hidden = true; projEl.textContent = ""; }
       UI.renderGapPlanList([]);
       if (banner) banner.hidden = true;
       return;
@@ -873,18 +875,17 @@ const App = (() => {
         banner.innerHTML = "";
       }
     }
-    const items = (plan.items || []).slice().sort((a, b) => {
+    const rows = (plan.items || []).slice().sort((a, b) => {
       if (a.status === b.status) return 0;
       return a.status === "pending" ? -1 : 1;
     }).map((it) => {
-      const macros = it.foodId || it.name
-        ? (() => {
-          const food = resolveGapFood(it);
-          if (!food) return null;
-          return FoodMatch.computeMacros(food.per100, it.grams || it.suggestedGrams || 0);
-        })()
-        : null;
+      const food = (it.foodId || it.name) ? resolveGapFood(it) : null;
       const g = it.grams != null ? it.grams : it.suggestedGrams;
+      const macros = food ? FoodMatch.computeMacros(food.per100, g || 0) : null;
+      return { it, g, macros };
+    });
+    renderGapPlanProjection(plan, rows);
+    UI.renderGapPlanList(rows.map(({ it, g, macros }) => {
       const qtyLabel = g != null
         ? (it.unit && it.unit !== "g"
           ? `${it.qty} ${it.unit} (≈ ${UI.fmt(g)} g)`
@@ -894,8 +895,30 @@ const App = (() => {
         ? `${it.meal || "snack"} · ${UI.fmt(macros.kcal)} kcal · P ${UI.fmt(macros.p)}`
         : (it.meal || "snack");
       return { id: it.id, name: it.name, qtyLabel, sub, status: it.status };
+    }));
+  }
+
+  /** Live projection = logged day totals + macros of still-pending plan items. */
+  function renderGapPlanProjection(plan, rows) {
+    const el = UI.$("#gap-plan-projection");
+    if (!el) return;
+    const hide = () => { el.hidden = true; el.textContent = ""; };
+    const pending = (rows || []).filter((r) => r.it && r.it.status === "pending");
+    if (!plan || !pending.length) { hide(); return; }
+    const goals = goalsForView();
+    const resolved = pending.filter((r) => r.macros);
+    if (!resolved.length) {
+      const text = plan.projected ? UI.formatPlanProjection(plan.projected, goals, { source: "ai" }) : "";
+      el.hidden = !text;
+      el.textContent = text;
+      return;
+    }
+    const means = GapPrompt.totalsMeans(Ledger.totalsFor(state.viewDay));
+    const projected = GapPrompt.projectTotals(means, resolved.map((r) => GapPrompt.macroMeans(r.macros)));
+    el.hidden = false;
+    el.textContent = UI.formatPlanProjection(projected, goals, {
+      unresolved: pending.length - resolved.length,
     });
-    UI.renderGapPlanList(items);
   }
 
   function resolveGapFood(item) {
@@ -2845,12 +2868,6 @@ const App = (() => {
         const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);
         if (!entry) return;
         openQtyFromEntry(entry, { allowRemove: true });
-      } else if (action === "log-again") {
-        e.preventDefault();
-        e.stopPropagation();
-        const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);
-        if (!entry) return;
-        openQtyFromEntry(entry);
       } else if (action === "repeat-yesterday") {
         const entry = Ledger.entriesFor(state.yesterdayKey || yesterdayKey()).find((x) => x.id === id);
         if (!entry) return;

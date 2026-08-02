@@ -156,6 +156,26 @@ const UI = (() => {
     return `P ${m.p} · C ${m.c} · F ${m.f} · Fb ${m.fb} · Na ${fmt(m.na || 0)}`;
   }
 
+  /** Newest amend → short "Edited: …" line for the expanded log row. */
+  function fmtEditNote(history) {
+    if (!history || !history.length) return "";
+    const last = history[history.length - 1];
+    if (typeof last === "string") {
+      const n = history.length > 1 ? ` (${history.length} edits)` : "";
+      return `Edited: ${last}${n}`;
+    }
+    const ch = (last && last.changes) || [];
+    const pair = (c) => {
+      if (c.field === "kcal") return `${c.from} kcal → ${c.to} kcal`;
+      return `${c.from} → ${c.to}`;
+    };
+    const body = ch.length
+      ? ch.slice(0, 2).map(pair).join(" · ") + (ch.length > 2 ? ` +${ch.length - 2} more` : "")
+      : (last && last.label) || "amended";
+    const n = history.length > 1 ? ` (${history.length} edits)` : "";
+    return `Edited: ${body}${n}`;
+  }
+
   function toggleEntryExpand(id) {
     expandedEntryId = expandedEntryId === id ? null : id;
   }
@@ -182,32 +202,32 @@ const UI = (() => {
     root.innerHTML = MEALS.filter((m) => groups[m].length).map((meal) => {
       const mealKcal = groups[meal].reduce((s, e) => s + ((e.macros && e.macros.kcal) || 0), 0);
       const rows = groups[meal].map((e) => {
-        const edited = e.history && e.history.length ? `<span class="tag tag-edit">edited</span>` : "";
         const t = entryTime(e);
         const isExp = e.id === expandedEntryId;
+        const editNote = isExp ? fmtEditNote(e.history) : "";
         const expanded = isExp
           ? `<div class="r-expanded">
-              <div class="r-contrib">${esc(fmtMacros(e.macros))}</div>
+              <div class="r-expanded-main">
+                <div class="r-contrib">${esc(fmtMacros(e.macros))}</div>
+                ${editNote ? `<div class="r-edits">${esc(editNote)}</div>` : ""}
+              </div>
               <button type="button" class="linkbtn edit-entry-btn" data-action="edit-entry" data-id="${esc(e.id)}">Edit</button>
             </div>`
           : "";
-        return `<div class="log-row-wrap${isExp ? " is-expanded" : ""}">
-          <div class="log-row-stack">
-            <button type="button" class="log-row${isExp ? " expanded" : ""}" data-action="toggle-entry" data-id="${esc(e.id)}">
-              <div class="r-top">
-                <div>
-                  <div class="r-name">${esc(e.name)} ${edited}</div>
-                  <div class="r-qty">${esc(e.displayQty)}${t ? ` · ${esc(t)}` : ""}</div>
-                </div>
-                <div class="r-macros">
-                  <span class="mini">${fmt(e.macros.kcal)} kcal</span>
-                  <span class="mini">P ${e.macros.p}</span>
-                </div>
+        return `<div class="log-row-stack${isExp ? " is-expanded" : ""}">
+          <button type="button" class="log-row${isExp ? " expanded" : ""}" data-action="toggle-entry" data-id="${esc(e.id)}">
+            <div class="r-top">
+              <div>
+                <div class="r-name">${esc(e.name)}</div>
+                <div class="r-qty">${esc(e.displayQty)}${t ? ` · ${esc(t)}` : ""}</div>
               </div>
-            </button>
-            ${expanded}
-          </div>
-          <button type="button" class="linkbtn again-btn" data-action="log-again" data-id="${esc(e.id)}" title="Log again">again</button>
+              <div class="r-macros">
+                <span class="mini">${fmt(e.macros.kcal)} kcal</span>
+                <span class="mini">P ${e.macros.p}</span>
+              </div>
+            </div>
+          </button>
+          ${expanded}
         </div>`;
       }).join("");
       return `<div class="meal-group"><div class="meal-label">${esc(meal)} · ${fmt(mealKcal)} kcal</div>${rows}</div>`;
@@ -1207,6 +1227,32 @@ const UI = (() => {
     return bits.length ? `Gap: ${bits.join(" · ")}` : "Targets already met (or no goals set).";
   }
 
+  /** Live end-of-day projection line for the plan sheet. Fiber/carbs/fat omitted to stay one line. */
+  function formatPlanProjection(projected, goals, opts) {
+    if (!projected) return "";
+    const o = opts || {};
+    const pair = (label, key, unit) => {
+      const v = Number(projected[key]);
+      if (!Number.isFinite(v)) return "";
+      const g = Number(goals && goals[key]) || 0;
+      const head = label ? `${label} ` : "";
+      return g ? `${head}${fmt(v)} / ${fmt(g)}${unit}` : `${head}${fmt(v)}${unit}`;
+    };
+    const bits = [
+      `~${pair("", "kcal", "")} kcal`,
+      pair("P", "protein", ""),
+      pair("Na", "sodium", ""),
+    ].filter(Boolean);
+    const flags = [];
+    const pFloor = Number(goals && goals.protein) || 0;
+    const naCap = Number(goals && goals.sodium) || 0;
+    if (pFloor && Phases.classify(projected.protein, pFloor, Phases.BANDS.protein) === "under") flags.push("P short");
+    if (naCap && Phases.classify(projected.sodium, naCap, Phases.BANDS.sodium) === "over") flags.push("Na over");
+    if (o.unresolved > 0) flags.push(`${o.unresolved} food not in library`);
+    const lead = o.source === "ai" ? "AI projected end of day" : "With remaining plan";
+    return `${lead} → ${bits.join(" · ")}${flags.length ? ` (${flags.join(", ")})` : ""}`;
+  }
+
   /**
    * Multi-select food list for gap plan.
    * rows: [{ key, name, sub, selected }] — selected rows are expected first.
@@ -1318,6 +1364,6 @@ const UI = (() => {
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
     syncReviewLogAsUI, renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
-    formatGapRemaining, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
+    formatGapRemaining, formatPlanProjection, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
   };
 })();

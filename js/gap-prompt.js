@@ -44,6 +44,27 @@ const GapPrompt = (() => {
     return out;
   }
 
+  /** Short-key macros ({kcal,p,c,f,fb,na}) → long goal keys. */
+  function macroMeans(macros) {
+    const out = {};
+    for (const k of GOAL_KEYS) {
+      const v = Number(macros && macros[TOTAL_KEY[k]]);
+      out[k] = Number.isFinite(v) ? v : 0;
+    }
+    return out;
+  }
+
+  /** End-of-day projection: logged means plus each pending addend (long goal keys). */
+  function projectTotals(means, addends) {
+    const out = {};
+    for (const k of GOAL_KEYS) {
+      let sum = Number(means && means[k]) || 0;
+      for (const a of (addends || [])) sum += Number(a && a[k]) || 0;
+      out[k] = Math.round(sum * 10) / 10;
+    }
+    return out;
+  }
+
   function portionLine(portion) {
     if (!portion || !portion.n) return "no history";
     const bits = [`n=${portion.n}`];
@@ -506,6 +527,8 @@ const GapPrompt = (() => {
     BAND_HINT,
     totalsMeans,
     remainingFrom,
+    macroMeans,
+    projectTotals,
     portionLine,
     buildGapPrompt,
     parseGapBlock,

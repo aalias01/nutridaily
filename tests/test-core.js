@@ -113,11 +113,14 @@ console.log("\n[5] Event-sourced ledger");
   // amend: "actually the chicken was 200 g"
   const target = Ledger.findEntry(day, "chicken", FoodMatch.scoreMatch);
   ok(target && target.id === e1.entry.id, "fuzzy findEntry locates the chicken");
-  Ledger.amendEntry(day, target.id, { grams: 200, displayQty: "200 g", macros: FoodMatch.computeMacros(chicken.per100, 200), sd: 0.08 }, "180 g → 200 g");
+  Ledger.amendEntry(day, target.id, { grams: 200, displayQty: "200 g", macros: FoodMatch.computeMacros(chicken.per100, 200), sd: 0.08 }, "quantity edited");
   t = Ledger.totalsFor(day);
   ok(t.kcal.mean === 435, "amend recomputes totals (330+105)", `got ${t.kcal.mean}`);
   entries = Ledger.entriesFor(day);
-  ok(entries.find((e) => e.name === "chicken breast").history.length === 1, "correction history is preserved");
+  const hist = entries.find((e) => e.name === "chicken breast").history;
+  ok(hist.length === 1, "correction history is preserved");
+  ok(hist[0].changes.some((c) => c.field === "qty" && c.from === "180 g" && c.to === "200 g"), "amend history records a real qty diff");
+  ok(hist[0].changes.some((c) => c.field === "kcal" && c.from === 297 && c.to === 330), "amend history records a kcal diff");
 
   // "that" targets the most recent entry
   const last = Ledger.findEntry(day, "that", FoodMatch.scoreMatch);
@@ -668,6 +671,23 @@ END`;
   };
   const mergedOmit = Sync.mergeDocs(localDoc, remoteOld);
   ok(mergedOmit.doc.dayPlans && mergedOmit.doc.dayPlans["2026-08-02"], "mergeDocs keeps local dayPlans when remote omits them");
+
+  const loggedTotals = {
+    count: 1,
+    kcal: { mean: 1000, sd: 50 },
+    p: { mean: 60, sd: 5 },
+    c: { mean: 100, sd: 5 },
+    f: { mean: 30, sd: 2 },
+    fb: { mean: 8, sd: 1 },
+    na: { mean: 900, sd: 50 },
+  };
+  const loggedMeans = GapPrompt.totalsMeans(loggedTotals);
+  const pendingMacros = GapPrompt.macroMeans(FoodMatch.computeMacros(candidates[1].per100, 180));
+  const proj = GapPrompt.projectTotals(loggedMeans, [pendingMacros]);
+  ok(proj.kcal === 1297, "projectTotals: logged 1000 + 180 g chicken (297) = 1297", `got ${proj.kcal}`);
+  approx(proj.protein, 115.8, 0.11, "projectTotals adds pending protein");
+  ok(GapPrompt.projectTotals(loggedMeans, []).sodium === 900, "projectTotals with no pending items = logged totals");
+  ok(GapPrompt.macroMeans({}).kcal === 0, "macroMeans defaults missing keys to 0");
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
