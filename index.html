@@ -198,18 +198,22 @@ END</pre>
   <!-- Onboarding -->
   <div id="onboarding" class="onboarding" hidden>
     <div class="onb-card">
-      <h2>Your food diary</h2>
-      <p>Starts empty. You build a library of dishes you cook.</p>
+      <h2>Your nutrition tracker</h2>
+      <p>Starts empty. Build a library of dishes you cook, then log by grams.</p>
       <p>New dish? Describe it to ChatGPT, paste the answer here. No API key needed.</p>
-      <p class="muted small">Everything stays on your phone. Connect Google Drive later for backup.</p>
+      <p class="muted small">Tracking works fully without signing in. Google Sign-in is optional and only for syncing to your Drive so a cleared browser or second device can restore your log.</p>
       <button id="btn-onb-start" class="btn full" type="button">Add your first food</button>
       <button id="btn-onb-skip" class="linkbtn" type="button">Skip for now</button>
     </div>
   </div>
 
+  <div id="info-banner" class="info-banner" hidden role="status"></div>
+
   <div id="settings-modal" role="dialog" aria-modal="true">
     <div class="modal-card">
       <h2>Settings</h2>
+
+      <div id="install-card" class="installcard card-block"></div>
 
       <label>Appearance</label>
       <div class="set-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">
@@ -221,12 +225,15 @@ END</pre>
         </span>
       </div>
 
-      <label>Account & cloud backup <span class="muted small">(your data, in your own Google Drive)</span></label>
+      <label>Google Drive sync</label>
+      <p class="muted small drive-blurb">Meals save on this device automatically. Sign-in is optional: it keeps a copy in <b>your</b> Google Drive so another phone or a cleared browser cache can restore it. Nothing is sent anywhere except your own Drive.</p>
       <div class="row">
-        <button id="btn-drive-connect" class="btn ghost" type="button">Connect Google Drive</button>
+        <button id="btn-drive-connect" class="btn ghost" type="button">Sign in with Google</button>
+        <button id="btn-drive-sync" class="btn ghost" type="button" style="display:none">Sync now</button>
         <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
       </div>
       <div id="drive-status" class="muted small"></div>
+      <p id="drive-reconnect-hint" class="muted small" hidden>After reopening the app (especially on iPhone), Drive may pause until you tap <b>Reconnect</b> on the banner or the sync pill. Logging still works on this device meanwhile.</p>
       <details class="dev-details" id="client-id-details">
         <summary class="muted small">Advanced: override Client ID</summary>
         <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
@@ -249,11 +256,17 @@ END</pre>
       <label>ChatGPT prompt</label>
       <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy ChatGPT prompt</button>
 
-      <label>Data <span class="muted small">(export to back up)</span></label>
+      <label>Data</label>
+      <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
       <div class="row">
         <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
         <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
         <button id="btn-clear" class="btn ghost danger" type="button">Clear all</button>
+      </div>
+
+      <div class="card-block about-card">
+        <h3>About NutriDaily</h3>
+        <p class="muted small">Personal nutrition tracker. Build dishes with a ChatGPT paste, log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
       </div>
 
       <div class="row end">

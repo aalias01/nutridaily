@@ -20,14 +20,20 @@ const Sync = (() => {
   let running = false;
   let queued = false;
   let lastSync = null;
+  let lastStatus = { s: "off", detail: "" };
 
   const state = () => ({
     enabled: localStorage.getItem(ENABLED_KEY) === "1",
     email: localStorage.getItem(EMAIL_KEY) || "",
     lastSync,
+    status: lastStatus.s,
+    detail: lastStatus.detail,
   });
 
-  const setStatus = (s, detail) => deps && deps.onStatus && deps.onStatus(s, detail || "");
+  const setStatus = (s, detail) => {
+    lastStatus = { s, detail: detail || "" };
+    if (deps && deps.onStatus) deps.onStatus(s, detail || "");
+  };
 
   // ---------- pure merge (unit-tested) ----------
   function mergeEvents(a, b) {

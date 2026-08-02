@@ -3,6 +3,9 @@ const App = (() => {
   const SETTINGS_KEY = "nd_settings_v1";
   const PERSONAL_KEY = "nd_personal_v1";
   const ONB_KEY = "nd_onboarded_v1";
+  const FIRST_SEEN_KEY = "nd_first_seen_at";
+  const SIGNIN_SEEN_KEY = "nd_signin_banner_seen";
+  const RECONNECT_HIDE_DAY_KEY = "nd_reconnect_hide_day";
   const DEFAULT_GOALS = { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28 };
 
   const state = {
@@ -16,6 +19,9 @@ const App = (() => {
     saveAsNew: false,
     insightDays: 14,
   };
+
+  let deferredInstall = null;
+  let installHintOpen = false;
 
   const activeFoods = () => Foods.active(state.personalFoods);
   const findFood = (id) => state.personalFoods.find((f) => f.id === id && !f.deleted);
@@ -59,7 +65,153 @@ const App = (() => {
     try { state.personalFoods = JSON.parse(localStorage.getItem(PERSONAL_KEY) || "[]"); }
     catch (e) { state.personalFoods = []; }
     state.viewDay = Ledger.todayKey();
+    if (!localStorage.getItem(FIRST_SEEN_KEY)) localStorage.setItem(FIRST_SEEN_KEY, String(Date.now()));
     applyTheme();
+  }
+
+  // ---------- PWA install (Daycells-style, Settings card) ----------
+  function isStandalone() {
+    return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  }
+  function isIos() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }
+  function canNativeInstall() { return !!deferredInstall; }
+  function showInstallUi() { return !isStandalone(); }
+
+  async function triggerInstall() {
+    if (!deferredInstall) return false;
+    const ev = deferredInstall;
+    deferredInstall = null;
+    ev.prompt();
+    try { await ev.userChoice; } catch (e) {}
+    refreshInstallCard();
+    return true;
+  }
+
+  function appShareUrl() {
+    try { return new URL("./", location.href).href; }
+    catch (e) { return location.href.split("#")[0]; }
+  }
+
+  async function shareApp() {
+    const url = appShareUrl();
+    const payload = {
+      title: "NutriDaily",
+      text: "Personal nutrition tracker. Data stays in your browser and your own Google Drive.",
+      url,
+    };
+    try {
+      if (navigator.share) { await navigator.share(payload); return; }
+    } catch (e) { /* cancelled */ }
+    try {
+      await navigator.clipboard.writeText(url);
+      UI.toast("Link copied");
+    } catch (e) {
+      UI.toast(url);
+    }
+  }
+
+  function refreshInstallCard() {
+    const root = UI.$("#install-card");
+    if (!root) return;
+    const shareBtn = `<button type="button" class="btn ghost" id="shareapp">Share link</button>`;
+    if (!showInstallUi()) {
+      root.innerHTML = `<h3>Home screen</h3>
+        <p class="muted small">Running as an installed app on this device.</p>
+        <div class="btnrow">${shareBtn}</div>`;
+    } else if (canNativeInstall()) {
+      root.innerHTML = `<h3>Home screen</h3>
+        <p>Add NutriDaily like an app for one-tap access. Works offline after install.</p>
+        <div class="btnrow"><button type="button" class="btn" id="installbtn">Install NutriDaily</button>${shareBtn}</div>`;
+    } else if (isIos()) {
+      root.innerHTML = `<h3>Home screen</h3>
+        <p>On iPhone/iPad, Safari cannot show a one-tap install dialog. Use Safari Share → Add to Home Screen.</p>
+        <div class="btnrow"><button type="button" class="btn" id="installhint">How to add</button>${shareBtn}</div>
+        ${installHintOpen ? `<ol class="installsteps">
+          <li>Tap the <b>Share</b> button in Safari.</li>
+          <li>Scroll and tap <b>Add to Home Screen</b>.</li>
+          <li>Tap <b>Add</b>. Open NutriDaily from your home screen next time.</li>
+        </ol>` : ""}`;
+    } else {
+      root.innerHTML = `<h3>Home screen</h3>
+        <p>Use your browser menu: <b>Install app</b> or <b>Add to Home screen</b>.</p>
+        <div class="btnrow"><button type="button" class="btn ghost" id="installhint">Show tips</button>${shareBtn}</div>
+        ${installHintOpen ? `<ol class="installsteps">
+          <li>Open the browser menu (⋮).</li>
+          <li>Tap <b>Install app</b> or <b>Add to Home screen</b>.</li>
+          <li>Confirm. Launch from the home screen icon afterward.</li>
+        </ol>` : ""}`;
+    }
+    const btn = UI.$("#installbtn");
+    if (btn) btn.addEventListener("click", () => { triggerInstall(); });
+    const hint = UI.$("#installhint");
+    if (hint) hint.addEventListener("click", () => { installHintOpen = !installHintOpen; refreshInstallCard(); });
+    const share = UI.$("#shareapp");
+    if (share) share.addEventListener("click", () => { shareApp(); });
+  }
+
+  // ---------- Info banners (reconnect once/day hide; optional sign-in nudge) ----------
+  function shouldShowReconnectBanner() {
+    const st = Sync.state();
+    if (!st.enabled || st.status !== "auth") return false;
+    if (localStorage.getItem(RECONNECT_HIDE_DAY_KEY) === Ledger.todayKey()) return false;
+    return true;
+  }
+
+  function shouldShowSigninBanner() {
+    if (Sync.state().enabled) return false;
+    if (localStorage.getItem(SIGNIN_SEEN_KEY)) return false;
+    if (!activeFoods().length && !Ledger.allEvents().length) return false;
+    const first = +(localStorage.getItem(FIRST_SEEN_KEY) || 0);
+    if (!first) return false;
+    // Daycells-style: wait a day so local-first use isn’t interrupted immediately
+    return (Date.now() - first) >= 86400000;
+  }
+
+  function refreshInfoBanner() {
+    const el = UI.$("#info-banner");
+    if (!el) return;
+    const kind = shouldShowReconnectBanner() ? "reconnect" : (shouldShowSigninBanner() ? "signin" : null);
+    if (!kind) {
+      el.hidden = true;
+      el.innerHTML = "";
+      document.body.classList.remove("has-info-banner");
+      return;
+    }
+    const title = kind === "reconnect" ? "Drive sync paused" : "Keep your log safe";
+    const body = kind === "reconnect"
+      ? "Meals still save on this device. Tap Reconnect to resume Google Drive (opens a Google popup)."
+      : "Optional: Sign in with Google in Settings to keep your nutrition log in your Drive if this browser is cleared.";
+    el.hidden = false;
+    el.dataset.kind = kind;
+    el.innerHTML = `<div class="info-banner-text"><strong>${title}</strong><span>${body}</span></div>
+      <div class="info-banner-actions">
+        ${kind === "reconnect" ? '<button type="button" class="btn" id="banner-reconnect">Reconnect</button>' : '<button type="button" class="btn" id="banner-settings">Settings</button>'}
+        <button type="button" class="btn ghost" id="banner-hide">Hide</button>
+      </div>`;
+    document.body.classList.add("has-info-banner");
+    const hide = UI.$("#banner-hide");
+    if (hide) hide.addEventListener("click", () => {
+      if (kind === "reconnect") localStorage.setItem(RECONNECT_HIDE_DAY_KEY, Ledger.todayKey());
+      else localStorage.setItem(SIGNIN_SEEN_KEY, "1");
+      refreshInfoBanner();
+    });
+    const recon = UI.$("#banner-reconnect");
+    if (recon) recon.addEventListener("click", async () => {
+      try {
+        await Sync.connect();
+        localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
+        UI.toast("Drive reconnected");
+      } catch (e) {
+        UI.toast(e.message || "Could not reconnect");
+      }
+      refreshDriveStatus();
+      refreshInfoBanner();
+    });
+    const go = UI.$("#banner-settings");
+    if (go) go.addEventListener("click", () => openSettings());
   }
 
   const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
@@ -309,20 +461,49 @@ const App = (() => {
   function openSettings() {
     syncSettingsForm();
     refreshDriveStatus();
+    refreshInstallCard();
     UI.$("#settings-modal").classList.add("open");
   }
 
   function refreshDriveStatus() {
     const st = Sync.state();
     const el = UI.$("#drive-status");
+    const hint = UI.$("#drive-reconnect-hint");
+    const connect = UI.$("#btn-drive-connect");
+    const syncBtn = UI.$("#btn-drive-sync");
+    const disconnect = UI.$("#btn-drive-disconnect");
     if (st.enabled) {
-      el.textContent = st.email ? `Connected as ${st.email}` : "Connected";
-      UI.$("#btn-drive-connect").style.display = "none";
-      UI.$("#btn-drive-disconnect").style.display = "";
+      el.textContent = st.email
+        ? `Connected as ${st.email}. Folder: NutriDaily / nutridaily-data.json`
+        : "Connected. Folder: NutriDaily / nutridaily-data.json";
+      if (st.status === "auth") el.textContent += " — sync paused; tap Reconnect or Sync now.";
+      connect.style.display = st.status === "auth" ? "" : "none";
+      connect.textContent = st.status === "auth" ? "Reconnect" : "Sign in with Google";
+      syncBtn.style.display = "";
+      disconnect.style.display = "";
+      if (hint) hint.hidden = false;
     } else {
-      el.textContent = GDrive.unavailableReason() || "Not connected — optional backup to your Drive.";
-      UI.$("#btn-drive-connect").style.display = "";
-      UI.$("#btn-drive-disconnect").style.display = "none";
+      el.textContent = GDrive.unavailableReason() || "Not connected. Tracking without sign-in still works.";
+      connect.style.display = "";
+      connect.textContent = "Sign in with Google";
+      syncBtn.style.display = "none";
+      disconnect.style.display = "none";
+      if (hint) hint.hidden = true;
+    }
+  }
+
+  async function connectDrive() {
+    try {
+      await Sync.connect();
+      localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
+      localStorage.setItem(SIGNIN_SEEN_KEY, "1");
+      refreshDriveStatus();
+      refreshInfoBanner();
+      UI.toast("Drive connected");
+    } catch (err) {
+      UI.toast(err.message || "Connect failed");
+      refreshDriveStatus();
+      refreshInfoBanner();
     }
   }
 
@@ -559,21 +740,39 @@ const App = (() => {
       UI.toast("Cleared");
     });
 
-    UI.$("#btn-drive-connect").addEventListener("click", async () => {
+    UI.$("#btn-drive-connect").addEventListener("click", () => connectDrive());
+    UI.$("#btn-drive-sync").addEventListener("click", async () => {
       try {
-        await Sync.connect();
-        refreshDriveStatus();
-        UI.toast("Drive connected");
+        await Sync.fullSync(true);
+        localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
+        UI.toast("Synced");
       } catch (err) {
-        UI.toast(err.message || "Connect failed");
+        UI.toast(err.message || "Sync failed");
       }
+      refreshDriveStatus();
+      refreshInfoBanner();
     });
     UI.$("#btn-drive-disconnect").addEventListener("click", () => {
       Sync.disconnect();
       refreshDriveStatus();
+      refreshInfoBanner();
       UI.setSyncPill("local", "local only");
     });
-    UI.$("#sync-pill").addEventListener("click", openSettings);
+    UI.$("#sync-pill").addEventListener("click", async () => {
+      const st = Sync.state();
+      if (st.enabled && (st.status === "auth" || !GDrive.storedToken())) {
+        await connectDrive();
+        return;
+      }
+      if (st.enabled) {
+        try { await Sync.fullSync(true); UI.toast("Synced"); }
+        catch (e) { UI.toast(e.message || "Sync failed"); }
+        refreshDriveStatus();
+        refreshInfoBanner();
+        return;
+      }
+      openSettings();
+    });
 
     UI.$("#btn-onb-start").addEventListener("click", () => {
       localStorage.setItem(ONB_KEY, "1");
@@ -594,10 +793,15 @@ const App = (() => {
       getGoalsUpdatedAt: () => state.settings.goalsUpdatedAt || 0,
       setGoals: (g, at) => setGoals(g, at),
       onStatus: (s, detail) => {
-        if (s === "ok") UI.setSyncPill("ok", "synced");
-        else if (s === "pending" || s === "syncing") UI.setSyncPill("pending", detail || "syncing…");
-        else if (s === "auth" || s === "error") UI.setSyncPill("warn", detail || "sync issue");
+        if (s === "ok") {
+          localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
+          UI.setSyncPill("ok", Sync.state().email ? Sync.state().email.split("@")[0] : "synced");
+        } else if (s === "pending" || s === "syncing") UI.setSyncPill("pending", detail || "syncing…");
+        else if (s === "auth") UI.setSyncPill("warn", "reconnect");
+        else if (s === "error") UI.setSyncPill("warn", detail || "sync issue");
         else UI.setSyncPill("local", "local only");
+        refreshInfoBanner();
+        if (UI.$("#settings-modal").classList.contains("open")) refreshDriveStatus();
       },
       onRemoteApplied: () => refreshAll(),
     });
@@ -607,8 +811,18 @@ const App = (() => {
   function boot() {
     loadState();
     wire();
+    window.addEventListener("beforeinstallprompt", (ev) => {
+      ev.preventDefault();
+      deferredInstall = ev;
+      if (UI.$("#settings-modal").classList.contains("open")) refreshInstallCard();
+    });
+    window.addEventListener("appinstalled", () => {
+      deferredInstall = null;
+      if (UI.$("#settings-modal").classList.contains("open")) refreshInstallCard();
+    });
     initSync();
     refreshAll();
+    refreshInfoBanner();
     if (!localStorage.getItem(ONB_KEY) && !activeFoods().length && !Ledger.allEvents().length) {
       UI.showOnboarding(true);
     }

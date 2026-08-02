@@ -4,7 +4,11 @@ A personal nutrition tracker. You build a library of dishes you cook, then log b
 
 Nutrition for new dishes comes from **ChatGPT** (your own subscription): copy a fixed prompt from the app, describe what you cooked, paste the reply back. The app parses a plain-text `NUTRI v1` block, you review it, and it becomes a reusable food with macros per 100 g.
 
-**Live app:** once deployed, typically [https://nutridaily.vercel.app](https://nutridaily.vercel.app)
+**Live app:** [https://nutridaily.vercel.app](https://nutridaily.vercel.app)
+
+## Track without signing in
+
+Logging works fully offline in this browser. Google Sign-in is **optional**. Use it only if you want a copy in **your** Google Drive so a second device (or a cleared browser / reinstall) can restore your log. Clearing this site’s data deletes the local copy unless you signed in or exported a backup.
 
 ## Run it
 
@@ -13,7 +17,7 @@ python3 -m http.server 8080
 # open http://localhost:8080
 ```
 
-Or open the hosted URL. On a phone: Chrome install prompt, or iPhone Safari → Share → Add to Home Screen.
+Or open the hosted URL. Install from Settings → **Home screen** (Chrome Install, or iPhone Safari → Share → Add to Home Screen).
 
 ## First-time flow
 
@@ -30,9 +34,11 @@ Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium. Daily goals 
 
 Lives in this browser. Optional Google Drive backup (`NutriDaily/nutridaily-data.json`). Export / import JSON in Settings. Past log lines keep their macros if you later update a recipe.
 
+After reopening the installed app (especially on iPhone), Drive may pause until you tap **Reconnect** on the banner or the header sync pill. A Hide on that banner lasts for the rest of the calendar day. Meals still save locally meanwhile.
+
 ## Google Drive setup (Daycells-style)
 
-About five minutes. Free for personal use. On the live deploy, a Google OAuth Client ID can be injected at build time via `GOOGLE_CLIENT_ID`. If your Gmail is on the project’s **test users** list, open Settings and tap **Connect Google Drive**. No paste needed.
+About five minutes. Free for personal use. On the live deploy, a Google OAuth Client ID is injected at build time via `GOOGLE_CLIENT_ID`. If your Gmail is on the project’s **test users** list, open Settings and tap **Sign in with Google**. A Google popup appears. No Client ID paste needed.
 
 Forks and your own deploys: leave committed `js/config.js` empty. Create your own Client ID (steps below), then either set `GOOGLE_CLIENT_ID` on Vercel or paste it under Settings → **Advanced: override Client ID**.
 
@@ -42,37 +48,31 @@ Forks and your own deploys: leave committed `js/config.js` empty. Create your ow
 2. **APIs & Services → Library** → enable **Google Drive API**.
 3. **Google Auth Platform** (OAuth):
    - **Branding:** app name `NutriDaily` + your email.
-   - **Audience:** External. Stay in **Testing**. Under **Test users**, add every Gmail that should sign in (you and anyone else; up to 100).
+   - **Audience:** External. Stay in **Testing**. Under **Test users**, add every Gmail that should sign in.
 4. **Clients → Create client → Web application.**
    - Authorized JavaScript origins (no path, no trailing slash):
-     - `https://nutridaily.vercel.app` (or your deploy URL)
-     - `http://localhost:8080` for local serve
-   - Leave **Authorized redirect URIs** empty.
+     - `https://nutridaily.vercel.app`
+     - `http://localhost:8080`
+   - Leave **Authorized redirect URIs** empty (popup token flow, same as Daycells).
    - Create. Copy the **Client ID** only (`….apps.googleusercontent.com`). Ignore the Client Secret.
 5. Wire the Client ID:
-   - **Vercel (recommended for the live app):** Project → Settings → Environment Variables → `GOOGLE_CLIENT_ID` = that string (Production). Redeploy so `npm run build` injects it into `js/config.js`. Do not commit the filled file.
-   - **Or** Settings → Advanced → paste Client ID → Connect Google Drive.
+   - **Vercel:** Project → Settings → Environment Variables → `GOOGLE_CLIENT_ID` (Production) → Redeploy.
+   - **Or** Settings → Advanced → paste Client ID → Sign in with Google.
 6. Confirm Drive has folder **NutriDaily** / file **nutridaily-data.json**.
 
 ### Data Access (scopes)
 
-Register the same scopes the app requests:
-
-1. Google Auth Platform → **Data Access** → **Add or remove scopes**.
-2. Add `.../auth/userinfo.email` and `.../auth/drive.file`.
-3. **Update**, then **Save**.
-
-When signing in, grant Drive access (granular consent may show Drive unchecked by default).
+Register: `.../auth/userinfo.email` and `.../auth/drive.file`. When signing in, grant Drive access (granular consent may show Drive unchecked by default).
 
 ### Testing vs publish
 
-Stay in **Testing** for household use: only listed test users can sign in. One Client ID is enough; each person signs in with their own Gmail and gets their own Drive file.
+Stay in **Testing** for household use. One Client ID is enough; each person signs in with their own Gmail and gets their own Drive file.
 
 ## Deploy your own
 
 ```bash
 vercel env add GOOGLE_CLIENT_ID production
-npx vercel --prod --name nutridaily
+npx vercel --prod
 ```
 
 After code changes, bump the `CACHE` name in `sw.js` (or hard-refresh) so installed PWAs pick up the new build.
