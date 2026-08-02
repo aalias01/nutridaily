@@ -204,11 +204,7 @@ const UI = (() => {
       return;
     }
     root.innerHTML = foods.map((f) => {
-      const serv = f.units && f.units.serving;
-      const m = serv ? FoodMatch.computeMacros(f.per100, serv) : f.per100;
-      const sub = serv
-        ? `per serving (${serv} g): ${fmt(m.kcal)} kcal · P ${m.p}`
-        : `per 100 g: ${fmt(f.per100.kcal)} kcal · P ${f.per100.p}`;
+      const sub = `per 100 g: ${fmt(f.per100.kcal)} kcal · P ${f.per100.p}`;
       return `<button type="button" class="food-item" data-action="food-detail" data-id="${esc(f.id)}">
         <div><div class="r-name">${esc(f.name)}</div><div class="r-qty">${esc(sub)}</div></div>
         <span class="muted small">›</span>
@@ -296,6 +292,21 @@ const UI = (() => {
     root.innerHTML = html;
   }
 
+  /** Weigh-first default: history median/last grams, never library serving. */
+  function weightPrefillFromHistory(food, imperial) {
+    const OZ = 28.349523125;
+    let grams = 100;
+    if (food && food.id && typeof Ledger !== "undefined" && Ledger.portionStats) {
+      const stats = Ledger.portionStats(food.id);
+      if (stats.median != null) grams = Math.round(stats.median);
+      else if (stats.last != null) grams = Math.round(stats.last);
+    }
+    if (imperial) {
+      return { qty: Math.round((grams / OZ) * 10) / 10, unit: "oz" };
+    }
+    return { qty: grams, unit: "g" };
+  }
+
   function fillQtySheet(food, imperial, prefill) {
     $("#qty-name").textContent = food.name;
     $("#qty-per100").textContent = `per 100 g: ${fmt(food.per100.kcal)} kcal · P ${food.per100.p} · C ${food.per100.c} · F ${food.per100.f}`;
@@ -305,15 +316,17 @@ const UI = (() => {
       src.textContent = prov.label;
       src.title = prov.detail || "";
     }
+    // Weight units first; serving last (optional packaged-style unit).
     const units = ["g"];
-    if (food.units && food.units.serving) units.push("serving");
+    if (imperial) units.push("oz");
     if (food.units && food.units.piece) units.push("piece");
     if (food.batch && food.batch.grams) units.push("batch");
-    if (imperial) units.push("oz");
-    let unit = (prefill && prefill.unit) || "g";
+    if (food.units && food.units.serving) units.push("serving");
+    const hist = weightPrefillFromHistory(food, !!imperial);
+    let unit = (prefill && prefill.unit) || hist.unit;
     // Keep prefilled unit visible even if food lost that measure (orphan / imperial off)
     if (unit && unit !== "kcal" && !units.includes(unit)) units.push(unit);
-    if (unit === "kcal") unit = "g";
+    if (unit === "kcal") unit = hist.unit;
     $("#qty-units").innerHTML = units.map((u) => {
       let label = u;
       if (u === "serving" && food.units.serving) label = `serving (${food.units.serving} g)`;
@@ -325,7 +338,7 @@ const UI = (() => {
     $("#qty-meals").innerHTML = MEALS.map((m) =>
       `<button type="button" class="uchip${m === meal ? " active" : ""}" data-meal="${m}">${m}</button>`
     ).join("");
-    $("#qty-input").value = prefill && prefill.qty != null ? prefill.qty : (food.units && food.units.serving ? food.units.serving : 100);
+    $("#qty-input").value = prefill && prefill.qty != null ? prefill.qty : hist.qty;
     fillQtySheet._imperial = !!imperial;
     updateQtyPreview(food);
     const removeBtn = $("#qty-remove");
@@ -532,7 +545,7 @@ const UI = (() => {
       <p class="muted small">Logged ${food.useCount || 0} times${food.lastUsedAt ? " · last " + new Date(food.lastUsedAt).toLocaleDateString() : ""} · v${food.version || 1}</p>
       <div class="card-block">
         <div><b>Per 100 g</b>: ${fmt(food.per100.kcal)} kcal · P ${food.per100.p} · C ${food.per100.c} · F ${food.per100.f} · Fb ${food.per100.fb} · Na ${food.per100.na}</div>
-        ${mServ ? `<div style="margin-top:6px"><b>Per serving (${serv} g)</b>: ${fmt(mServ.kcal)} kcal · P ${mServ.p}</div>` : ""}
+        ${mServ ? `<div class="muted small" style="margin-top:6px">Optional serving (${serv} g): ${fmt(mServ.kcal)} kcal · P ${mServ.p}</div>` : ""}
       </div>
       ${batch}
       ${ings ? `<div class="card-block"><b>Ingredients</b><ul class="ing-list">${ings}</ul>${food.recipe.prep ? `<p class="small">${esc(food.recipe.prep)}</p>` : ""}</div>` : ""}

@@ -118,6 +118,57 @@ const Ledger = (() => {
     });
   }
 
+  function _quantile(sorted, q) {
+    if (!sorted.length) return null;
+    if (sorted.length === 1) return sorted[0];
+    const pos = (sorted.length - 1) * q;
+    const lo = Math.floor(pos);
+    const hi = Math.ceil(pos);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+  }
+
+  /**
+   * Historical logged grams for a foodId (weigh-first portion guidance).
+   * @returns {{ n: number, median: number|null, p25: number|null, p75: number|null, last: number|null }}
+   */
+  function portionStats(foodId, opts) {
+    const empty = { n: 0, median: null, p25: null, p75: null, last: null };
+    const id = String(foodId || "");
+    if (!id) return empty;
+    const lookbackDays = opts && opts.lookbackDays != null ? opts.lookbackDays : 60;
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+    const start = new Date(end);
+    start.setDate(start.getDate() - Math.max(0, lookbackDays));
+    const startKey = todayKey(start);
+    const endKey = todayKey(end);
+
+    const samples = []; // { grams, ts }
+    const days = [...new Set(_load().map((e) => e.day))]
+      .filter((d) => d >= startKey && d <= endKey)
+      .sort();
+    for (const day of days) {
+      for (const e of entriesFor(day)) {
+        if (e.foodId !== id) continue;
+        const g = +e.grams;
+        if (!Number.isFinite(g) || g <= 0) continue;
+        samples.push({ grams: g, ts: e.addedTs || 0 });
+      }
+    }
+    if (!samples.length) return empty;
+    samples.sort((a, b) => a.ts - b.ts);
+    const grams = samples.map((s) => s.grams).slice().sort((a, b) => a - b);
+    const r1 = (x) => Math.round(x * 10) / 10;
+    return {
+      n: grams.length,
+      median: r1(_quantile(grams, 0.5)),
+      p25: r1(_quantile(grams, 0.25)),
+      p75: r1(_quantile(grams, 0.75)),
+      last: r1(samples[samples.length - 1].grams),
+    };
+  }
+
   /** Find today's entry by fuzzy name, most recent first. "that"/"" → most recent entry. */
   function findEntry(day, targetName, scorer) {
     const entries = entriesFor(day);
@@ -137,7 +188,7 @@ const Ledger = (() => {
   function clearAll() { _cache = []; store.removeItem(KEY); }
   function _resetCacheForTests() { _cache = null; }
 
-  return { todayKey, addEntry, amendEntry, removeEntry, entriesFor, totalsFor, totalsOf, recentDays, recentSummary, findEntry, allEvents, replaceAll, clearAll, _resetCacheForTests, uid };
+  return { todayKey, addEntry, amendEntry, removeEntry, entriesFor, totalsFor, totalsOf, recentDays, recentSummary, portionStats, findEntry, allEvents, replaceAll, clearAll, _resetCacheForTests, uid };
 })();
 
 if (typeof module !== "undefined") module.exports = Ledger;

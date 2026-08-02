@@ -400,6 +400,18 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
   list-style-position: outside;
 }
 .phase-history summary::-webkit-details-marker { color: var(--muted); }
+.rev-optional-measures {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.rev-optional-measures summary {
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.rev-optional-measures label { display: block; margin-top: 8px; }
 #phase-history-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .phase-hist-row {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;

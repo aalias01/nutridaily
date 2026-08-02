@@ -501,9 +501,16 @@ const App = (() => {
 
   function defaultQtyForUnit(food, unit) {
     const u = String(unit || "g").toLowerCase();
-    if (u === "serving" || u === "piece" || u === "batch" || u === "oz") return 1;
-    if (food.units && food.units.serving) return food.units.serving;
-    return 100;
+    if (u === "serving" || u === "piece" || u === "batch") return 1;
+    const OZ = 28.349523125;
+    let grams = 100;
+    if (food && food.id) {
+      const stats = Ledger.portionStats(food.id);
+      if (stats.median != null) grams = Math.round(stats.median);
+      else if (stats.last != null) grams = Math.round(stats.last);
+    }
+    if (u === "oz") return Math.round((grams / OZ) * 10) / 10;
+    return grams;
   }
 
   function ensureViewDayCurrent() {

@@ -136,6 +136,31 @@ console.log("\n[5] Event-sourced ledger");
   Ledger.clearAll();
 }
 
+console.log("\n[5b] portionStats (weigh-first history)");
+{
+  Ledger.clearAll();
+  const day = Ledger.todayKey();
+  const y = new Date();
+  y.setDate(y.getDate() - 1);
+  const yday = Ledger.todayKey(y);
+  const macros = { kcal: 100, p: 5, c: 10, f: 2, fb: 1, na: 50 };
+  Ledger.addEntry(yday, { name: "dal", displayQty: "200 g", grams: 200, macros, sd: 0.1, meal: "lunch", source: "personal", cat: "dish", foodId: "pf-dal" });
+  Ledger.addEntry(day, { name: "dal", displayQty: "240 g", grams: 240, macros, sd: 0.1, meal: "lunch", source: "personal", cat: "dish", foodId: "pf-dal" });
+  Ledger.addEntry(day, { name: "dal", displayQty: "220 g", grams: 220, macros, sd: 0.1, meal: "dinner", source: "personal", cat: "dish", foodId: "pf-dal" });
+  Ledger.addEntry(day, { name: "rice", displayQty: "150 g", grams: 150, macros, sd: 0.1, meal: "dinner", source: "personal", cat: "grain", foodId: "pf-rice" });
+
+  const s = Ledger.portionStats("pf-dal");
+  ok(s.n === 3, "portionStats counts matching foodId logs", `got ${s.n}`);
+  ok(s.median === 220, "median of 200/220/240", `got ${s.median}`);
+  ok(s.p25 === 210 && s.p75 === 230, "p25–p75 for three samples", `got ${s.p25}–${s.p75}`);
+  ok(s.last === 220, "last is most recently added grams", `got ${s.last}`);
+  ok(Ledger.portionStats("pf-rice").n === 1 && Ledger.portionStats("pf-rice").median === 150, "single sample median = that grams");
+  ok(Ledger.portionStats("missing").n === 0 && Ledger.portionStats("missing").median == null, "unknown foodId is empty");
+  ok(Ledger.portionStats("pf-dal", { lookbackDays: 0 }).n <= 3, "lookbackDays option accepted");
+
+  Ledger.clearAll();
+}
+
 console.log("\n[6] Display formatting");
 {
   ok(FoodMatch.displayQty(2, "pieces", 120) === "2 pieces (120 g)", "household qty shows grams too");

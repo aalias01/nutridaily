@@ -522,10 +522,13 @@ END</pre>
           <div><label class="small muted" for="rev-fb">Fiber</label><input id="rev-fb" type="text" inputmode="decimal"></div>
           <div><label class="small muted" for="rev-na">Sodium mg</label><input id="rev-na" type="text" inputmode="decimal"></div>
         </div>
-        <label>Serving size (g)<input id="rev-serving" type="text" inputmode="decimal"></label>
-        <label>Piece size (g)<input id="rev-piece" type="text" inputmode="decimal"></label>
         <label>Batch grams<input id="rev-batch-g" type="text" inputmode="decimal"></label>
         <label>Batch servings<input id="rev-batch-s" type="text" inputmode="decimal"></label>
+        <details class="rev-optional-measures">
+          <summary class="muted small">Optional measures (serving / piece)</summary>
+          <label>Serving size (g, optional)<input id="rev-serving" type="text" inputmode="decimal"></label>
+          <label>Piece size (g, optional)<input id="rev-piece" type="text" inputmode="decimal"></label>
+        </details>
         <label>Ingredients (one per line)<textarea id="rev-ingredients" rows="4"></textarea></label>
         <label>Prep<textarea id="rev-prep" rows="2"></textarea></label>
         <label>Notes<textarea id="rev-notes" rows="2"></textarea></label>
