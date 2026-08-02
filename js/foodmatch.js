@@ -38,22 +38,33 @@ const FoodMatch = (() => {
     return normalize(s).split(" ").filter((t) => t && !STOPWORDS.has(t));
   }
 
-  // Score a query against a candidate name/alias. Exact alias = 1. Otherwise token overlap (Dice-ish).
+  // Score a query against a candidate name/alias. Exact alias = 1. Otherwise token overlap (Dice-ish),
+  // with prefix/substring support so "ban" / "chick" find banana / chicken.
   function scoreMatch(query, candidate) {
     const q = normalize(query), c = normalize(candidate);
     if (!q || !c) return 0;
     if (q === c) return 1;
-    const qt = new Set(tokens(q)), ct = new Set(tokens(c));
-    if (!qt.size || !ct.size) return 0;
+    if (q.length >= 2 && c.startsWith(q)) return 0.92;
+    const qt = tokens(q), ct = tokens(c);
+    if (!qt.length || !ct.length) return 0;
+    const qtSet = new Set(qt), ctSet = new Set(ct);
     let hit = 0;
-    for (const t of qt) {
-      if (ct.has(t)) { hit += 1; continue; }
-      // singular/plural forgiveness
-      for (const u of ct) { if (u === t + "s" || t === u + "s") { hit += 1; break; } }
+    let prefixHits = 0;
+    for (const t of qtSet) {
+      if (ctSet.has(t)) { hit += 1; continue; }
+      let matched = false;
+      for (const u of ctSet) {
+        if (u === t + "s" || t === u + "s") { hit += 1; matched = true; break; }
+        if (t.length >= 2 && u.startsWith(t)) { prefixHits += 1; matched = true; break; }
+      }
+      if (!matched && t.length >= 2 && c.includes(t)) prefixHits += 1;
     }
-    const dice = (2 * hit) / (qt.size + ct.size);
-    // full containment bonus: every query token found
-    return hit === qt.size ? Math.max(dice, 0.75) : dice;
+    const dice = (2 * hit) / (qtSet.size + ctSet.size);
+    let score = hit === qtSet.size ? Math.max(dice, 0.75) : dice;
+    if (prefixHits && !hit) score = Math.max(score, 0.55 + 0.1 * Math.min(prefixHits, 3));
+    else if (prefixHits) score = Math.max(score, 0.7);
+    if (q.length >= 2 && c.includes(q)) score = Math.max(score, 0.72);
+    return score;
   }
 
   /** Resolve a food name → { food, source, score } | null.

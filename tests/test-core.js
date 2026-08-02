@@ -28,12 +28,16 @@ console.log("\n[1] Food resolution");
   ok(r4 && r4.food.id === "greek-yogurt-nonfat", "resolves 'greek yogurt'");
 
   const r5 = FoodMatch.resolve("xylophone stew", []);
-  ok(r5 === null, "unknown food returns null (use ChatGPT paste / catalog)");
+  ok(r5 === null, "unknown food returns null (use AI paste / catalog)");
 
   // personal foods outrank the curated DB on ties
   const personal = [{ id: "pf-1", name: "dal", aliases: ["dal", "my dal"], per100: { kcal: 150, p: 8, c: 18, f: 5, fb: 6, na: 300 }, units: { serving: 250 }, cat: "dish" }];
   const r6 = FoodMatch.resolve("dal", personal);
   ok(r6 && r6.source === "personal", "personal 'dal' beats curated 'dal'");
+
+  ok(FoodMatch.scoreMatch("ban", "banana") >= 0.55, "prefix 'ban' matches banana");
+  ok(FoodMatch.scoreMatch("chick", "chicken breast (cooked)") >= 0.55, "prefix 'chick' matches chicken");
+  ok(FoodMatch.scoreMatch("yog", "greek yogurt, nonfat") >= 0.55, "substring 'yog' matches yogurt");
 }
 
 console.log("\n[2] Unit → gram conversion");
@@ -170,6 +174,39 @@ console.log("\n[7] Cloud sync merge (conflict-free by construction)");
 
   const same = Sync.mergeDocs(r.doc, r.doc);
   ok(same.differsFromRemote === false, "idempotent: merging a doc with itself changes nothing");
+
+  // Clear-all resetAt must not resurrect remote history
+  const wiped = {
+    version: 1,
+    resetAt: 1000,
+    events: [],
+    personalFoods: [],
+    goals: { protein: 140 },
+    goalsUpdatedAt: 100,
+  };
+  const cloud = {
+    version: 1,
+    resetAt: 0,
+    events: evB,
+    personalFoods: pfB,
+    goals: { protein: 160 },
+    goalsUpdatedAt: 900,
+  };
+  const afterClear = Sync.mergeDocs(wiped, cloud);
+  ok(afterClear.doc.events.length === 0, "newer resetAt drops pre-reset remote events");
+  ok(afterClear.doc.personalFoods.length === 0, "newer resetAt drops pre-reset remote foods");
+  ok(afterClear.doc.resetAt === 1000, "resetAt carries forward");
+
+  const dgA = { "2026-08-01": { kcal: 2800, updatedAt: 100 } };
+  const dgB = { "2026-08-01": { kcal: 3000, updatedAt: 200 }, "2026-08-02": { protein: 180, updatedAt: 50 } };
+  const dg = Sync.mergeDayGoals(dgA, dgB);
+  ok(dg["2026-08-01"].kcal === 3000, "dayGoals: newer override wins");
+  ok(dg["2026-08-02"].protein === 180, "dayGoals: unique days union");
+
+  const clearedLocal = { "2026-08-01": { cleared: true, updatedAt: 500 } };
+  const stillOnDrive = { "2026-08-01": { kcal: 2800, updatedAt: 100 } };
+  const dgCleared = Sync.mergeDayGoals(clearedLocal, stillOnDrive);
+  ok(dgCleared["2026-08-01"].cleared === true, "dayGoals: clear tombstone beats older override");
 }
 
 console.log("\n[8] Recipe sharing (untrusted input validation)");

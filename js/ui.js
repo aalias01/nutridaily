@@ -5,46 +5,105 @@ const UI = (() => {
   const fmt = (n) => Math.round(n).toLocaleString("en-US");
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  function toast(msg) {
+  let _focusStack = [];
+  let _sheetStack = [];
+  let _trendHit = null; // { keys, pad, iw, w }
+
+  function toast(msg, opts) {
     const el = $("#toast");
-    el.textContent = msg;
-    el.classList.add("show");
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.classList.remove("show"), 2200);
+    if (opts && opts.action) {
+      el.innerHTML = `${esc(msg)} <button type="button" class="toast-action">${esc(opts.action.label)}</button>`;
+      el.style.pointerEvents = "auto";
+      const btn = el.querySelector(".toast-action");
+      if (btn) {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          el.classList.remove("show");
+          el.style.pointerEvents = "none";
+          // Defer so a nested toast("Restored") isn't immediately cleared
+          setTimeout(() => opts.action.onClick(), 0);
+        };
+      }
+      el.classList.add("show");
+      toast._t = setTimeout(() => { el.classList.remove("show"); el.style.pointerEvents = "none"; }, opts.ms || 5000);
+    } else {
+      el.textContent = msg;
+      el.style.pointerEvents = "none";
+      el.classList.add("show");
+      toast._t = setTimeout(() => el.classList.remove("show"), opts && opts.ms ? opts.ms : 2200);
+    }
   }
 
-  function openSheet(id) {
+  function openSheet(id, opts) {
     const el = $(`#${id}`);
     if (!el) return;
+    if (el._hideTimer) { clearTimeout(el._hideTimer); el._hideTimer = null; }
+    const isNew = !_sheetStack.includes(id);
+    if (isNew) {
+      _focusStack.push(document.activeElement);
+      _sheetStack.push(id);
+    }
     el.hidden = false;
-    requestAnimationFrame(() => el.classList.add("open"));
+    el.setAttribute("role", el.getAttribute("role") || "dialog");
+    el.setAttribute("aria-modal", "true");
+    requestAnimationFrame(() => {
+      el.classList.add("open");
+      // Don't autofocus the picker search — it covers the food list with the mobile keyboard
+      const skipFocus = (opts && opts.noAutofocus) || id === "sheet-add";
+      if (skipFocus) return;
+      const focusable = el.querySelector("input:not([type=hidden]), button.btn, textarea, select");
+      if (focusable) focusable.focus();
+    });
   }
   function closeSheet(id) {
     const el = typeof id === "string" ? $(`#${id}`) : id;
     if (!el) return;
+    const sid = el.id;
+    const idx = _sheetStack.lastIndexOf(sid);
+    // Speculative / duplicate closes must not pop the focus stack
+    if (idx < 0) return;
+    _sheetStack.splice(idx, 1);
+    const shouldRestore = true;
     el.classList.remove("open");
-    setTimeout(() => { el.hidden = true; }, 200);
+    if (el._hideTimer) clearTimeout(el._hideTimer);
+    el._hideTimer = setTimeout(() => {
+      el.hidden = true;
+      el._hideTimer = null;
+      if (!shouldRestore) return;
+      const prev = _focusStack.pop();
+      if (prev && typeof prev.focus === "function" && document.contains(prev)) {
+        try { prev.focus(); } catch (e) {}
+      }
+    }, 200);
   }
   function closeAllSheets() {
-    $$(".sheet.open").forEach((el) => closeSheet(el));
+    [..._sheetStack].reverse().forEach((id) => closeSheet(id));
+  }
+  function topSheetId() {
+    return _sheetStack.length ? _sheetStack[_sheetStack.length - 1] : null;
   }
 
   function setDayLabel(dayKey, isToday) {
     const d = new Date(dayKey + "T12:00:00");
     const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    $("#day-label").textContent = isToday ? `${label} · today` : label;
+    const btn = $("#day-label");
+    btn.textContent = isToday ? `${label} · today` : `${label} · tap for today`;
+    btn.classList.toggle("is-today", !!isToday);
     $("#btn-day-next").disabled = isToday;
   }
 
   function updateHUD(totals, goals) {
-    const set = (id, mean, goal) => {
+    const set = (id, mean, goal, unit) => {
       const fill = $(`#f-${id}`), val = $(`#v-${id}`);
       if (!fill || !val) return;
-      const pct = goal ? Math.min(100, (mean / goal) * 100) : 0;
+      const g = Number(goal) || 0;
+      const pct = g ? Math.min(100, (mean / g) * 100) : 0;
       fill.style.width = pct + "%";
-      fill.classList.toggle("over", goal && mean > goal * 1.05);
-      if (id === "kcal") val.textContent = `${fmt(mean)} / ${fmt(goal)}`;
-      else val.textContent = `${fmt(mean)} / ${fmt(goal)} g`;
+      fill.classList.toggle("over", g && mean > g * 1.05);
+      if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${fmt(g)}` : `${fmt(mean)}`;
+      else if (unit === "mg") val.textContent = g ? `${fmt(mean)} / ${fmt(g)} mg` : `${fmt(mean)} mg`;
+      else val.textContent = g ? `${fmt(mean)} / ${fmt(g)} g` : `${fmt(mean)} g`;
     };
     $("#v-kcal-big").textContent = fmt(totals.kcal.mean);
     const lo = Math.max(0, Math.round(totals.kcal.mean - totals.kcal.sd));
@@ -55,15 +114,30 @@ const UI = (() => {
     set("c", totals.c.mean, goals.carbs);
     set("f", totals.f.mean, goals.fat);
     set("fb", totals.fb.mean, goals.fiber);
-    $("#v-na").textContent = totals.count ? `Sodium ${fmt(totals.na.mean)} mg` : "";
+    {
+      const fill = $("#f-sodium"), val = $("#v-sodium");
+      const mean = totals.na.mean, g = Number(goals.sodium) || 0;
+      if (fill && val) {
+        fill.style.width = (g ? Math.min(100, (mean / g) * 100) : 0) + "%";
+        fill.classList.toggle("over", g && mean > g * 1.05);
+        val.textContent = g ? `${fmt(mean)} / ${fmt(g)} mg` : `${fmt(mean)} mg`;
+      }
+    }
+    const naLine = $("#v-na");
+    if (naLine) naLine.textContent = "";
   }
 
   const MEALS = ["breakfast", "lunch", "dinner", "snack"];
 
+  function entryTime(e) {
+    if (!e.addedTs) return "";
+    return new Date(e.addedTs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+
   function renderDayLog(dayKey, entries) {
     const root = $("#day-log");
     if (!entries.length) {
-      root.innerHTML = `<div class="empty">Nothing logged yet.<br><span class="muted small">Tap + to add a food.</span></div>`;
+      root.innerHTML = `<div class="empty">Nothing logged yet.<br><span class="muted small">Tap + to add a food. Swipe left/right to change days.</span></div>`;
       return;
     }
     const groups = {};
@@ -73,20 +147,25 @@ const UI = (() => {
       groups[m].push(e);
     }
     root.innerHTML = MEALS.filter((m) => groups[m].length).map((meal) => {
+      const mealKcal = groups[meal].reduce((s, e) => s + ((e.macros && e.macros.kcal) || 0), 0);
       const rows = groups[meal].map((e) => {
         const edited = e.history && e.history.length ? `<span class="tag tag-edit">edited</span>` : "";
-        return `<button type="button" class="log-row" data-action="edit-entry" data-id="${esc(e.id)}">
-          <div>
-            <div class="r-name">${esc(e.name)} ${edited}</div>
-            <div class="r-qty">${esc(e.displayQty)}</div>
-          </div>
-          <div class="r-macros">
-            <span class="mini">${fmt(e.macros.kcal)} kcal</span>
-            <span class="mini">P ${e.macros.p}</span>
-          </div>
-        </button>`;
+        const t = entryTime(e);
+        return `<div class="log-row-wrap">
+          <button type="button" class="log-row" data-action="edit-entry" data-id="${esc(e.id)}">
+            <div>
+              <div class="r-name">${esc(e.name)} ${edited}</div>
+              <div class="r-qty">${esc(e.displayQty)}${t ? ` · ${esc(t)}` : ""}</div>
+            </div>
+            <div class="r-macros">
+              <span class="mini">${fmt(e.macros.kcal)} kcal</span>
+              <span class="mini">P ${e.macros.p}</span>
+            </div>
+          </button>
+          <button type="button" class="linkbtn again-btn" data-action="log-again" data-id="${esc(e.id)}" title="Log again">again</button>
+        </div>`;
       }).join("");
-      return `<div class="meal-group"><div class="meal-label">${esc(meal)}</div>${rows}</div>`;
+      return `<div class="meal-group"><div class="meal-label">${esc(meal)} · ${fmt(mealKcal)} kcal</div>${rows}</div>`;
     }).join("");
   }
 
@@ -117,13 +196,15 @@ const UI = (() => {
     }).join("");
   }
 
-  function renderPicker(personal, query, showCatalog) {
+  function renderPicker(personal, query, showCatalog, extras) {
     const q = String(query || "").trim();
     const root = $("#pick-list");
     const DB = typeof FOOD_DB !== "undefined" ? FOOD_DB : [];
     const byId = new Map(DB.map((f) => [f.id, f]));
     const personalActive = Foods.active(personal);
     const ownedCatalogIds = new Set(personalActive.map((f) => f.catalogId).filter(Boolean));
+    const yesterday = (!q && extras && extras.yesterday) ? extras.yesterday : [];
+    const yesterdayLabel = (extras && extras.yesterdayLabel) || "Yesterday";
 
     const recent = q ? [] : Foods.recent(personal, 8);
     const recentIds = new Set(recent.map((f) => f.id));
@@ -146,6 +227,14 @@ const UI = (() => {
         <div class="r-name">${esc(f.name)}</div>
         <span class="mini">${fmt(f.per100.kcal)} /100g</span>
       </button>`;
+    const yRow = (e) =>
+      `<button type="button" class="log-row" data-action="repeat-yesterday" data-id="${esc(e.id)}">
+        <div>
+          <div class="r-name">${esc(e.name)}</div>
+          <div class="r-qty">${esc(e.displayQty)} · ${esc(e.meal || "")}</div>
+        </div>
+        <span class="mini">${fmt(e.macros.kcal)} kcal</span>
+      </button>`;
 
     const section = (title, items, rowFn) => {
       if (!items.length) return "";
@@ -154,6 +243,7 @@ const UI = (() => {
 
     let html = "";
     if (!q) {
+      html += section(yesterdayLabel, yesterday.slice(0, 12), yRow);
       html += section("Recent", recent, personalRow);
       html += section("Frequent", freq, personalRow);
       html += section("My foods", all.slice(0, 40), personalRow);
@@ -179,7 +269,9 @@ const UI = (() => {
     }
 
     if (!html) {
-      html = `<div class="empty small">Search common foods (banana, apple, eggs…), or paste a homemade dish below.</div>`;
+      html = q
+        ? `<div class="empty small">No matches for “${esc(q)}”.</div>`
+        : `<div class="empty small">Search common foods (banana, apple, eggs…), or paste a homemade dish below.</div>`;
     }
     root.innerHTML = html;
   }
@@ -198,7 +290,10 @@ const UI = (() => {
     if (food.units && food.units.piece) units.push("piece");
     if (food.batch && food.batch.grams) units.push("batch");
     if (imperial) units.push("oz");
-    const unit = (prefill && prefill.unit) || "g";
+    let unit = (prefill && prefill.unit) || "g";
+    // Keep prefilled unit visible even if food lost that measure (orphan / imperial off)
+    if (unit && unit !== "kcal" && !units.includes(unit)) units.push(unit);
+    if (unit === "kcal") unit = "g";
     $("#qty-units").innerHTML = units.map((u) => {
       let label = u;
       if (u === "serving" && food.units.serving) label = `serving (${food.units.serving} g)`;
@@ -211,6 +306,7 @@ const UI = (() => {
       `<button type="button" class="uchip${m === meal ? " active" : ""}" data-meal="${m}">${m}</button>`
     ).join("");
     $("#qty-input").value = prefill && prefill.qty != null ? prefill.qty : (food.units && food.units.serving ? food.units.serving : 100);
+    fillQtySheet._imperial = !!imperial;
     updateQtyPreview(food);
     const removeBtn = $("#qty-remove");
     if (removeBtn) removeBtn.hidden = !(prefill && prefill.allowRemove);
@@ -224,15 +320,29 @@ const UI = (() => {
     const el = $("#qty-meals .uchip.active");
     return el ? el.dataset.meal : Foods.inferMeal();
   }
+  function selectedMealIn(rootSel) {
+    const el = $(`${rootSel} .uchip.active`);
+    return el ? el.dataset.meal : Foods.inferMeal();
+  }
 
   function updateQtyPreview(food) {
-    const qty = Number($("#qty-input").value);
+    const qty = Number(String($("#qty-input").value || "").replace(/,/g, "").trim());
     if (!Number.isFinite(qty) || qty <= 0) {
       $("#qty-preview").textContent = "Enter an amount";
       return null;
     }
-    const entry = Foods.entryFromQty(food, qty, selectedUnit(), selectedMeal());
-    $("#qty-preview").textContent = `${fmt(entry.macros.kcal)} kcal · P ${entry.macros.p} · C ${entry.macros.c} · F ${entry.macros.f}`;
+    const unit = selectedUnit();
+    const entry = Foods.entryFromQty(food, qty, unit, selectedMeal());
+    let qtyLine = entry.displayQty;
+    if (fillQtySheet._imperial && unit === "oz") {
+      qtyLine = `${qty} oz (${Math.round(entry.grams)} g)`;
+      entry.displayQty = qtyLine;
+    } else if (fillQtySheet._imperial && (unit === "g" || unit === "grams")) {
+      const oz = Math.round((entry.grams / 28.35) * 10) / 10;
+      qtyLine = `${Math.round(entry.grams)} g (${oz} oz)`;
+      entry.displayQty = qtyLine;
+    }
+    $("#qty-preview").textContent = `${qtyLine} · ${fmt(entry.macros.kcal)} kcal · P ${entry.macros.p} · C ${entry.macros.c} · F ${entry.macros.f}`;
     return entry;
   }
 
@@ -240,12 +350,25 @@ const UI = (() => {
     $("#paste-step-prompt").hidden = false;
     $("#paste-step-review").hidden = true;
     $("#paste-title").textContent = "Add food from AI paste";
+    const fb = $("#prompt-fallback");
+    if (fb) fb.hidden = true;
+  }
+
+  function showPromptFallback(text) {
+    const fb = $("#prompt-fallback");
+    const ta = $("#prompt-fallback-text");
+    if (!fb || !ta) return;
+    ta.value = text;
+    fb.hidden = false;
+    fb.open = true;
+    ta.focus();
+    ta.select();
   }
 
   function showReview(parsed, opts) {
     $("#paste-step-prompt").hidden = true;
     $("#paste-step-review").hidden = false;
-    $("#paste-title").textContent = opts && opts.updateId ? "Update food" : "Review food";
+    $("#paste-title").textContent = (opts && opts.title) || (opts && opts.updateId ? "Update food" : "Review food");
     const f = parsed.food;
     const banners = [];
     for (const r of parsed.rejects || []) banners.push(`<div class="banner danger">${esc(r)}</div>`);
@@ -259,6 +382,9 @@ const UI = (() => {
     $("#review-banners").innerHTML = banners.join("");
     $("#rev-name").value = f.name || "";
     $("#rev-aliases").value = (f.aliases || []).join(", ");
+    const catFilter = $("#rev-cat-filter");
+    if (catFilter) catFilter.value = "";
+    filterCategories("");
     $("#rev-cat").value = f.cat || "dish";
     $("#rev-kcal").value = f.per100.kcal;
     $("#rev-p").value = f.per100.p;
@@ -274,6 +400,8 @@ const UI = (() => {
     $("#rev-prep").value = (f.recipe && f.recipe.prep) || "";
     $("#rev-notes").value = (f.recipe && f.recipe.notes) || "";
     $("#btn-review-save").disabled = !parsed.canSave && !(opts && opts.forceEnable);
+    const err = $("#review-errors");
+    if (err) { err.hidden = true; err.textContent = ""; }
     const dup = $("#review-dup");
     if (opts && opts.duplicate) {
       dup.hidden = false;
@@ -286,6 +414,37 @@ const UI = (() => {
       dup.hidden = true;
       dup.innerHTML = "";
     }
+  }
+
+  function filterCategories(q) {
+    const sel = $("#rev-cat");
+    if (!sel) return;
+    const needle = String(q || "").trim().toLowerCase();
+    [...sel.options].forEach((opt) => {
+      opt.hidden = !!(needle && !opt.value.toLowerCase().includes(needle));
+    });
+  }
+
+  function setReviewErrors(reasons) {
+    const el = $("#review-errors");
+    if (!el) return;
+    if (!reasons || !reasons.length) {
+      el.hidden = true;
+      el.textContent = "";
+      ["#rev-name", "#rev-kcal", "#rev-p", "#rev-c", "#rev-f"].forEach((sel) => {
+        const n = $(sel); if (n) n.classList.remove("field-bad");
+      });
+      return;
+    }
+    el.hidden = false;
+    el.textContent = reasons.join(" ");
+    const draft = readReviewDraft();
+    const mark = (sel, bad) => { const n = $(sel); if (n) n.classList.toggle("field-bad", !!bad); };
+    mark("#rev-name", !draft.name);
+    mark("#rev-kcal", draft.per100.kcal < 0 || draft.per100.kcal > 920);
+    mark("#rev-p", draft.per100.p + draft.per100.c + draft.per100.f > 105);
+    mark("#rev-c", draft.per100.p + draft.per100.c + draft.per100.f > 105);
+    mark("#rev-f", draft.per100.p + draft.per100.c + draft.per100.f > 105);
   }
 
   function readReviewDraft(base) {
@@ -303,6 +462,7 @@ const UI = (() => {
     if (Number.isFinite(piece) && piece > 0) units.piece = piece;
     else delete units.piece;
     if (Number.isFinite(batchG) && batchG > 0) units.batch = batchG;
+    else delete units.batch;
     const ingredients = $("#rev-ingredients").value.split("\n").map((t) => t.trim()).filter(Boolean).map((text) => ({ text, grams: null }));
     return {
       name: $("#rev-name").value.trim(),
@@ -329,6 +489,11 @@ const UI = (() => {
     const mServ = serv ? FoodMatch.computeMacros(food.per100, serv) : null;
     const ings = ((food.recipe && food.recipe.ingredients) || []).map((i) => `<li>${esc(i.text)}</li>`).join("");
     const prov = Foods.provenance(food);
+    const batch = food.batch && food.batch.grams
+      ? `<div class="card-block"><b>Batch</b>: ${fmt(food.batch.grams)} g · ${food.batch.servings || 1} servings
+          <button type="button" class="btn ghost full" style="margin-top:8px" data-action="scale-batch" data-id="${esc(food.id)}">Scale batch</button>
+        </div>`
+      : `<div class="card-block"><button type="button" class="btn ghost full" data-action="scale-batch" data-id="${esc(food.id)}">Set / scale batch</button></div>`;
     $("#detail-body").innerHTML = `
       <h3>${esc(food.name)}</h3>
       <p class="muted small">${esc(prov.label)}${prov.detail ? " · " + esc(prov.detail) : ""}</p>
@@ -337,6 +502,7 @@ const UI = (() => {
         <div><b>Per 100 g</b>: ${fmt(food.per100.kcal)} kcal · P ${food.per100.p} · C ${food.per100.c} · F ${food.per100.f} · Fb ${food.per100.fb} · Na ${food.per100.na}</div>
         ${mServ ? `<div style="margin-top:6px"><b>Per serving (${serv} g)</b>: ${fmt(mServ.kcal)} kcal · P ${mServ.p}</div>` : ""}
       </div>
+      ${batch}
       ${ings ? `<div class="card-block"><b>Ingredients</b><ul class="ing-list">${ings}</ul>${food.recipe.prep ? `<p class="small">${esc(food.recipe.prep)}</p>` : ""}</div>` : ""}
       <div class="col-actions">
         <button type="button" class="btn full" data-action="log-this" data-id="${esc(food.id)}">Log this</button>
@@ -345,6 +511,20 @@ const UI = (() => {
         <button type="button" class="btn ghost full" data-action="copy-update-prompt" data-id="${esc(food.id)}">Copy update prompt</button>
         <button type="button" class="btn ghost full danger" data-action="delete-food" data-id="${esc(food.id)}">Delete</button>
       </div>`;
+  }
+
+  function streakEndingToday() {
+    let streak = 0;
+    const d = new Date();
+    // Allow "current streak" to count through yesterday if today is still empty
+    if (!Ledger.entriesFor(Ledger.todayKey(d)).length) d.setDate(d.getDate() - 1);
+    for (;;) {
+      const key = Ledger.todayKey(d);
+      if (!Ledger.entriesFor(key).length) break;
+      streak += 1;
+      d.setDate(d.getDate() - 1);
+    }
+    return streak;
   }
 
   function renderTrends(goals, daysBack) {
@@ -363,13 +543,14 @@ const UI = (() => {
     });
     const logged = points.filter((p) => p.count);
     const w = canvas.clientWidth || 320;
-    const h = 160;
+    const h = 168;
     canvas.width = w * 2; canvas.height = h * 2;
     const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(2, 2);
     ctx.clearRect(0, 0, w, h);
     const maxK = Math.max(goals.kcal * 1.2, ...logged.map((p) => p.kcal), 1);
-    const pad = { l: 28, r: 8, t: 12, b: 22 };
+    const pad = { l: 8, r: 8, t: 12, b: 28 };
     const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
     const barW = Math.max(2, iw / keys.length - 2);
     ctx.strokeStyle = "rgba(61,153,112,0.45)";
@@ -383,13 +564,31 @@ const UI = (() => {
       ctx.fillStyle = p.kcal > goals.kcal * 1.05 ? "#d0703c" : "#3d9970";
       ctx.fillRect(x, pad.t + ih - bh, barW, bh);
     });
+    // sparse day labels
+    ctx.fillStyle = "rgba(100,100,100,0.85)";
+    ctx.font = "10px system-ui,sans-serif";
+    const step = keys.length > 40 ? 7 : keys.length > 20 ? 4 : Math.max(1, Math.floor(keys.length / 6));
+    keys.forEach((day, i) => {
+      if (i % step !== 0 && i !== keys.length - 1) return;
+      const x = pad.l + (i + 0.5) * (iw / keys.length);
+      const label = day.slice(5); // MM-DD
+      ctx.fillText(label, x - 12, h - 8);
+    });
+    _trendHit = { keys, pad, iw, w };
+
     const avgK = logged.length ? logged.reduce((s, p) => s + p.kcal, 0) / logged.length : 0;
     const avgP = logged.length ? logged.reduce((s, p) => s + p.p, 0) / logged.length : 0;
+    const weekKeys = keys.slice(-7);
+    const weekLogged = weekKeys.map((d) => Ledger.totalsFor(d)).filter((t) => t.count);
+    const weekAvg = weekLogged.length
+      ? Math.round(weekLogged.reduce((s, t) => s + t.kcal.mean, 0) / weekLogged.length)
+      : 0;
+    const streak = streakEndingToday();
     $("#trend-summary").textContent = logged.length
-      ? `${logged.length} of ${daysBack} days logged · avg ${fmt(avgK)} kcal · ${fmt(avgP)} g protein`
+      ? `${logged.length} of ${daysBack} days · avg ${fmt(avgK)} kcal · ${fmt(avgP)} g protein · 7d avg ${fmt(weekAvg)} · streak ${streak}d`
       : "No logged days in this range yet.";
+    renderDayDetail(null);
 
-    // top contributors
     const contrib = new Map();
     for (const day of keys) {
       for (const e of Ledger.entriesFor(day)) {
@@ -406,6 +605,47 @@ const UI = (() => {
       : `<span class="muted">Top foods will appear as you log.</span>`;
   }
 
+  function trendDayAtClientX(clientX) {
+    if (!_trendHit) return null;
+    const canvas = $("#trend-canvas");
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const { keys, pad, iw } = _trendHit;
+    if (x < pad.l || x > pad.l + iw) return null;
+    const i = Math.min(keys.length - 1, Math.max(0, Math.floor(((x - pad.l) / iw) * keys.length)));
+    return keys[i];
+  }
+
+  function renderDayDetail(dayKey) {
+    const root = $("#day-detail");
+    if (!root) return;
+    if (!dayKey) { root.innerHTML = ""; return; }
+    const entries = Ledger.entriesFor(dayKey);
+    const t = Ledger.totalsFor(dayKey);
+    const d = new Date(dayKey + "T12:00:00");
+    const label = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    if (!entries.length) {
+      root.innerHTML = `<div class="card-block"><b>${esc(label)}</b><p class="muted small">No entries.</p></div>`;
+      return;
+    }
+    root.innerHTML = `<div class="card-block">
+      <b>${esc(label)}</b> · ${fmt(t.kcal.mean)} kcal · P ${fmt(t.p.mean)}
+      <ul class="ing-list">${entries.map((e) =>
+        `<li>${esc(e.name)} · ${esc(e.displayQty)} · ${fmt(e.macros.kcal)} kcal</li>`
+      ).join("")}</ul>
+      <button type="button" class="btn ghost full" data-action="goto-day" data-day="${esc(dayKey)}">Open this day</button>
+    </div>`;
+  }
+
+  function fillMealChips(rootId, meal) {
+    const root = $(rootId);
+    if (!root) return;
+    const m0 = meal || Foods.inferMeal();
+    root.innerHTML = MEALS.map((m) =>
+      `<button type="button" class="uchip${m === m0 ? " active" : ""}" data-meal="${m}">${m}</button>`
+    ).join("");
+  }
+
   function setSyncPill(status, detail) {
     const el = $("#sync-pill");
     el.classList.remove("ok", "pending", "warn");
@@ -420,8 +660,9 @@ const UI = (() => {
   }
 
   return {
-    $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, setDayLabel, updateHUD,
-    renderDayLog, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal,
-    showPastePrompt, showReview, readReviewDraft, renderFoodDetail, renderTrends, setSyncPill, showOnboarding,
+    $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
+    renderDayLog, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
+    showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
+    renderFoodDetail, renderTrends, trendDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
   };
 })();

@@ -34,7 +34,8 @@
       <button id="btn-day-prev" class="iconbtn" type="button" aria-label="Previous day">‹</button>
       <div>
         <div class="brand">NutriDaily</div>
-        <div class="day" id="day-label"></div>
+        <button type="button" class="day day-btn" id="day-label" title="Jump to today"></button>
+        <button type="button" class="linkbtn day-goals-link" id="btn-day-goals">Day goals</button>
       </div>
       <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
     </div>
@@ -56,6 +57,7 @@
       <div class="macro"><div class="m-top"><span>Carbs</span><span class="m-val" id="v-c"></span></div><div class="bar"><div class="fill c" id="f-c"></div></div></div>
       <div class="macro"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
       <div class="macro"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
+      <div class="macro"><div class="m-top"><span>Sodium</span><span class="m-val" id="v-sodium"></span></div><div class="bar"><div class="fill na" id="f-sodium"></div></div></div>
     </div>
     <div class="sodium-line muted small" id="v-na"></div>
   </section>
@@ -104,7 +106,48 @@
       <div class="sheet-grab"></div>
       <input id="pick-search" type="search" placeholder="Search banana, eggs, rice…" aria-label="Search foods to log">
       <div id="pick-list" class="sheet-list"></div>
+      <button id="btn-quick-kcal" class="btn ghost full" type="button">+ Quick kcal only</button>
       <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (AI paste)</button>
+    </div>
+  </div>
+
+  <!-- Quick kcal sheet -->
+  <div id="sheet-kcal" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-kcal"></div>
+    <div class="sheet-card">
+      <div class="sheet-grab"></div>
+      <h3>Quick kcal</h3>
+      <p class="muted small">Log calories without building a full food (restaurant estimate, etc.).</p>
+      <label>Name<input id="kcal-name" type="text" placeholder="e.g. lunch out"></label>
+      <label>Calories<input id="kcal-amount" type="text" inputmode="decimal" placeholder="650"></label>
+      <div id="kcal-meals" class="unit-chips meal-chips"></div>
+      <button id="kcal-save" class="btn full" type="button">Save</button>
+      <div class="row qty-secondary">
+        <button id="kcal-cancel" class="btn ghost" type="button">Cancel</button>
+      </div>
+      <button id="kcal-remove" class="linkbtn danger" type="button" hidden>Remove this log entry</button>
+    </div>
+  </div>
+
+  <!-- Day goals override -->
+  <div id="sheet-day-goals" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-day-goals"></div>
+    <div class="sheet-card">
+      <div class="sheet-grab"></div>
+      <h3>Goals for this day</h3>
+      <p class="muted small" id="day-goals-blurb">Override your usual targets for training days or rest days. Leave blank to use defaults.</p>
+      <div class="goals-grid">
+        <div><span class="small muted">Calories</span><input id="dg-kcal" type="number" min="0" step="50"></div>
+        <div><span class="small muted">Protein g</span><input id="dg-protein" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Carbs g</span><input id="dg-carbs" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Fat g</span><input id="dg-fat" type="number" min="0" step="5"></div>
+        <div><span class="small muted">Fiber g</span><input id="dg-fiber" type="number" min="0" step="1"></div>
+        <div><span class="small muted">Sodium mg</span><input id="dg-sodium" type="number" min="0" step="50"></div>
+      </div>
+      <div class="row end">
+        <button id="dg-clear" class="btn ghost" type="button">Use defaults</button>
+        <button id="dg-save" class="btn" type="button">Save</button>
+      </div>
     </div>
   </div>
 
@@ -122,17 +165,17 @@
       </div>
       <p id="qty-preview" class="qty-preview"></p>
       <div id="qty-meals" class="unit-chips meal-chips"></div>
-      <div class="row qty-actions">
+      <button id="qty-save" class="btn full" type="button">Save</button>
+      <div class="row qty-secondary">
         <button id="qty-cancel" class="btn ghost" type="button">Cancel</button>
-        <button id="qty-edit-food" class="btn ghost" type="button">Edit food</button>
-        <button id="qty-save" class="btn" type="button">Save</button>
+        <button id="qty-edit-food" class="linkbtn" type="button">Edit food</button>
       </div>
       <button id="qty-remove" class="linkbtn danger" type="button" hidden>Remove this log entry</button>
     </div>
   </div>
 
   <!-- Paste / review sheet -->
-  <div id="sheet-paste" class="sheet" hidden>
+  <div id="sheet-paste" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="paste-title">
     <div class="sheet-backdrop" data-close="sheet-paste"></div>
     <div class="sheet-card tall">
       <div class="sheet-grab"></div>
@@ -140,6 +183,10 @@
       <div id="paste-step-prompt">
         <p class="muted small">Copy this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.</p>
         <button id="btn-copy-prompt" class="btn ghost full" type="button">Copy AI prompt</button>
+        <details id="prompt-fallback" class="example-details" hidden>
+          <summary class="muted small">Select prompt manually</summary>
+          <textarea id="prompt-fallback-text" rows="6" readonly></textarea>
+        </details>
         <textarea id="paste-text" rows="8" placeholder="Paste the AI reply here (the whole thing is fine; the app finds the NUTRI block)."></textarea>
         <div class="row">
           <button id="btn-clipboard" class="btn ghost" type="button">Paste from clipboard</button>
@@ -162,19 +209,21 @@ END</pre>
         <label>Name<input id="rev-name" type="text"></label>
         <label>Aliases <span class="muted small">(comma-separated)</span><input id="rev-aliases" type="text"></label>
         <label>Category
+          <input id="rev-cat-filter" type="search" placeholder="Filter categories" aria-label="Filter categories">
           <select id="rev-cat">
             <option>dish</option><option>meat</option><option>protein</option><option>grain</option>
             <option>legume</option><option>veg</option><option>fruit</option><option>dairy</option>
             <option>fat</option><option>nuts</option><option>bev</option><option>snack</option>
           </select>
         </label>
+        <p id="review-errors" class="banner warn" hidden></p>
         <div class="goals-grid rev-macros">
-          <div><span class="small muted">kcal /100g</span><input id="rev-kcal" type="text" inputmode="decimal"></div>
-          <div><span class="small muted">Protein</span><input id="rev-p" type="text" inputmode="decimal"></div>
-          <div><span class="small muted">Carbs</span><input id="rev-c" type="text" inputmode="decimal"></div>
-          <div><span class="small muted">Fat</span><input id="rev-f" type="text" inputmode="decimal"></div>
-          <div><span class="small muted">Fiber</span><input id="rev-fb" type="text" inputmode="decimal"></div>
-          <div><span class="small muted">Sodium mg</span><input id="rev-na" type="text" inputmode="decimal"></div>
+          <div><label class="small muted" for="rev-kcal">kcal /100g</label><input id="rev-kcal" type="text" inputmode="decimal"></div>
+          <div><label class="small muted" for="rev-p">Protein</label><input id="rev-p" type="text" inputmode="decimal"></div>
+          <div><label class="small muted" for="rev-c">Carbs</label><input id="rev-c" type="text" inputmode="decimal"></div>
+          <div><label class="small muted" for="rev-f">Fat</label><input id="rev-f" type="text" inputmode="decimal"></div>
+          <div><label class="small muted" for="rev-fb">Fiber</label><input id="rev-fb" type="text" inputmode="decimal"></div>
+          <div><label class="small muted" for="rev-na">Sodium mg</label><input id="rev-na" type="text" inputmode="decimal"></div>
         </div>
         <label>Serving size (g)<input id="rev-serving" type="text" inputmode="decimal"></label>
         <label>Piece size (g)<input id="rev-piece" type="text" inputmode="decimal"></label>
@@ -249,11 +298,12 @@ END</pre>
 
       <label>Daily goals</label>
       <div class="goals-grid">
-        <div><span class="small muted">Calories</span><input id="set-kcal" type="number" min="800" step="50"></div>
-        <div><span class="small muted">Protein g</span><input id="set-protein" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Carbs g</span><input id="set-carbs" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Fat g</span><input id="set-fat" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Fiber g</span><input id="set-fiber" type="number" min="0" step="1"></div>
+        <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="800" step="50"></div>
+        <div><label class="small muted" for="set-protein">Protein g</label><input id="set-protein" type="number" min="0" step="5"></div>
+        <div><label class="small muted" for="set-carbs">Carbs g</label><input id="set-carbs" type="number" min="0" step="5"></div>
+        <div><label class="small muted" for="set-fat">Fat g</label><input id="set-fat" type="number" min="0" step="5"></div>
+        <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
+        <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
       </div>
 
       <label>Units</label>
@@ -283,7 +333,7 @@ END</pre>
     </div>
   </div>
 
-  <div id="toast"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 </div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>

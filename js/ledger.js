@@ -38,9 +38,12 @@ const Ledger = (() => {
     return `${y}-${m}-${dd}`;
   }
 
-  /** entry: { name, displayQty, grams, macros:{kcal,p,c,f,fb,na}, sd, meal, source, cat, foodId } */
+  /** entry: { name, displayQty, grams, macros:{kcal,p,c,f,fb,na}, sd, meal, source, cat, foodId }
+   *  Pass entry.id to restore a removed entry (undo) with the same identity. */
   function addEntry(day, entry) {
-    const ev = { id: uid(), ts: Date.now(), day, type: "add", entry: { ...entry, id: uid() } };
+    const entryId = entry && entry.id ? entry.id : uid();
+    const { id: _ignore, addedTs: _a, history: _h, ...rest } = entry || {};
+    const ev = { id: uid(), ts: Date.now(), day, type: "add", entry: { ...rest, id: entryId } };
     _load().push(ev); _save();
     return ev;
   }

@@ -1,13 +1,13 @@
 {
   "name": "NutriDaily",
   "short_name": "NutriDaily",
-  "description": "Personal nutrition tracker. Build dishes with ChatGPT paste, log by grams, optional Google Drive backup.",
+  "description": "Personal nutrition tracker. Log common foods, add homemade dishes from an AI paste, optional Google Drive backup.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f6f5f1",
-  "theme_color": "#3d9970",
+  "theme_color": "#f6f5f1",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
