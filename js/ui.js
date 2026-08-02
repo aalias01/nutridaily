@@ -687,12 +687,29 @@ const UI = (() => {
 
     ctx.fillStyle = "rgba(100,100,100,0.85)";
     ctx.font = "10px system-ui,sans-serif";
-    const step = keys.length > 40 ? 7 : keys.length > 20 ? 4 : Math.max(1, Math.floor(keys.length / 6));
-    keys.forEach((day, i) => {
-      if (i % step !== 0 && i !== keys.length - 1) return;
+    ctx.textAlign = "center";
+    // Fit labels to chart width so 14/30/90d never collide (MM-DD ≈ 34px)
+    const labelW = 34;
+    const maxLabels = Math.max(2, Math.min(keys.length, Math.floor(iw / labelW)));
+    const labelIdx = [];
+    if (keys.length <= maxLabels) {
+      for (let i = 0; i < keys.length; i++) labelIdx.push(i);
+    } else {
+      for (let k = 0; k < maxLabels; k++) {
+        labelIdx.push(Math.round((k * (keys.length - 1)) / (maxLabels - 1)));
+      }
+    }
+    const seen = new Set();
+    let lastX = -Infinity;
+    labelIdx.forEach((i) => {
+      if (seen.has(i)) return;
+      seen.add(i);
       const x = pad.l + (i + 0.5) * (iw / keys.length);
-      ctx.fillText(day.slice(5), x - 12, h - 8);
+      if (x - lastX < labelW * 0.9) return; // skip if still too close
+      lastX = x;
+      ctx.fillText(keys[i].slice(5), x, h - 8);
     });
+    ctx.textAlign = "start";
     _trendHit = { keys, pad, iw, w };
 
     const avg = (key) => logged.length ? logged.reduce((s, p) => s + p[key], 0) / logged.length : 0;
