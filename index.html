@@ -444,6 +444,7 @@
 
       <div id="gap-step-select">
         <p class="muted small">Pick foods you still plan to eat. We’ll copy a prompt with today’s log, targets, remaining macros, and your usual portion ranges.</p>
+        <p class="muted small">New dish? Add it under Foods → AI paste first, then pick it here.</p>
         <p class="muted small" id="gap-remaining-blurb"></p>
         <input id="gap-food-search" type="search" placeholder="Search foods" aria-label="Search foods for gap plan">
         <div id="gap-select-list" class="sheet-list gap-select-list"></div>
@@ -454,11 +455,11 @@
       </div>
 
       <div id="gap-step-prompt" hidden>
-        <p class="muted small" id="gap-prompt-hint">Copy or share the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply with 3 options. Optional <code>NUTRI v1</code> blocks refine Reference catalog foods or add brand-new dishes.</p>
+        <p class="muted small" id="gap-prompt-hint">Copy or share the prompt into ChatGPT / Claude / any LLM. Iterate there if needed, then paste the final <code>GAP v1 … END</code> reply with 3 options.</p>
         <button id="btn-gap-copy-prompt" class="btn full" type="button">Copy gap prompt</button>
         <button id="btn-gap-share-prompt" class="btn ghost full" type="button" hidden>Share to AI</button>
         <p class="muted small" data-prompt-share-hint hidden>Opens your share sheet. Choose Claude or ChatGPT — paste into a new chat if the app doesn’t fill it.</p>
-        <textarea id="gap-paste" rows="7" placeholder="Paste the GAP v1 … END reply here (plus optional NUTRI v1 blocks)"></textarea>
+        <textarea id="gap-paste" rows="7" placeholder="Paste the GAP v1 … END reply here"></textarea>
         <div class="col-actions">
           <button id="btn-gap-parse" class="btn full" type="button">Parse options</button>
           <button id="btn-gap-back-select" class="btn ghost full" type="button">Back to food pick</button>
@@ -468,7 +469,6 @@
       <div id="gap-step-choose" hidden>
         <p class="muted small">Pick a plan option. Each trades off differently (protein floor vs lowest sodium). Fiber is reported only; sodium lower is better. Reachable means protein met and sodium under the ceiling.</p>
         <div id="gap-choose-warnings" class="banner warn" hidden></div>
-        <div id="gap-choose-nutri" class="banner warn" hidden></div>
         <div id="gap-option-list" class="phase-option-list"></div>
         <div class="col-actions">
           <button id="btn-gap-choose-back" class="btn ghost full" type="button">Back to paste</button>
@@ -480,7 +480,6 @@
         <div id="gap-plan-label" class="gap-plan-label" hidden></div>
         <p class="muted small" id="gap-plan-note"></p>
         <div class="gap-plan-projection" id="gap-plan-projection" hidden></div>
-        <div id="gap-nutri-banner" class="banner warn" hidden></div>
         <p class="muted small" id="gap-plan-hint">Tap a food to log (you can edit grams).</p>
         <div id="gap-plan-list" class="gap-plan-list"></div>
         <div class="col-actions">
@@ -534,6 +533,7 @@
       <div class="row qty-secondary">
         <button id="qty-cancel" class="btn ghost" type="button">Cancel</button>
         <button id="qty-edit-food" class="linkbtn" type="button">Edit food</button>
+        <button id="qty-refine-food" class="linkbtn" type="button">Refine with AI</button>
       </div>
       <button id="qty-remove" class="linkbtn danger" type="button" hidden>Remove this log entry</button>
     </div>
@@ -612,6 +612,18 @@ END</pre>
         <label>Ingredients (one per line)<textarea id="rev-ingredients" rows="4"></textarea></label>
         <label>Prep<textarea id="rev-prep" rows="2"></textarea></label>
         <label>Notes<textarea id="rev-notes" rows="2"></textarea></label>
+        <details id="rev-ai-refine" class="example-details" hidden>
+          <summary class="muted small">Improve with AI</summary>
+          <p class="muted small">Copy this food as a prompt, chat with ChatGPT / Claude / any LLM, then paste the <code>NUTRI v1 … END</code> reply back to refill these fields. Nothing is saved until you tap Save food.</p>
+          <button id="btn-rev-copy-refine" class="btn ghost full" type="button">Copy refine prompt</button>
+          <button id="btn-rev-share-refine" class="btn ghost full" type="button" hidden>Share to AI</button>
+          <p class="muted small" data-prompt-share-hint hidden>Opens your share sheet. Choose Claude or ChatGPT — paste into a new chat if the app doesn’t fill it.</p>
+          <textarea id="rev-ai-paste" rows="6" placeholder="Paste the NUTRI v1 … END reply here"></textarea>
+          <div class="row">
+            <button id="btn-rev-ai-clipboard" class="btn ghost" type="button">Paste from clipboard</button>
+            <button id="btn-rev-apply-ai" class="btn" type="button">Apply to fields</button>
+          </div>
+        </details>
         <div id="review-dup" class="banner info" hidden></div>
         <div class="row end">
           <button id="btn-review-back" class="btn ghost" type="button">Back</button>

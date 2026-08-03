@@ -149,7 +149,6 @@ const GapPrompt = (() => {
     const remLine = remBits.join("; ");
 
     let candBlock = "(no candidates selected)\n";
-    const refineNames = [];
     if (candidates.length) {
       candBlock = candidates.map((c, i) => {
         const piece = c.pieceGrams != null && Number.isFinite(c.pieceGrams)
@@ -157,9 +156,8 @@ const GapPrompt = (() => {
           : "";
         const logAs = c.logAs ? `; logAs ${c.logAs}` : "";
         const src = c.provenance === "ref"
-          ? "Reference · USDA-style avg (may refine with NUTRI v1)"
+          ? "Reference · USDA-style avg"
           : (c.provenance === "ai" ? "Yours · AI estimate" : "Yours");
-        if (c.provenance === "ref" || c.refine) refineNames.push(c.name);
         return (
           `${i + 1}. ${c.name}\n` +
           `   Source: ${src}\n` +
@@ -171,9 +169,6 @@ const GapPrompt = (() => {
 
     return (
       "You are a sports-nutrition assistant helping me close today's macro gap in NutriDaily.\n" +
-      "This is NOT medical advice. Treat your output as educational reference only.\n" +
-      "I must consult a qualified health professional before making major diet or training changes,\n" +
-      "especially if I have a medical condition, take medication, am pregnant, or am under 18.\n\n" +
       `Day: ${day}\n\n` +
       "Already logged today (do not change these; they are already eaten):\n" +
       loggedBlock +
@@ -219,13 +214,7 @@ const GapPrompt = (() => {
       "  If the full set cannot hit targets cleanly, still include every food, set Reachable appropriately, and explain in Note.\n" +
       "  I will refine in chat (or deselect in the app) if I want fewer foods — do not silently drop foods from Option 1.\n" +
       "- Options 2–3 MAY omit Item lines for foods that strategy should skip (do not write 0 g).\n" +
-      "- Reference catalog foods use USDA-style averages. If you refine macros for any candidate,\n" +
-      "  ALSO emit a NUTRI v1 … END block for that food (same Name) so I can update My Foods.\n" +
-      "- Brand-new homemade dishes agreed in chat: emit NUTRI v1, but GAP Items stay limited to selected candidates.\n" +
-      (refineNames.length
-        ? `- Candidates that especially benefit from a NUTRI refine: ${refineNames.join("; ")}.\n`
-        : "") +
-      "- Plain numbers only (no commas in numbers). One GAP v1 block with three Option sections (plus optional NUTRI blocks).\n\n" +
+      "- Plain numbers only (no commas in numbers). Reply with exactly one GAP v1 … END block containing three Option sections. Do not emit any other block type.\n\n" +
       "Reply exactly in this format:\n\n" +
       "GAP v1\n" +
       `Day: ${day || "<YYYY-MM-DD>"}\n` +

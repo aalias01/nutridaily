@@ -397,6 +397,11 @@ const UI = (() => {
     updateQtyPreview(food);
     const removeBtn = $("#qty-remove");
     if (removeBtn) removeBtn.hidden = !(prefill && prefill.allowRemove);
+    const orphan = !!(food && (food._orphan || String(food.id || "").startsWith("orphan-")));
+    const editBtn = $("#qty-edit-food");
+    const refineBtn = $("#qty-refine-food");
+    if (editBtn) editBtn.hidden = orphan;
+    if (refineBtn) refineBtn.hidden = orphan;
   }
 
   function syncReviewLogAsUI() {
@@ -517,6 +522,13 @@ const UI = (() => {
     } else {
       dup.hidden = true;
       dup.innerHTML = "";
+    }
+    const refine = $("#rev-ai-refine");
+    if (refine) {
+      refine.hidden = !(opts && opts.updateId);
+      refine.open = false;
+      const ta = $("#rev-ai-paste");
+      if (ta) ta.value = "";
     }
   }
 

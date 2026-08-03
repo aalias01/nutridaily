@@ -172,6 +172,15 @@ console.log("\n[parse] catalog refine prompt");
   ok(/579/.test(text) || /Per 100 g/.test(text), "refine prompt includes current per100");
   const withRaw = { ...food, raw: "NUTRI v1\nName: almonds\nEND" };
   ok(NutriParse.foodUpdatePrompt(withRaw).includes("current saved version"), "uses updatePrompt when raw exists");
+  const pieceFood = {
+    ...food,
+    logAs: "piece",
+    units: { ...(food.units || {}), piece: 28 },
+    countLabel: "almond",
+    raw: "",
+  };
+  ok(/Log as|Piece/i.test(NutriParse.foodUpdatePrompt(pieceFood)), "refine prompt carries countable units");
+  ok(!NutriParse.foodUpdatePrompt({ ...food, raw: "" }).includes("current saved version"), "empty raw falls back to field-based refine");
 }
 
 console.log("\n[parse] robustness regressions");

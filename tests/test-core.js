@@ -452,7 +452,7 @@ console.log("\n[10] PHASE AI target prompt parse");
     profile: { sex: "male", heightCm: 175, activity: "moderate", notes: "" },
   });
   ok(/Kind: recomp/.test(prompt) || /Recomp/.test(prompt), "prompt includes recomp goal");
-  ok(/not medical advice/i.test(prompt), "prompt includes medical disclaimer");
+  ok(!/not medical advice/i.test(prompt), "prompt omits medical disclaimer (token savings)");
   ok(/PHASE v1/.test(prompt), "prompt asks for PHASE v1 format");
 
   const block = `PHASE v1
@@ -585,6 +585,7 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
       per100: { kcal: 130, p: 2.7, c: 28, f: 0.3, fb: 0.4, na: 1 },
       portion: { n: 8, median: 120, p25: 100, p75: 140, last: 110 },
       pieceGrams: null,
+      provenance: "ref",
     },
     {
       id: "pf-chicken",
@@ -592,6 +593,7 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
       per100: { kcal: 165, p: 31, c: 0, f: 3.6, fb: 0, na: 74 },
       portion: { n: 5, median: 150, p25: 120, p75: 180, last: 160 },
       pieceGrams: null,
+      provenance: "yours",
     },
   ];
 
@@ -603,7 +605,13 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
     candidates,
   });
   ok(/GAP v1/.test(prompt), "prompt asks for GAP v1 format");
-  ok(/not medical advice/i.test(prompt), "prompt includes medical disclaimer");
+  ok(!/not medical advice/i.test(prompt), "prompt omits medical disclaimer (token savings)");
+  ok(!/NUTRI v1/i.test(prompt), "gap prompt does not ask for NUTRI blocks");
+  ok(!/brand-new|new dishes/i.test(prompt), "gap prompt does not invite new dishes");
+  ok(/Do not emit any other block type/i.test(prompt), "gap prompt forbids other block types");
+  ok(/ONLY assign quantities to these exact names/i.test(prompt), "gap prompt restricts items to candidates");
+  ok(/Reference · USDA-style avg/.test(prompt), "ref candidate labeled USDA avg");
+  ok(!/may refine/i.test(prompt), "ref label does not invite NUTRI refine");
   ok(/rice \(cooked\)/.test(prompt) && /preferred 100–140 g/.test(prompt), "prompt includes candidate portion band");
   ok(/banana/.test(prompt) && /Totals so far/.test(prompt), "prompt includes logged foods and totals");
   ok(/Gap \/ status|Remaining/.test(prompt), "prompt includes gap/status macros");
@@ -727,7 +735,7 @@ Note: Close enough.
 Item: rice (cooked) | 100 g | lunch
 END`;
   const nutri = NutriParse.parse(dual);
-  ok(nutri.found && nutri.results.length >= 1, "dual paste: NUTRI block found");
+  ok(nutri.found && nutri.results.length >= 1, "dual paste: NUTRI still parseable alongside GAP");
   const gap2 = GapPrompt.parseGapBlock(dual, candidates, scorer);
   ok(gap2.ok && gap2.items[0].grams === 100, "dual paste: GAP block still parses");
 

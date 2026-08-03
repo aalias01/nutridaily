@@ -55,9 +55,6 @@ const PhasePrompt = (() => {
 
     return (
       "You are a sports-nutrition assistant helping me set daily macro targets for a personal tracker (NutriDaily).\n" +
-      "This is NOT medical advice. Treat your output as educational reference only.\n" +
-      "I must consult a qualified health professional before making major diet or training changes,\n" +
-      "especially if I have a medical condition, take medication, am pregnant, or am under 18.\n\n" +
       `My selected phase goal: ${label} (${brief}).\n\n` +
       "My profile (use these exact values; do not invent replacements):\n" +
       `- Age: ${age} years\n` +
