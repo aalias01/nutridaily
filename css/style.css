@@ -93,6 +93,10 @@ header { display: flex; justify-content: space-between; align-items: flex-start;
 .kcal-unit { color: var(--muted); font-size: 13px; }
 .range { color: var(--muted); font-size: 11.5px; margin: 1px 0 7px; }
 .macros { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; align-content: center; min-width: 180px; }
+.hud-nut { cursor: pointer; border-radius: 8px; outline: none; }
+.hud-nut:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.kcal-block.hud-nut { padding: 2px 4px; margin: -2px -4px; }
+.macro.hud-nut { padding: 2px 4px; margin: -2px -4px; }
 .m-top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
 .m-val { color: var(--muted); }
 .m-val.near { color: var(--near); }
@@ -860,6 +864,9 @@ body.has-info-banner #toast { bottom: calc(var(--tab-h) + 96px); }
 .dow-v { font-weight: 650; font-variant-numeric: tabular-nums; }
 
 /* --- top foods -------------------------------------------- */
+.day-contrib { margin: 8px 0 12px; }
+.day-contrib-head { margin: 4px 0 8px; font-size: 13px; }
+#today-day-detail:empty { display: none; }
 .topfood-list { list-style: none; margin: 8px 0 0; padding: 0; }
 .topfood-list li {
   display: grid; grid-template-columns: 1fr; gap: 3px;

@@ -1860,7 +1860,20 @@ const UI = (() => {
     renderWeightChart(ctx);
     hideTip("#trend-tip");
     hideTip("#weight-tip");
-    renderDayDetail(null);
+    // Keep an open day card and re-score it for the newly selected nutrient.
+    const detail = $("#day-detail");
+    const keepDay = detail && detail.dataset.day;
+    if (keepDay) {
+      renderDayDetail(keepDay, {
+        metric: ctx.nutrient,
+        settings: ctx.settings,
+        goals: typeof Phases !== "undefined"
+          ? Phases.goalsForDay(keepDay, ctx.settings)
+          : null,
+      });
+    } else {
+      renderDayDetail(null);
+    }
   }
 
   // Back-compat: app.js historically called these two separately.
@@ -1968,24 +1981,108 @@ const UI = (() => {
     return { day: best, value: byDay[best], unit };
   }
 
-  function renderDayDetail(dayKey) {
-    const root = $("#day-detail");
+  /**
+   * Single-day "where it came from" card. Ranked contribution for one nutrient
+   * against that day's target/limit — the incident counterpart to range Top foods.
+   *
+   * @param {string|null} dayKey
+   * @param {object} [opts]
+   * @param {string} [opts.metric]  nutrient key; defaults to the Insights chart nutrient
+   * @param {string} [opts.root]    DOM id selector (default "#day-detail")
+   * @param {object} [opts.goals]   goals for the day (kcal/protein/…); looked up if omitted
+   * @param {object} [opts.settings] settings pass-through for goals lookup
+   */
+  function renderDayDetail(dayKey, opts) {
+    const o = opts || {};
+    const root = $(o.root || "#day-detail");
     if (!root) return;
-    if (!dayKey) { root.innerHTML = ""; return; }
-    const entries = Ledger.entriesFor(dayKey);
-    const t = Ledger.totalsFor(dayKey);
-    const d = new Date(dayKey + "T12:00:00");
-    const label = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
-    if (!entries.length) {
-      root.innerHTML = `<div class="card-block"><b>${esc(label)}</b><p class="muted small">No entries.</p></div>`;
+    if (!dayKey) {
+      root.innerHTML = "";
+      delete root.dataset.day;
+      delete root.dataset.metric;
       return;
     }
-    root.innerHTML = `<div class="card-block">
-      <b>${esc(label)}</b> · ${fmt(t.kcal.mean)} kcal · P ${fmt(t.p.mean)} · C ${fmt(t.c.mean)} · F ${fmt(t.f.mean)} · Fb ${fmt(t.fb.mean)} · Na ${fmt(t.na.mean)}
-      <ul class="ing-list">${entries.map((e) =>
-        `<li>${esc(e.name)} · ${esc(e.displayQty)} · ${fmt(e.macros.kcal)} kcal · P ${fmt(e.macros.p)}</li>`
-      ).join("")}</ul>
-      <button type="button" class="btn ghost full" data-action="goto-day" data-day="${esc(dayKey)}">Open this day</button>
+    const metric = o.metric || (_insight && _insight.nutrient) || "kcal";
+    const meta = nutMeta(metric);
+    const field = { kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na" }[metric] || "kcal";
+    const entries = Ledger.entriesFor(dayKey);
+    const t = Ledger.totalsFor(dayKey);
+    const value = (t[field] && t[field].mean) || 0;
+    // Prefer explicit goals. Only look up via Phases when settings were passed —
+    // an empty settings object would invent DEFAULT_GOALS and print fake targets.
+    const goals = o.goals
+      || (typeof Phases !== "undefined" && o.settings
+        ? Phases.goalsForDay(dayKey, o.settings)
+        : null)
+      || {};
+    const goal = Number(goals[metric]) || 0;
+    const d = new Date(dayKey + "T12:00:00");
+    const label = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    root.dataset.day = dayKey;
+    root.dataset.metric = metric;
+
+    const band = bandFor(metric);
+    const dir = (band && band.dir) || "range";
+    const goalWord = dir === "ceiling" ? "limit" : dir === "floor" ? "floor" : "target";
+    const unitSuffix = metric === "kcal" ? " kcal" : (meta.unit || "");
+    let headLine;
+    if (!goal) {
+      headLine = `${fmt(value)}${esc(unitSuffix)} ${esc(meta.label.toLowerCase())}`;
+    } else {
+      // formatBandDelta leaves kcal unit-less (scorecard context); give it one here.
+      let delta = formatBandDelta(metric, value - goal);
+      if (metric === "kcal" && delta !== "—" && !/kcal/.test(delta)) {
+        delta = delta.replace(/(\d[\d,]*)/, "$1 kcal");
+      }
+      headLine = `${fmt(value)}${esc(unitSuffix)} of a ${fmt(goal)}${esc(unitSuffix)} ${esc(goalWord)} · ${esc(delta)}`;
+    }
+
+    const onTodayRoot = (o.root || "#day-detail") === "#today-day-detail";
+    const actions = onTodayRoot
+      ? `<button type="button" class="btn ghost full" data-action="close-day-contrib">Close</button>`
+      : `<button type="button" class="btn ghost full" data-action="goto-day" data-day="${esc(dayKey)}">Open this day</button>`;
+
+    if (!entries.length) {
+      root.innerHTML = `<div class="card-block day-contrib">
+        <b>${esc(label)}</b>
+        <p class="muted small">No entries.</p>
+        ${actions}
+      </div>`;
+      return;
+    }
+
+    const rows = typeof Analytics !== "undefined"
+      ? Analytics.topFoods([dayKey], () => entries, metric, 6)
+      : [];
+    const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg" }[metric] || "";
+    let body;
+    if (!rows.length) {
+      body = `<p class="muted small">No ${esc(meta.label.toLowerCase())} logged this day.</p>`;
+    } else {
+      const max = rows[0].value || 1;
+      const lead = rows.slice(0, Math.min(2, rows.length));
+      // Sum already-rounded row % so "100%" cannot contradict a third listed food.
+      let leadPct = lead.reduce((s, r) => s + Math.round(r.pct * 100), 0);
+      if (rows.length > lead.length && leadPct >= 100) leadPct = 99;
+      const nutLabel = meta.label.toLowerCase();
+      const dayWord = dayKey === Ledger.todayKey() ? "today's" : "this day's";
+      const footer = lead.length === 1
+        ? `1 food is ${leadPct}% of ${dayWord} ${esc(nutLabel)}.`
+        : `${lead.length} foods are ${leadPct}% of ${dayWord} ${esc(nutLabel)}.`;
+      body = `<ul class="topfood-list">${rows.map((r) => `
+        <li>
+          <span class="tf-name">${esc(r.name)}</span>
+          <span class="tf-track"><i style="width:${((r.value / max) * 100).toFixed(2)}%"></i></span>
+          <span class="tf-v">${fmt(r.value)}${esc(unit)}<span class="muted small"> · ${Math.round(r.pct * 100)}%</span></span>
+        </li>`).join("")}</ul>
+        <p class="muted small">${footer}</p>`;
+    }
+
+    root.innerHTML = `<div class="card-block day-contrib">
+      <div class="card-head-row"><b>${esc(label)}</b><span class="muted small">${esc(meta.label)}</span></div>
+      <p class="day-contrib-head">${headLine}</p>
+      ${body}
+      ${actions}
     </div>`;
   }
 

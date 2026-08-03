@@ -66,18 +66,18 @@
   </header>
 
   <section id="hud" aria-label="Day totals">
-    <div class="kcal-block">
+    <div class="kcal-block hud-nut" data-hud-nutrient="kcal" tabindex="0" title="Tap to see where calories came from">
       <div><span id="v-kcal-big">0</span><span class="kcal-unit"> kcal</span></div>
       <div class="range" id="kcal-range">—</div>
       <div class="bar big"><div class="fill" id="f-kcal"></div></div>
       <div class="m-val small" id="v-kcal"></div>
     </div>
     <div class="macros">
-      <div class="macro"><div class="m-top"><span>Protein</span><span class="m-val" id="v-p"></span></div><div class="bar"><div class="fill p" id="f-p"></div></div></div>
-      <div class="macro"><div class="m-top"><span>Carbs</span><span class="m-val" id="v-c"></span></div><div class="bar"><div class="fill c" id="f-c"></div></div></div>
-      <div class="macro"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
-      <div class="macro"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
-      <div class="macro"><div class="m-top"><span>Sodium max</span><span class="m-val" id="v-sodium"></span></div><div class="bar"><div class="fill na" id="f-sodium"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="protein" tabindex="0" title="Tap to see where protein came from"><div class="m-top"><span>Protein</span><span class="m-val" id="v-p"></span></div><div class="bar"><div class="fill p" id="f-p"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="carbs" tabindex="0" title="Tap to see where carbs came from"><div class="m-top"><span>Carbs</span><span class="m-val" id="v-c"></span></div><div class="bar"><div class="fill c" id="f-c"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="fat" tabindex="0" title="Tap to see where fat came from"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="fiber" tabindex="0" title="Tap to see where fiber came from"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="sodium" tabindex="0" title="Tap to see where sodium came from"><div class="m-top"><span>Sodium max</span><span class="m-val" id="v-sodium"></span></div><div class="bar"><div class="fill na" id="f-sodium"></div></div></div>
     </div>
     <div class="sodium-line muted small" id="v-na"></div>
   </section>
@@ -95,6 +95,7 @@
         <button type="button" class="btn ghost full" id="btn-close-gap">Close the gap</button>
         <button type="button" class="btn ghost full gap-plan-chip" id="btn-gap-plan" hidden>Plan: 0 left</button>
       </div>
+      <div id="today-day-detail"></div>
       <div id="day-log" class="day-log"></div>
       <button id="fab-add" class="fab" type="button" aria-label="Add food">+</button>
     </section>

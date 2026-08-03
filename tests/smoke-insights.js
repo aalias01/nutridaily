@@ -262,9 +262,13 @@ async function run(label, days) {
   await new Promise((r) => setTimeout(r, 30));
   // Re-query: the range pills above re-rendered the grid, detaching old nodes.
   const liveCells = window.document.querySelectorAll(".hm-cell[data-day]");
-  liveCells[Math.floor(liveCells.length / 2)].click();
+  const loggedCell = [...liveCells].find((c) => /hm-(hit|over|under|logged)/.test(c.className))
+    || liveCells[Math.floor(liveCells.length / 2)];
+  loggedCell.click();
   await new Promise((r) => setTimeout(r, 20));
   ok($("#day-detail").innerHTML.trim().length > 0, "heatmap click opens day detail");
+  ok($("#day-detail .topfood-list") || /No entries/.test(text("#day-detail")),
+    "day detail shows contribution bars or an empty-day note");
 
   // Nutrient pills re-render.
   const proteinPill = window.document.querySelector('#insight-nutrient [data-nutrient="protein"]');
@@ -285,7 +289,7 @@ async function run(label, days) {
   // Top-foods metric switch actually reorders. In this fixture ramen is eaten
   // only on weekends, so it never tops raw calories — but its sodium load
   // should push it up the list, which is the whole point of the metric switch.
-  const names = () => [...window.document.querySelectorAll(".topfood-list .tf-name")].map((n) => n.textContent.trim());
+  const names = () => [...window.document.querySelectorAll("#top-foods .topfood-list .tf-name")].map((n) => n.textContent.trim());
   const kcalRank = names().indexOf("Instant ramen");
   window.document.querySelector('#topfood-metric [data-metric="sodium"]').click();
   await new Promise((r) => setTimeout(r, 20));
@@ -314,6 +318,48 @@ async function run(label, days) {
   ok(!!naRow, "scorecard has a sodium row");
   ok(!/\bunder\b/.test(naRow.textContent), "sodium scorecard row never says 'under'");
   ok(/within|headroom|over/.test(naRow.textContent), "sodium framed as within / headroom / over", naRow.textContent.trim());
+
+  // Day contribution: tap a logged sodium day and match Analytics.topFoods %.
+  const loggedNaCell = [...window.document.querySelectorAll(".hm-cell[data-day]")]
+    .find((c) => /hit|over|under|logged/i.test(c.className) && c.dataset.day);
+  if (loggedNaCell) {
+    loggedNaCell.click();
+    await new Promise((r) => setTimeout(r, 20));
+    const dayKey = loggedNaCell.dataset.day;
+    // Classic-script `const Analytics` is not on window; resolve via the realm.
+    const Analytics = window.eval("Analytics");
+    const Ledger = window.eval("Ledger");
+    const expected = Analytics.topFoods(
+      [dayKey],
+      (d) => Ledger.entriesFor(d),
+      "sodium",
+      6
+    );
+    const detailNames = [...window.document.querySelectorAll("#day-detail .topfood-list .tf-name")]
+      .map((n) => n.textContent.trim());
+    const detailPcts = [...window.document.querySelectorAll("#day-detail .topfood-list .tf-v .small")]
+      .map((n) => Number(String(n.textContent).replace(/[^0-9.]/g, "")));
+    ok(detailNames.length > 0, "sodium day detail lists contributing foods");
+    ok(/limit|headroom|over/i.test(text("#day-detail")), "day detail uses ceiling wording for sodium");
+    ok(expected.length > 0, "Analytics.topFoods returns rows for the tapped day");
+    if (expected.length) {
+      ok(detailNames[0] === expected[0].name, "day detail top food matches Analytics.topFoods",
+        `got ${detailNames[0]} vs ${expected[0].name}`);
+      ok(detailPcts[0] === Math.round(expected[0].pct * 100),
+        "day detail % matches Analytics.topFoods",
+        `got ${detailPcts[0]} vs ${Math.round(expected[0].pct * 100)}`);
+    }
+
+    // Switching the nutrient pill should re-score the open day, not wipe it.
+    window.document.querySelector('#insight-nutrient [data-nutrient="protein"]').click();
+    await new Promise((r) => setTimeout(r, 20));
+    ok($("#day-detail").innerHTML.trim().length > 0, "nutrient pill keeps the open day card");
+    ok(/Protein/i.test(text("#day-detail")), "open day card re-scores for the new nutrient");
+    window.document.querySelector('#insight-nutrient [data-nutrient="sodium"]').click();
+    await new Promise((r) => setTimeout(r, 20));
+  } else {
+    ok(false, "expected a logged heatmap cell for day-contribution check");
+  }
 
   // Protein: a floor. Exceeding it must never be flagged, matching Today.
   window.document.querySelector('#insight-nutrient [data-nutrient="protein"]').click();
@@ -373,6 +419,36 @@ async function run(label, days) {
     const wHit = window.UI.onWeightTap(180);
     ok(wHit == null || typeof wHit.value === "number", "weight tap returns a weigh-in or null");
   }
+
+  // Today HUD → same contribution card for the viewed day.
+  // Set Insights nutrient to protein first so we can assert HUD taps do not bleed.
+  window.document.querySelector('#insight-nutrient [data-nutrient="protein"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(window.document.querySelector('#insight-nutrient [data-nutrient="protein"]').classList.contains("active"),
+    "Insights nutrient parked on protein before HUD tap");
+  const todayTab = [...window.document.querySelectorAll(".tab")].find((x) => x.dataset.view === "today");
+  if (todayTab) { todayTab.click(); await new Promise((r) => setTimeout(r, 20)); }
+  const sodiumHud = window.document.querySelector('#hud [data-hud-nutrient="sodium"]');
+  ok(!!sodiumHud, "HUD sodium row is tappable");
+  sodiumHud.click();
+  await new Promise((r) => setTimeout(r, 20));
+  const todayDetail = $("#today-day-detail");
+  ok(todayDetail && todayDetail.innerHTML.trim().length > 0, "HUD tap opens Today contribution card");
+  ok(todayDetail.querySelector(".topfood-list"), "Today contribution shows food % bars");
+  ok(/Sodium|sodium|limit|headroom|over/i.test(todayDetail.textContent), "Today contribution is sodium-scoped");
+  const closeBtn = todayDetail.querySelector("[data-action='close-day-contrib']");
+  ok(!!closeBtn, "Today contribution has a close control");
+  if (closeBtn) {
+    closeBtn.click();
+    await new Promise((r) => setTimeout(r, 10));
+    ok(!$("#today-day-detail").innerHTML.trim(), "close clears Today contribution");
+  }
+  // Cross-tab: Today HUD must not rewrite the Insights nutrient selection.
+  const insightsTab = [...window.document.querySelectorAll(".tab")].find((x) => x.dataset.view === "insights");
+  if (insightsTab) { insightsTab.click(); await new Promise((r) => setTimeout(r, 40)); }
+  ok(window.document.querySelector('#insight-nutrient [data-nutrient="protein"]').classList.contains("active"),
+    "Today HUD tap does not rewrite Insights nutrient");
+  ok(/Minimum/.test(text("#trend-legend")), "Insights protein framing survives a Today HUD sodium tap");
 
   // Other tabs still work.
   for (const v of ["today", "foods", "settings"]) {

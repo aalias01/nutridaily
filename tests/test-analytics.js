@@ -358,6 +358,14 @@ console.log("\n[11] Meals and top foods");
 
   const topP = Analytics.topFoods(keys, entriesFor, "protein", 2);
   ok(topP.length === 2 && topP[0].name === "Chicken bowl", "top by protein, limited");
+
+  // Single-day range: same pct model the day-detail card uses.
+  const oneDay = [keys[0]];
+  const dayNa = Analytics.topFoods(oneDay, entriesFor, "sodium", 6);
+  const dayGrand = (entriesFor(keys[0]) || []).reduce((s, e) => s + ((e.macros && e.macros.na) || 0), 0);
+  ok(dayNa.length > 0, "single-day topFoods returns rows");
+  approx(dayNa.reduce((s, r) => s + r.pct, 0), 1, 0.001, "single-day shares sum to 1");
+  approx(dayNa[0].total, dayGrand, 0.001, "single-day total matches entry sum");
 }
 
 console.log("\n[12] Heatmap");

@@ -39,6 +39,7 @@ const App = (() => {
     insightPhaseId: null, // null = active phase when daysBack is "phase"
     insightRollup: "day", // day | week — weekly smooths out single-day noise
     insightTopFoodMetric: "kcal", // kcal | protein | sodium | fiber
+    dayContribMetric: null, // when set, Today shows contribution breakdown for viewDay
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
     yesterdayKey: null,
     // Close-the-gap sheet
@@ -472,12 +473,43 @@ const App = (() => {
     UI.setDayLabel(state.viewDay, isToday());
   }
 
+  function refreshTodayContrib() {
+    if (!state.dayContribMetric) {
+      UI.renderDayDetail(null, { root: "#today-day-detail" });
+      return;
+    }
+    UI.renderDayDetail(state.viewDay, {
+      metric: state.dayContribMetric,
+      root: "#today-day-detail",
+      goals: goalsForView(),
+      settings: state.settings,
+    });
+  }
+
+  function openDayContrib(metric, opts) {
+    const o = opts || {};
+    const day = o.day || state.viewDay;
+    const root = o.root || "#today-day-detail";
+    if (root === "#today-day-detail") state.dayContribMetric = metric;
+    // Do not write insightNutrient from Today — that silently rewires the
+    // Insights chart/heatmap/scorecard when the user was only asking about today.
+    UI.renderDayDetail(day, {
+      metric,
+      root,
+      goals: o.goals || (day === state.viewDay ? goalsForView() : Phases.goalsForDay(day, state.settings)),
+      settings: state.settings,
+    });
+    const el = UI.$(root);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
   function refreshDay() {
     refreshHUD();
     refreshDayGoalsLink();
     refreshGapChip();
     syncWeightField({ resetEditing: true });
     UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
+    refreshTodayContrib();
   }
 
   // ---------- Close the gap ----------
@@ -3038,9 +3070,10 @@ const App = (() => {
       heatmap.addEventListener("click", (e) => {
         const cell = e.target.closest("[data-action='heatmap-day']");
         if (!cell) return;
-        UI.renderDayDetail(cell.dataset.day);
-        const detail = UI.$("#day-detail");
-        if (detail) detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        openDayContrib(state.insightNutrient || "kcal", {
+          day: cell.dataset.day,
+          root: "#day-detail",
+        });
       });
     }
     const canvas = UI.$("#trend-canvas");
@@ -3048,7 +3081,9 @@ const App = (() => {
       canvas.style.cursor = "pointer";
       canvas.addEventListener("click", (e) => {
         const day = UI.onTrendTap(e.clientX);
-        if (day) UI.renderDayDetail(day);
+        if (day) {
+          openDayContrib(state.insightNutrient || "kcal", { day, root: "#day-detail" });
+        }
       });
     }
     const wCanvas = UI.$("#weight-canvas");
@@ -3056,7 +3091,27 @@ const App = (() => {
       wCanvas.style.cursor = "pointer";
       wCanvas.addEventListener("click", (e) => {
         const hit = UI.onWeightTap(e.clientX);
-        if (hit) UI.renderDayDetail(hit.day);
+        if (hit) {
+          openDayContrib(state.insightNutrient || "kcal", { day: hit.day, root: "#day-detail" });
+        }
+      });
+    }
+    const hud = UI.$("#hud");
+    if (hud) {
+      const openFromHud = (el) => {
+        const nut = el && el.dataset.hudNutrient;
+        if (!nut) return;
+        openDayContrib(nut, { root: "#today-day-detail" });
+      };
+      hud.addEventListener("click", (e) => {
+        openFromHud(e.target.closest("[data-hud-nutrient]"));
+      });
+      hud.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        const el = e.target.closest("[data-hud-nutrient]");
+        if (!el) return;
+        e.preventDefault();
+        openFromHud(el);
       });
     }
     let resizeT = null;
@@ -3114,6 +3169,9 @@ const App = (() => {
         state.viewDay = actionEl.dataset.day;
         switchView("today");
         refreshDay();
+      } else if (action === "close-day-contrib") {
+        state.dayContribMetric = null;
+        UI.renderDayDetail(null, { root: "#today-day-detail" });
       } else if (action === "scale-batch") {
         const food = findFood(id);
         if (!food) return;
