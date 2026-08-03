@@ -844,21 +844,50 @@ const App = (() => {
     });
   }
 
+  /** Split option label badge from explanatory note (supports older joined notes). */
+  function gapPlanLabelAndNote(plan) {
+    if (!plan) return { label: "", note: "" };
+    let label = (plan.optionLabel || "").trim();
+    let note = (plan.note || "").trim();
+    if (label && note) {
+      const pref = `${label} · `;
+      const prefAlt = `${label} • `;
+      if (note.startsWith(pref)) note = note.slice(pref.length).trim();
+      else if (note.startsWith(prefAlt)) note = note.slice(prefAlt.length).trim();
+      else if (note === label) note = "";
+    }
+    return { label, note };
+  }
+
   function renderGapPlanStep() {
     const plan = dayPlan(state.viewDay);
     const noteEl = UI.$("#gap-plan-note");
+    const labelEl = UI.$("#gap-plan-label");
+    const statusEl = UI.$("#gap-plan-status");
+    const hintEl = UI.$("#gap-plan-hint");
     const banner = UI.$("#gap-nutri-banner");
     const projEl = UI.$("#gap-plan-projection");
     if (!plan) {
-      if (noteEl) noteEl.textContent = "No plan saved for this day yet.";
-      if (projEl) { projEl.hidden = true; projEl.textContent = ""; }
+      if (noteEl) {
+        noteEl.hidden = false;
+        noteEl.textContent = "No plan saved for this day yet.";
+      }
+      if (labelEl) { labelEl.hidden = true; labelEl.textContent = ""; }
+      UI.renderGapPlanStatus(statusEl, []);
+      if (projEl) { projEl.hidden = true; projEl.innerHTML = ""; }
+      if (hintEl) hintEl.hidden = true;
       UI.renderGapPlanList([]);
       if (banner) banner.hidden = true;
       return;
     }
+    const { label, note } = gapPlanLabelAndNote(plan);
+    if (labelEl) {
+      labelEl.hidden = !label;
+      labelEl.textContent = label;
+    }
     if (noteEl) {
-      const reach = plan.reachable === false ? "Misses protein or exceeds sodium. " : "";
-      noteEl.textContent = `${reach}${plan.note || ""}`.trim() || "Tap a food to log the suggested amount (you can edit grams).";
+      noteEl.hidden = !note;
+      noteEl.textContent = note;
     }
     if (banner) {
       const pending = state.gapNutriPending;
@@ -884,6 +913,8 @@ const App = (() => {
       const macros = food ? FoodMatch.computeMacros(food.per100, g || 0) : null;
       return { it, g, macros };
     });
+    const hasPending = rows.some((r) => r.it && r.it.status === "pending");
+    if (hintEl) hintEl.hidden = !hasPending;
     renderGapPlanProjection(plan, rows);
     UI.renderGapPlanList(rows.map(({ it, g, macros }) => {
       const qtyLabel = g != null
@@ -891,34 +922,64 @@ const App = (() => {
           ? `${it.qty} ${it.unit} (≈ ${UI.fmt(g)} g)`
           : `${UI.fmt(g)} g`)
         : `${it.qty} ${it.unit || "g"}`;
-      const sub = macros
-        ? `${it.meal || "snack"} · ${UI.fmt(macros.kcal)} kcal · P ${UI.fmt(macros.p)} · C ${UI.fmt(macros.c)} · F ${UI.fmt(macros.f)} · Fb ${UI.fmt(macros.fb)} · Na ${UI.fmt(macros.na || 0)}`
-        : (it.meal || "snack");
-      return { id: it.id, name: it.name, qtyLabel, sub, status: it.status };
+      return {
+        id: it.id,
+        name: UI.titleCaseName(it.name),
+        meal: it.meal || "snack",
+        qtyLabel,
+        macros: macros
+          ? `${UI.fmt(macros.kcal)} kcal · P ${UI.fmt(macros.p)} · C ${UI.fmt(macros.c)} · F ${UI.fmt(macros.f)}`
+          : "",
+        macrosExtra: macros
+          ? `Fb ${UI.fmt(macros.fb)} · Na ${UI.fmt(macros.na || 0)}`
+          : "",
+        status: it.status,
+      };
     }));
   }
 
   /** Live projection = logged day totals + macros of still-pending plan items. */
   function renderGapPlanProjection(plan, rows) {
     const el = UI.$("#gap-plan-projection");
+    const statusEl = UI.$("#gap-plan-status");
     if (!el) return;
-    const hide = () => { el.hidden = true; el.textContent = ""; };
+    const hide = () => {
+      el.hidden = true;
+      el.innerHTML = "";
+    };
     const pending = (rows || []).filter((r) => r.it && r.it.status === "pending");
-    if (!plan || !pending.length) { hide(); return; }
     const goals = goalsForView();
+    const setStatus = (projected, unresolved) => {
+      let flags = projected ? UI.planProjectionFlags(projected, goals) : [];
+      if (!projected && plan && plan.reachable === false) {
+        flags = flags.concat([{ id: "fallback", label: "Targets missed" }]);
+      }
+      if (unresolved > 0) {
+        flags = flags.concat([{ id: "unresolved", label: `${unresolved} food not in library` }]);
+      }
+      UI.renderGapPlanStatus(statusEl, flags);
+    };
+    if (!plan || !pending.length) {
+      hide();
+      setStatus(null, 0);
+      return;
+    }
     const resolved = pending.filter((r) => r.macros);
     if (!resolved.length) {
-      const text = plan.projected ? UI.formatPlanProjection(plan.projected, goals, { source: "ai" }) : "";
-      el.hidden = !text;
-      el.textContent = text;
+      if (plan.projected) {
+        UI.renderPlanProjection(el, plan.projected, goals, { source: "ai" });
+        setStatus(plan.projected, pending.length);
+      } else {
+        hide();
+        setStatus(null, pending.length);
+      }
       return;
     }
     const means = GapPrompt.totalsMeans(Ledger.totalsFor(state.viewDay));
     const projected = GapPrompt.projectTotals(means, resolved.map((r) => GapPrompt.macroMeans(r.macros)));
-    el.hidden = false;
-    el.textContent = UI.formatPlanProjection(projected, goals, {
-      unresolved: pending.length - resolved.length,
-    });
+    const unresolved = pending.length - resolved.length;
+    UI.renderPlanProjection(el, projected, goals);
+    setStatus(projected, unresolved);
   }
 
   function resolveGapFood(item) {
@@ -991,11 +1052,10 @@ const App = (() => {
       };
     });
     const carried = prevLogged.map((it) => ({ ...it }));
-    const noteBits = [opt.label, opt.note].filter(Boolean).join(" · ");
     const plan = {
       updatedAt: Date.now(),
       reachable: opt.reachable !== false,
-      note: noteBits,
+      note: (opt.note || "").trim(),
       optionLabel: opt.label || "",
       candidates: candidates.map((c) => ({ foodId: c.id, name: c.name })),
       items: [...items, ...carried],

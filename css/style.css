@@ -408,7 +408,65 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .gap-select-row input { margin-top: 3px; flex: 0 0 auto; }
 .gap-select-row .gap-meta { min-width: 0; flex: 1; }
 .gap-select-row .r-name { font-weight: 600; }
-.gap-plan-projection { color: var(--ink); font-weight: 600; margin: 2px 0 10px; }
+.gap-plan-status {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 8px;
+}
+.gap-plan-status[hidden] { display: none !important; }
+.gap-status-chip {
+  display: inline-block;
+  font-size: 12px; font-weight: 650; line-height: 1.2;
+  padding: 3px 8px; border-radius: 999px;
+  color: var(--warn);
+  background: rgba(208, 112, 60, 0.12);
+  border: 1px solid rgba(208, 112, 60, 0.35);
+}
+.gap-status-chip.muted-chip {
+  color: var(--muted);
+  background: var(--bg);
+  border-color: var(--line);
+  font-weight: 550;
+}
+.gap-plan-label {
+  display: inline-block;
+  font-size: 13px; font-weight: 650;
+  color: var(--accent-ink);
+  background: rgba(61, 153, 112, 0.12);
+  border: 1px solid rgba(61, 153, 112, 0.35);
+  border-radius: 999px;
+  padding: 3px 10px;
+  margin: 0 0 8px;
+}
+.gap-plan-label[hidden] { display: none !important; }
+#gap-plan-note { margin: 0 0 8px; }
+#gap-plan-note[hidden] { display: none !important; }
+#gap-plan-hint { margin: 0 0 6px; }
+#gap-plan-hint[hidden] { display: none !important; }
+#gap-disclaimer[hidden] { display: none !important; }
+.gap-plan-projection {
+  color: var(--ink);
+  margin: 2px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.gap-proj-lead {
+  font-size: 12.5px; font-weight: 600; color: var(--muted);
+  margin: 0 0 8px;
+}
+.gap-proj-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+.gap-proj-metric {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  font-size: 13px; font-weight: 600;
+}
+.gap-proj-metric .gap-proj-k { color: var(--muted); font-weight: 550; }
+.gap-proj-metric.flag .gap-proj-v { color: var(--warn); }
+.gap-macros-extra { color: var(--muted); }
 .gap-plan-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
 .gap-plan-item {
   border: 1px solid var(--line); border-radius: 12px;

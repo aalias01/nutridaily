@@ -1227,33 +1227,74 @@ const UI = (() => {
     return bits.length ? `Gap: ${bits.join(" · ")}` : "Targets already met (or no goals set).";
   }
 
-  /** Live end-of-day projection line for the plan sheet. */
-  function formatPlanProjection(projected, goals, opts) {
-    if (!projected) return "";
-    const o = opts || {};
-    const pair = (label, key, unit) => {
-      const v = Number(projected[key]);
-      if (!Number.isFinite(v)) return "";
-      const g = Number(goals && goals[key]) || 0;
-      const head = label ? `${label} ` : "";
-      return g ? `${head}${fmt(v)} / ${fmt(g)}${unit}` : `${head}${fmt(v)}${unit}`;
-    };
-    const bits = [
-      `~${pair("", "kcal", "")} kcal`,
-      pair("P", "protein", ""),
-      pair("C", "carbs", ""),
-      pair("F", "fat", ""),
-      pair("Fb", "fiber", ""),
-      pair("Na", "sodium", ""),
-    ].filter(Boolean);
+  /** Display title-case for plan food names; leave mixed-case catalog names alone. */
+  function titleCaseName(name) {
+    const s = String(name || "").trim();
+    if (!s) return s;
+    if (s !== s.toLowerCase() && s !== s.toUpperCase()) return s;
+    return s.toLowerCase().replace(/(^|[\s-/])(\S)/g, (_, sep, ch) => sep + ch.toUpperCase());
+  }
+
+  /** Hard constraint flags for plan projection (protein floor, sodium ceiling). */
+  function planProjectionFlags(projected, goals) {
     const flags = [];
+    if (!projected) return flags;
     const pFloor = Number(goals && goals.protein) || 0;
     const naCap = Number(goals && goals.sodium) || 0;
-    if (pFloor && Phases.classify(projected.protein, pFloor, Phases.BANDS.protein) === "under") flags.push("P short");
-    if (naCap && Phases.classify(projected.sodium, naCap, Phases.BANDS.sodium) === "over") flags.push("Na over");
-    if (o.unresolved > 0) flags.push(`${o.unresolved} food not in library`);
+    if (pFloor && Phases.classify(projected.protein, pFloor, Phases.BANDS.protein) === "under") {
+      flags.push({ id: "p-short", label: "P short" });
+    }
+    if (naCap && Phases.classify(projected.sodium, naCap, Phases.BANDS.sodium) === "over") {
+      flags.push({ id: "na-over", label: "Na over" });
+    }
+    return flags;
+  }
+
+  /** Structured end-of-day projection block for the plan sheet. */
+  function renderPlanProjection(el, projected, goals, opts) {
+    if (!el) return;
+    if (!projected) {
+      el.hidden = true;
+      el.innerHTML = "";
+      return;
+    }
+    const o = opts || {};
+    const g = goals || {};
     const lead = o.source === "ai" ? "AI projected end of day" : "With remaining plan";
-    return `${lead} → ${bits.join(" · ")}${flags.length ? ` (${flags.join(", ")})` : ""}`;
+    const flagged = new Set(planProjectionFlags(projected, g).map((f) => f.id));
+    const metric = (label, key, unit, flagId) => {
+      const v = Number(projected[key]);
+      if (!Number.isFinite(v)) return "";
+      const goal = Number(g[key]) || 0;
+      const hot = flagId && flagged.has(flagId);
+      const val = goal
+        ? `${key === "kcal" ? "~" : ""}${fmt(v)} / ${fmt(goal)}${unit}`
+        : `${key === "kcal" ? "~" : ""}${fmt(v)}${unit}`;
+      return `<div class="gap-proj-metric${hot ? " flag" : ""}"><span class="gap-proj-k">${esc(label)}</span><span class="gap-proj-v">${esc(val)}</span></div>`;
+    };
+    const grid = [
+      metric("kcal", "kcal", "", null),
+      metric("Protein", "protein", " g", "p-short"),
+      metric("C", "carbs", " g", null),
+      metric("F", "fat", " g", null),
+      metric("Fb", "fiber", " g", null),
+      metric("Sodium", "sodium", " mg", "na-over"),
+    ].filter(Boolean).join("");
+    el.hidden = false;
+    el.innerHTML = `<div class="gap-proj-lead">${esc(lead)}</div><div class="gap-proj-grid">${grid}</div>`;
+  }
+
+  function renderGapPlanStatus(el, flags) {
+    if (!el) return;
+    if (!flags || !flags.length) {
+      el.hidden = true;
+      el.innerHTML = "";
+      return;
+    }
+    el.hidden = false;
+    el.innerHTML = flags.map((f) =>
+      `<span class="gap-status-chip${f.id === "fallback" || f.id === "unresolved" ? " muted-chip" : ""}">${esc(f.label)}</span>`
+    ).join("");
   }
 
   /**
@@ -1295,7 +1336,7 @@ const UI = (() => {
 
   /**
    * Plan items list. pending first, then logged.
-   * items: [{ id, name, qtyLabel, sub, status }]
+   * items: [{ id, name, meal, qtyLabel, macros, macrosExtra, status }]
    */
   function renderGapPlanList(items) {
     const root = $("#gap-plan-list");
@@ -1306,10 +1347,16 @@ const UI = (() => {
     }
     root.innerHTML = items.map((it) => {
       const logged = it.status === "logged";
+      const meal = it.meal || "";
+      const head = [meal, it.qtyLabel].filter(Boolean).join(" · ");
+      const macros = it.macros || "";
+      const extra = it.macrosExtra
+        ? `<span class="gap-macros-extra"> · ${esc(it.macrosExtra)}</span>`
+        : "";
       return `
         <button type="button" class="gap-plan-item${logged ? " logged" : ""}" data-action="log-gap-item" data-id="${esc(it.id)}" ${logged ? "disabled" : ""}>
           <div class="r-name">${esc(it.name)}</div>
-          <div class="r-qty">${esc(it.qtyLabel || "")}${it.sub ? ` · ${esc(it.sub)}` : ""}${logged ? " · logged" : ""}</div>
+          <div class="r-qty">${esc(head)}${macros ? ` · ${esc(macros)}` : ""}${extra}${logged ? " · logged" : ""}</div>
         </button>`;
     }).join("");
   }
@@ -1333,6 +1380,8 @@ const UI = (() => {
             ? "Choose a plan"
             : "Close the gap";
     }
+    const disclaimer = $("#gap-disclaimer");
+    if (disclaimer) disclaimer.hidden = step === "plan";
   }
 
   /**
@@ -1367,6 +1416,7 @@ const UI = (() => {
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
     syncReviewLogAsUI, renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
-    formatGapRemaining, formatPlanProjection, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
+    formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
+    titleCaseName, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
   };
 })();

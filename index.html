@@ -438,7 +438,7 @@
     <div class="sheet-card sheet-card-tall">
       <div class="sheet-grab"></div>
       <h3 id="gap-sheet-title">Close the gap</h3>
-      <p class="disclaimer">
+      <p class="disclaimer" id="gap-disclaimer">
         LLM guidance is reference only, not medical advice. Quantities come from a paste you bring back from your own chat.
       </p>
 
@@ -475,9 +475,12 @@
       </div>
 
       <div id="gap-step-plan" hidden>
+        <div id="gap-plan-status" class="gap-plan-status" hidden></div>
+        <div id="gap-plan-label" class="gap-plan-label" hidden></div>
         <p class="muted small" id="gap-plan-note"></p>
-        <p class="small gap-plan-projection" id="gap-plan-projection" hidden></p>
+        <div class="gap-plan-projection" id="gap-plan-projection" hidden></div>
         <div id="gap-nutri-banner" class="banner warn" hidden></div>
+        <p class="muted small" id="gap-plan-hint">Tap a food to log (you can edit grams).</p>
         <div id="gap-plan-list" class="gap-plan-list"></div>
         <div class="col-actions">
           <button id="btn-gap-recalc" class="btn full" type="button">Recalculate with AI</button>
