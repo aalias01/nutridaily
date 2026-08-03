@@ -370,15 +370,37 @@ const App = (() => {
     return bodyWeightUnit() === "kg" ? n : n * KG_PER_LB;
   }
 
-  function syncWeightField() {
+  let weightFieldEditing = false;
+
+  function applyWeightFieldMode() {
+    const input = UI.$("#day-weight");
+    const btn = UI.$("#btn-weight-save");
+    const row = UI.$("#weight-row");
+    if (!input || !btn) return;
+    const hasWeight = Phases.weightForDay(state.settings, state.viewDay) != null;
+    const locked = hasWeight && !weightFieldEditing;
+    input.readOnly = locked;
+    input.classList.toggle("locked", locked);
+    if (row) row.classList.toggle("locked", locked);
+    btn.textContent = locked ? "Edit" : "Save";
+  }
+
+  function syncWeightField(opts) {
     const input = UI.$("#day-weight");
     const unit = UI.$("#weight-unit");
     if (!input) return;
+    if (opts && opts.resetEditing) weightFieldEditing = false;
     const kg = Phases.weightForDay(state.settings, state.viewDay);
     if (unit) unit.textContent = bodyWeightUnit();
-    if (kg == null) { input.value = ""; return; }
+    if (kg == null) {
+      input.value = "";
+      weightFieldEditing = false;
+      applyWeightFieldMode();
+      return;
+    }
     const shown = kgToDisplay(kg);
     input.value = bodyWeightUnit() === "kg" ? String(shown) : shown.toFixed(1);
+    applyWeightFieldMode();
   }
 
   function saveWeightFromField() {
@@ -388,6 +410,8 @@ const App = (() => {
       state.settings.weights[state.viewDay] = { cleared: true, updatedAt: Date.now() };
       saveSettings();
       Sync.schedulePush();
+      weightFieldEditing = false;
+      syncWeightField();
       UI.toast("Weight cleared");
       return;
     }
@@ -403,8 +427,22 @@ const App = (() => {
     };
     saveSettings();
     Sync.schedulePush();
+    weightFieldEditing = false;
+    syncWeightField();
     UI.toast("Weight saved");
     refreshInsights();
+  }
+
+  function onWeightActionClick() {
+    const input = UI.$("#day-weight");
+    if (input && input.readOnly) {
+      weightFieldEditing = true;
+      applyWeightFieldMode();
+      input.focus();
+      input.select();
+      return;
+    }
+    saveWeightFromField();
   }
 
   function isToday() { return state.viewDay === Ledger.todayKey(); }
@@ -424,7 +462,7 @@ const App = (() => {
     refreshHUD();
     refreshDayGoalsLink();
     refreshGapChip();
-    syncWeightField();
+    syncWeightField({ resetEditing: true });
     UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
   }
 
@@ -2585,9 +2623,13 @@ const App = (() => {
       });
     }
 
-    UI.$("#btn-weight-save").addEventListener("click", saveWeightFromField);
+    UI.$("#btn-weight-save").addEventListener("click", onWeightActionClick);
     UI.$("#day-weight").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); saveWeightFromField(); }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (e.target.readOnly) return;
+        saveWeightFromField();
+      }
     });
 
     UI.$("#foods-search").addEventListener("input", refreshFoods);
