@@ -47,7 +47,7 @@ Everything is derived on device from your own log — no server, no model, no gu
 - **Energy expenditure** — an adaptive TDEE estimate: average intake minus what your weight trend actually did (7700 kcal/kg). Comes with the intake needed to lose 0.5 / 0.25 kg per week, maintain, or gain. Shown only when there is enough data; otherwise the card says exactly what is missing rather than printing a confident-looking number.
 - **Weight** — raw weigh-ins as dots with a gap-aware EMA trend line through them, rate per week from a regression on the weigh-ins, and a 4-week projection.
 - **Consistency** — a calendar heatmap coloured by how each day landed against target, streaks, weekday-versus-weekend logging rates, and a per-nutrient scorecard with under / on-target / over bars.
-- **Breakdown** — macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by calories, protein, sodium or fiber.
+- **Breakdown** — macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by any of the six nutrients — the one that finds your sodium is one soup, or your fat is one spoon of peanut butter.
 
 It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), and days where you bumped your target are marked — separating bumps you planned from ones set after the day ended, since a bump moves the target and would otherwise turn an over day into a hit.
 
@@ -59,7 +59,9 @@ Numbers are estimates from logged data. Nothing here is medical advice; talk to 
 
 ## Your data
 
-Lives in this browser. Optional Google Drive backup (`NutriDaily/nutridaily-data.json`). Export / import JSON in Settings. Past log lines keep their macros if you later update a recipe.
+Lives in this browser. Optional Google Drive backup (`NutriDaily/nutridaily-data.json`). Export / import JSON in Settings.
+
+**Editing a food does not rewrite history.** Every log line stores the macros and food version it was saved with, so correcting or changing a recipe applies from that point on — past days stay as they were logged. That is what you want when a recipe genuinely changed; if you had a number wrong all along and want an old day fixed, edit that entry directly on the day.
 
 On the live Vercel deploy, sign-in uses a small auth API that stores a Google **refresh token** in an httpOnly cookie, so Pixel/iPhone home-screen apps can stay connected across reopen without tapping Reconnect. Meals always keep working locally if Drive ever pauses (revoked access, cleared site data, or Google Testing refresh expiry). A Hide on the reconnect banner lasts for the rest of the calendar day.
 

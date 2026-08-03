@@ -484,6 +484,15 @@ const UI = (() => {
     if (parsed.unknownLines && parsed.unknownLines.length) {
       banners.push(`<details class="banner muted"><summary>Ignored lines</summary><pre>${esc(parsed.unknownLines.join("\n"))}</pre></details>`);
     }
+    // Editing a recipe never rewrites history: each log line keeps the macros
+    // and food version it was saved with. Deleting a food already said as much;
+    // editing is far more common and said nothing, so people could reasonably
+    // assume a correction propagated backwards. It does not.
+    if (opts && opts.updateId) {
+      banners.push(
+        `<div class="banner muted">Days you already logged keep the macros they were saved with. This applies from now on.</div>`
+      );
+    }
     $("#review-banners").innerHTML = banners.join("");
     $("#rev-name").value = f.name || "";
     $("#rev-aliases").value = (f.aliases || []).join(", ");
@@ -1560,7 +1569,7 @@ const UI = (() => {
     const root = $("#top-foods");
     if (!root) return;
     const metric = ctx.topFoodMetric;
-    const unit = { kcal: " kcal", protein: " g", sodium: " mg", fiber: " g" }[metric] || "";
+    const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg" }[metric] || "";
     const rows = Analytics.topFoods(ctx.keys, (day) => Ledger.entriesFor(day), metric, 6);
     const pills = $("#topfood-metric");
     if (pills) {

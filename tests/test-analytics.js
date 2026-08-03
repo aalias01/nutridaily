@@ -717,5 +717,80 @@ console.log("\n[22] Retarget macros for a new calorie goal");
     "handles empty macro targets without dividing by zero");
 }
 
+
+console.log("\n[23] Top foods covers every nutrient");
+{
+  const keys = keysEndingAt(END, 3);
+  const entries = {
+    [keys[0]]: [
+      { name: "Rice", meal: "lunch", macros: { kcal: 400, p: 8, c: 88, f: 1, fb: 2, na: 5 } },
+      { name: "Olive oil", meal: "lunch", macros: { kcal: 240, p: 0, c: 0, f: 27, fb: 0, na: 0 } },
+    ],
+    [keys[1]]: [
+      { name: "Rice", meal: "lunch", macros: { kcal: 400, p: 8, c: 88, f: 1, fb: 2, na: 5 } },
+      { name: "Lentils", meal: "dinner", macros: { kcal: 230, p: 18, c: 40, f: 1, fb: 16, na: 4 } },
+    ],
+    [keys[2]]: [
+      { name: "Salted nuts", meal: "snack", macros: { kcal: 300, p: 10, c: 12, f: 26, fb: 4, na: 900 } },
+    ],
+  };
+  const entriesFor = (d) => entries[d] || [];
+
+  // Every metric the UI offers must rank by that metric, not fall back to kcal.
+  const top = (m) => Analytics.topFoods(keys, entriesFor, m, 5)[0].name;
+  ok(top("kcal") === "Rice", "kcal ranking", `got ${top("kcal")}`);
+  ok(top("carbs") === "Rice", "carbs ranking", `got ${top("carbs")}`);
+  ok(top("fat") === "Olive oil", "fat ranking is not just kcal again", `got ${top("fat")}`);
+  ok(top("fiber") === "Lentils", "fiber ranking", `got ${top("fiber")}`);
+  ok(top("sodium") === "Salted nuts", "sodium ranking", `got ${top("sodium")}`);
+  ok(top("protein") === "Lentils", "protein ranking", `got ${top("protein")}`);
+
+  // Shares are computed against that metric's own total, not calories.
+  const fat = Analytics.topFoods(keys, entriesFor, "fat", 5);
+  // Rice 1 + oil 27 (day 1), rice 1 + lentils 1 (day 2), nuts 26 (day 3).
+  const fatTotal = 1 + 27 + 1 + 1 + 26;
+  approx(fat[0].pct, 27 / fatTotal, 0.001, "fat share is of total fat, not of calories");
+  approx(fat.reduce((s2, r) => s2 + r.pct, 0), 1, 0.001, "fat shares sum to 1");
+
+  ok(Analytics.topFoods(keys, entriesFor, "nonsense", 5)[0].name === "Rice",
+    "an unknown metric falls back to calories rather than breaking");
+}
+
+console.log("\n[24] Editing a food never rewrites history");
+{
+  // This is the ledger's core promise, asserted here so a future change to
+  // Foods or the entry pipeline cannot quietly break it.
+  const Ledger2 = require("../js/ledger.js");
+  globalThis.FOOD_DB = require("../js/data-foods.js");
+  globalThis.FoodMatch = require("../js/foodmatch.js");
+  const Foods = require("../js/foods.js");
+
+  Ledger2.clearAll();
+  Ledger2._resetCacheForTests();
+  let food = Foods.createFromDraft({
+    name: "Chapati", cat: "dish",
+    per100: { kcal: 300, p: 9, c: 55, f: 5, fb: 4, na: 300 }, units: { piece: 40 },
+  });
+  Ledger2.addEntry("2026-07-10", Foods.entryFromQty(food, 100, "g", "lunch"));
+
+  const before = Ledger2.totalsFor("2026-07-10").kcal.mean;
+  ok(before === 300, "logged at the original macros", `got ${before}`);
+
+  food = Foods.applyUpdate(food, {
+    name: "Chapati", cat: "dish",
+    per100: { kcal: 400, p: 9, c: 55, f: 5, fb: 4, na: 300 }, units: { piece: 40 },
+  });
+  ok(Ledger2.totalsFor("2026-07-10").kcal.mean === 300, "the past day is untouched by the edit");
+
+  Ledger2.addEntry("2026-07-12", Foods.entryFromQty(food, 100, "g", "lunch"));
+  ok(Ledger2.totalsFor("2026-07-12").kcal.mean === 400, "days logged after the edit use the new macros");
+
+  const stored = Ledger2.entriesFor("2026-07-10")[0];
+  ok(stored.macros.kcal === 300, "the entry stores its own macro snapshot");
+  ok(stored.foodVersion === 1, "and the food version it was logged at", `got ${stored.foodVersion}`);
+  Ledger2.clearAll();
+  Ledger2._resetCacheForTests();
+}
+
 console.log(`\nanalytics: ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
