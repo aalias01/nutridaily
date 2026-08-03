@@ -3073,19 +3073,6 @@ const App = (() => {
         savePersonal();
         UI.renderFoodDetail(next, { mode: state.detailMode || "library" });
         UI.toast(`Batch → ${Math.round(grams)} g / ${servings} serv`);
-      } else if (action === "enable-count-log") {
-        const food = findFood(id);
-        if (!food) return;
-        const grams = Number(actionEl.dataset.grams);
-        const next = Foods.enableCountLogging(food, grams, FoodMatch.countNoun(food));
-        const idx = state.personalFoods.findIndex((f) => f.id === id);
-        if (idx < 0) return;
-        state.personalFoods[idx] = next;
-        savePersonal();
-        Sync.schedulePush();
-        UI.renderFoodDetail(next, { mode: state.detailMode || "library" });
-        refreshFoods();
-        UI.toast(`Logs by count: 1 ${next.countLabel || "piece"} = ${Math.round(next.units.piece)} g`);
       } else if (action === "food-detail") {
         openDetail(id, "library");
       } else if (action === "log-this") {

@@ -620,13 +620,6 @@ const UI = (() => {
       return t ? `<li>${esc(t)}</li>` : "";
     }).join("");
     const prov = Foods.provenance(food);
-    const repairG = pieceG || (serv && +serv > 0 ? +serv : null)
-      || (food.batch && food.batch.grams && food.batch.servings
-        ? Math.round(food.batch.grams / food.batch.servings) : null);
-    const showCountRepair = repairG && food.logAs !== "piece";
-    const countRepair = showCountRepair
-      ? `<button type="button" class="btn ghost full" data-action="enable-count-log" data-id="${esc(food.id)}" data-grams="${Math.round(repairG)}">Log by count (1 ${esc(noun)} = ${Math.round(repairG)} g)</button>`
-      : "";
     const batch = food.batch && food.batch.grams
       ? `<div class="card-block"><b>Batch</b>: ${fmt(food.batch.grams)} g · ${food.batch.servings || 1} servings
           <button type="button" class="btn ghost full" style="margin-top:8px" data-action="scale-batch" data-id="${esc(food.id)}">Scale batch</button>
@@ -656,7 +649,6 @@ const UI = (() => {
         ${mode === "log" ? logBtn : editBtn}
         ${mode === "log" ? editBtn : logBtn}
         <button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>
-        ${countRepair}
         <button type="button" class="btn ghost full danger" data-action="delete-food" data-id="${esc(food.id)}">Delete</button>
       </div>`;
   }
