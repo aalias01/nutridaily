@@ -679,15 +679,76 @@ const UI = (() => {
   let _insight = null;
 
   const NUT_META = {
-    kcal:    { label: "Calories", unit: "",    overMul: 1.10, underMul: 0.90 },
-    protein: { label: "Protein",  unit: " g",  overMul: 1.20, underMul: 0.95 },
-    carbs:   { label: "Carbs",    unit: " g",  overMul: 1.15, underMul: 0.85 },
-    fat:     { label: "Fat",      unit: " g",  overMul: 1.15, underMul: 0.85 },
-    fiber:   { label: "Fiber",    unit: " g",  overMul: 1.30, underMul: 0.90 },
-    sodium:  { label: "Sodium",   unit: " mg", overMul: 1.05, underMul: 0 },
+    kcal:    { label: "Calories", unit: "" },
+    protein: { label: "Protein",  unit: " g" },
+    carbs:   { label: "Carbs",    unit: " g" },
+    fat:     { label: "Fat",      unit: " g" },
+    fiber:   { label: "Fiber",    unit: " g" },
+    sodium:  { label: "Sodium",   unit: " mg" },
   };
 
   function nutMeta(key) { return NUT_META[key] || NUT_META.kcal; }
+
+  /**
+   * Targets are not all the same shape, and the UI must not pretend they are:
+   *   floor   (protein, fiber)  — a minimum. More is fine; only short counts.
+   *   ceiling (sodium)          — a limit. Lower is better; only over counts.
+   *   range   (kcal, carbs, fat)— a window. Both directions count.
+   *
+   * `Phases.classify` is the single source of truth, the same call the Today
+   * tab and the scorecard use. Insights previously kept its own multiplier
+   * table, which painted high protein and high fiber as warnings while Today
+   * and the scorecard called the very same days on target.
+   */
+  function bandFor(key) {
+    if (typeof Phases === "undefined") return null;
+    return Phases.BANDS[key] || Phases.BANDS.kcal;
+  }
+
+  /** @returns {"hit"|"under"|"over"|"none"} */
+  function statusFor(key, value, goal) {
+    const band = bandFor(key);
+    if (!band || !Number.isFinite(value) || !goal) return "none";
+    const s = Phases.classify(value, goal, band);
+    return s === "skip" ? "none" : s;
+  }
+
+  /** Bar fill for a value against its target, honouring the band direction. */
+  function statusColor(status, theme) {
+    if (status === "over") return theme.warn;
+    if (status === "under") return withAlpha(theme.accent, 0.55);
+    return theme.accent;
+  }
+
+  /**
+   * Wording per band direction. A ceiling nutrient can never be "under" and a
+   * floor can never be "over", so those words are never shown for them.
+   */
+  const BAND_TEXT = {
+    range:   { under: "under", hit: "on target", over: "over" },
+    floor:   { under: "short", hit: "met",       over: "over" },
+    ceiling: { under: "under", hit: "within",    over: "over" },
+  };
+
+  function bandText(key) {
+    const band = bandFor(key);
+    return BAND_TEXT[(band && band.dir) || "range"] || BAND_TEXT.range;
+  }
+
+  /**
+   * Average distance from target, phrased so the sign cannot be misread.
+   * "-500 mg" on a sodium ceiling means 500 mg of headroom, not a shortfall.
+   */
+  function formatBandDelta(key, avgDelta) {
+    if (!Number.isFinite(avgDelta)) return "—";
+    const band = bandFor(key);
+    const unit = key === "kcal" ? "" : key === "sodium" ? " mg" : " g";
+    const mag = `${fmt(Math.abs(avgDelta))}${unit}`;
+    const dir = (band && band.dir) || "range";
+    if (dir === "ceiling") return avgDelta <= 0 ? `${mag} headroom` : `${mag} over`;
+    if (dir === "floor") return avgDelta >= 0 ? `${mag} above floor` : `${mag} short`;
+    return `${avgDelta >= 0 ? "+" : "-"}${mag}`;
+  }
 
   // ------------------------------------------------------------ canvas util
 
@@ -949,7 +1010,6 @@ const UI = (() => {
     const canvas = $("#trend-canvas");
     if (!canvas) return;
     const theme = chartTheme();
-    const meta = nutMeta(ctx.nutrient);
     const weekly = ctx.rollup === "week";
 
     const series = weekly
@@ -1038,9 +1098,7 @@ const UI = (() => {
       if (!Number.isFinite(p.value)) return;
       const x = pad.l + i * slot + inset;
       const y = yAt(p.value);
-      const over = p.goal && p.value > p.goal * meta.overMul;
-      const under = meta.underMul > 0 && p.goal && p.value < p.goal * meta.underMul;
-      const base = over ? theme.warn : under ? withAlpha(theme.accent, 0.55) : theme.accent;
+      const base = statusColor(statusFor(ctx.nutrient, p.value, p.goal), theme);
       c.fillStyle = p.partial ? withAlpha(base, 0.55) : base;
       c.fillRect(x, y, barW, Math.max(1, pad.t + ih - y));
     });
@@ -1068,9 +1126,13 @@ const UI = (() => {
 
     const legend = $("#trend-legend");
     if (legend) {
+      // Name the line for what it is: sodium's is a limit, protein's a minimum.
+      const dir = (bandFor(ctx.nutrient) || {}).dir || "range";
+      const goalWord = dir === "ceiling" ? "Limit" : dir === "floor" ? "Minimum" : "Target";
       const bits = [
         `<span class="lg"><i class="sw sw-bar"></i>${weekly ? "Weekly avg" : "Daily"}</span>`,
-        `<span class="lg"><i class="sw sw-goal"></i>Target</span>`,
+        `<span class="lg"><i class="sw sw-goal"></i>${goalWord}</span>`,
+        `<span class="lg"><i class="sw sw-band"></i>OK zone</span>`,
       ];
       if (!weekly) bits.push(`<span class="lg"><i class="sw sw-roll"></i>7-day avg</span>`);
       legend.innerHTML = bits.join("");
@@ -1223,22 +1285,42 @@ const UI = (() => {
       scoreRoot.innerHTML = `<b>Target scorecard</b><p class="muted small">Hit rates appear after a few logged days.</p>`;
       return;
     }
-    const unit = (k) => (k === "kcal" ? "" : k === "sodium" ? " mg" : " g");
     scoreRoot.innerHTML = `<b>Target scorecard</b>
       <p class="muted small">Across ${scorecard.logged} logged days.</p>
       <ul class="score-list">${scorecard.nutrients.map((n) => {
-        const avg = n.n ? `${n.avgDelta >= 0 ? "+" : ""}${fmt(n.avgDelta)}${unit(n.key)}` : "—";
+        const t = bandText(n.key);
         const total = n.hit + n.under + n.over;
         const pct = (v) => (total ? (v / total) * 100 : 0);
+        // A floor can never be "over" and a ceiling can never be "under", so
+        // those counts are structurally zero — showing them is noise.
+        const counts = [
+          n.under ? `${n.under} ${t.under}` : null,
+          n.hit ? `${n.hit} ${t.hit}` : null,
+          n.over ? `${n.over} ${t.over}` : null,
+        ].filter(Boolean).join(" · ") || "—";
+        const avg = n.n ? formatBandDelta(n.key, n.avgDelta) : "—";
         return `<li>
           <span class="score-name">${esc(n.label)}</span>
-          <span class="score-bar" role="img" aria-label="${n.hit} hit, ${n.under} under, ${n.over} over">
+          <span class="score-bar" role="img" aria-label="${esc(counts)}">
             <i class="sb-under" style="width:${pct(n.under)}%"></i><i class="sb-hit" style="width:${pct(n.hit)}%"></i><i class="sb-over" style="width:${pct(n.over)}%"></i>
           </span>
-          <span class="muted small">${total ? Math.round(pct(n.hit)) + "% on target" : "—"} · avg ${avg}</span>
+          <span class="muted small">${total ? `${Math.round(pct(n.hit))}% ${esc(t.hit)}` : "—"} · ${esc(counts)} · avg ${esc(avg)}</span>
         </li>`;
       }).join("")}</ul>
-      <p class="muted small score-key"><i class="sw sw-under"></i>under <i class="sw sw-hit"></i>on target <i class="sw sw-over"></i>over</p>`;
+      ${bandLegend()}`;
+  }
+
+  /**
+   * Spells out the three target shapes. Without this, a green bar on a 900 mg
+   * sodium day and a green bar on a 145 g protein day look like the same
+   * claim, when one means "well under a limit" and the other "past a minimum".
+   */
+  function bandLegend() {
+    return `<p class="muted small band-legend">
+      <b>Protein and fiber are floors</b> — a minimum to reach; going above is fine, never flagged.
+      <b>Sodium is a ceiling</b> — lower is better, only going over is flagged.
+      <b>Calories, carbs and fat are ranges</b> — either direction counts.
+    </p>`;
   }
 
   // -------------------------------------------------------------- heatmap
@@ -1273,8 +1355,20 @@ const UI = (() => {
     }).join("");
 
     const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+    // Only show swatches for states this nutrient's band can actually produce.
+    const bt = bandText(ctx.nutrient);
+    const dir = (bandFor(ctx.nutrient) || {}).dir || "range";
+    const keySwatches = [
+      `<i class="hm-cell hm-empty"></i>none`,
+      dir !== "ceiling" ? `<i class="hm-cell hm-under"></i>${esc(bt.under)}` : null,
+      `<i class="hm-cell hm-hit"></i>${esc(bt.hit)}`,
+      dir !== "floor" ? `<i class="hm-cell hm-over"></i>${esc(bt.over)}` : null,
+    ].filter(Boolean).join(" ");
+    const dirNote = dir === "ceiling"
+      ? "ceiling — lower is better"
+      : dir === "floor" ? "floor — more is fine" : "range";
     root.innerHTML = `
-      <div class="card-head-row"><b>Logging calendar</b><span class="muted small">${esc(nutMeta(ctx.nutrient).label)} vs target</span></div>
+      <div class="card-head-row"><b>Logging calendar</b><span class="muted small">${esc(nutMeta(ctx.nutrient).label)} · ${esc(dirNote)}</span></div>
       <div class="hm-scroll">
         <div class="hm-grid-wrap">
           <div class="hm-months" style="--cols:${weeks.length}">${monthRow}</div>
@@ -1284,7 +1378,7 @@ const UI = (() => {
           </div>
         </div>
       </div>
-      <p class="muted small hm-key"><i class="hm-cell hm-empty"></i>none <i class="hm-cell hm-under"></i>under <i class="hm-cell hm-hit"></i>on target <i class="hm-cell hm-over"></i>over</p>
+      <p class="muted small hm-key">${keySwatches}</p>
       <div class="stat-grid">
         <div class="stat"><span class="stat-k">Days logged</span><span class="stat-v">${cons.loggedDays}/${cons.totalDays}</span></div>
         <div class="stat"><span class="stat-k">Current streak</span><span class="stat-v">${cons.currentStreak} d</span></div>
@@ -1406,9 +1500,7 @@ const UI = (() => {
       }
       const pct = (r.avg / max) * 100;
       const goalPct = r.goal ? (r.goal / max) * 100 : null;
-      const over = r.goal && r.avg > r.goal * meta.overMul;
-      const under = meta.underMul > 0 && r.goal && r.avg < r.goal * meta.underMul;
-      const color = over ? theme.warn : under ? withAlpha(theme.accent, 0.55) : theme.accent;
+      const color = statusColor(statusFor(ctx.nutrient, r.avg, r.goal), theme);
       const mark = goalPct == null ? "" : `<i class="dow-goal" style="left:${goalPct.toFixed(2)}%"></i>`;
       return `<div class="dow-row${r.weekend ? " weekend" : ""}">
         <span class="dow-k">${esc(r.label)}</span>

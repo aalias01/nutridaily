@@ -845,3 +845,8 @@ body.has-info-banner #toast { bottom: calc(var(--tab-h) + 96px); }
   .tdee-big { font-size: 26px; }
   .donut { width: 92px; height: 92px; }
 }
+
+/* Band-shape swatches and legend (floor / ceiling / range) */
+.sw-band { background: color-mix(in srgb, var(--accent) 18%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.band-legend { margin-top: 10px; line-height: 1.5; }
+.band-legend b { color: var(--ink); font-weight: 650; }

@@ -470,5 +470,72 @@ console.log("\n[16] Edge cases");
   approx(Analytics.kgToDisplay(100, "lb"), 220.46, 0.01, "kg → lb");
 }
 
+
+console.log("\n[17] Band semantics (floor / ceiling / range)");
+{
+  // The contract every Insights surface must honour, pinned here so a future
+  // refactor cannot quietly reintroduce a parallel threshold table.
+  const B = Phases.BANDS;
+  ok(B.protein.dir === "floor" && B.fiber.dir === "floor", "protein and fiber are floors");
+  ok(B.sodium.dir === "ceiling", "sodium is a ceiling");
+  ok(B.kcal.dir === "range" && B.carbs.dir === "range" && B.fat.dir === "range", "kcal, carbs and fat are ranges");
+
+  // Floors: exceeding the target is never a problem.
+  ok(Phases.classify(300, 150, B.protein) === "hit", "double the protein target is still a hit");
+  ok(Phases.classify(90, 30, B.fiber) === "hit", "triple the fiber target is still a hit");
+  ok(Phases.classify(100, 150, B.protein) === "under", "short protein is under");
+  ok(["hit", "under"].includes(Phases.classify(999, 150, B.protein)), "a floor never returns 'over'");
+
+  // Ceilings: lower is always fine, only exceeding counts.
+  ok(Phases.classify(0, 2300, B.sodium) === "hit", "zero sodium is within the ceiling");
+  ok(Phases.classify(500, 2300, B.sodium) === "hit", "well under the sodium ceiling is a hit");
+  ok(Phases.classify(4000, 2300, B.sodium) === "over", "past the sodium ceiling is over");
+  ok(["hit", "over"].includes(Phases.classify(1, 2300, B.sodium)), "a ceiling never returns 'under'");
+
+  // Ranges: both directions count.
+  ok(Phases.classify(1000, 2000, B.kcal) === "under", "far below the calorie range is under");
+  ok(Phases.classify(3000, 2000, B.kcal) === "over", "far above the calorie range is over");
+
+  // The Today HUD must agree: floors never warn for being high.
+  ok(Phases.hudBarOver(300, 150, B.protein) === false, "Today never warns on high protein");
+  ok(Phases.hudBarOver(90, 30, B.fiber) === false, "Today never warns on high fiber");
+  ok(Phases.hudBarOver(2500, 2300, B.sodium) === true, "Today warns past the sodium ceiling");
+
+  // Scorecard aggregation over a range must inherit the same shape.
+  const keys = keysEndingAt(END, 10);
+  const highFloors = makeDays(keys, () => ({ kcal: 2000, protein: 400, carbs: 200, fat: 65, fiber: 90, sodium: 300 }));
+  const cells = Analytics.heatmapCells(highFloors, "protein", Phases.scoreDayTotals);
+  ok(cells.every((c) => c.status === "hit"), "heatmap: sky-high protein days are all hits");
+  const naCells = Analytics.heatmapCells(highFloors, "sodium", Phases.scoreDayTotals);
+  ok(naCells.every((c) => c.status === "hit"), "heatmap: very low sodium days are all hits, never 'under'");
+
+  // A range of very low sodium should score a perfect sodium hit rate and a
+  // negative avgDelta — which the UI must render as headroom, not a shortfall.
+  const totalsMap = {};
+  for (const d of highFloors) totalsMap[d.day] = {
+    count: 3,
+    kcal: { mean: d.kcal }, p: { mean: d.protein }, c: { mean: d.carbs },
+    f: { mean: d.fat }, fb: { mean: d.fiber }, na: { mean: d.sodium },
+  };
+  const card = Phases.scoreRange(keys, (day) => totalsMap[day], {
+    goals: GOALS, phases: [], weights: {},
+  });
+  const na = card.nutrients.find((n) => n.key === "sodium");
+  ok(na.under === 0, "scorecard: sodium never accumulates 'under' days");
+  ok(na.over === 0 && na.hit === 10, "scorecard: low sodium counts as hits");
+  ok(na.avgDelta < 0, "scorecard: low sodium yields a negative delta (headroom, not shortfall)");
+  const prot = card.nutrients.find((n) => n.key === "protein");
+  ok(prot.over === 0, "scorecard: protein never accumulates 'over' days");
+  ok(prot.hit === 10, "scorecard: high protein counts as hits");
+
+  // The score must not punish generous protein or frugal sodium.
+  const modest = makeDays(keys, () => ({ kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000 }));
+  const sHigh = Analytics.nutritionScore(highFloors, Phases.scoreDayTotals, { todayKey: END });
+  const sModest = Analytics.nutritionScore(modest, Phases.scoreDayTotals, { todayKey: END });
+  ok(sHigh.parts.protein === 1, "score: high protein is full marks");
+  ok(sHigh.score >= sModest.score - 1, "score: exceeding floors is not penalised versus hitting them exactly",
+    `high ${sHigh.score} vs modest ${sModest.score}`);
+}
+
 console.log(`\nanalytics: ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

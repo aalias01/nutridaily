@@ -240,6 +240,39 @@ async function run(label, days) {
   window.document.querySelector('#topfood-metric [data-metric="kcal"]').click();
   await new Promise((r) => setTimeout(r, 20));
 
+
+  // --- band semantics in the rendered DOM --------------------------------
+  // Sodium: a ceiling. Lower is better, so no day should be painted as a
+  // shortfall and the wording must never imply eating more salt.
+  window.document.querySelector('#insight-nutrient [data-nutrient="sodium"]').click();
+  await new Promise((r) => setTimeout(r, 30));
+  ok(/ceiling|lower is better/i.test(text("#insight-heatmap")), "sodium heatmap states it is a ceiling");
+  ok(!/\bunder\b/.test($("#insight-heatmap .hm-key").textContent), "sodium heatmap key drops the impossible 'under' state");
+  ok(/Limit/.test(text("#trend-legend")), "sodium chart labels the line a limit, not a target");
+
+  const naRow = [...window.document.querySelectorAll(".score-list li")]
+    .find((li) => /Sodium/.test(li.textContent));
+  ok(!!naRow, "scorecard has a sodium row");
+  ok(!/\bunder\b/.test(naRow.textContent), "sodium scorecard row never says 'under'");
+  ok(/within|headroom|over/.test(naRow.textContent), "sodium framed as within / headroom / over", naRow.textContent.trim());
+
+  // Protein: a floor. Exceeding it must never be flagged, matching Today.
+  window.document.querySelector('#insight-nutrient [data-nutrient="protein"]').click();
+  await new Promise((r) => setTimeout(r, 30));
+  ok(/floor|more is fine/i.test(text("#insight-heatmap")), "protein heatmap states it is a floor");
+  ok(!/\bover\b/.test($("#insight-heatmap .hm-key").textContent), "protein heatmap key drops the impossible 'over' state");
+  ok(/Minimum/.test(text("#trend-legend")), "protein chart labels the line a minimum");
+
+  const pRow = [...window.document.querySelectorAll(".score-list li")]
+    .find((li) => /Protein/.test(li.textContent));
+  ok(pRow && !/\bover\b/.test(pRow.textContent), "protein scorecard row never says 'over'");
+
+  ok(/floors/i.test(text("#insight-scorecard")) && /ceiling/i.test(text("#insight-scorecard")),
+    "scorecard explains the three target shapes");
+
+  window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
+  await new Promise((r) => setTimeout(r, 30));
+
   // Range pills.
   for (const d of ["30", "90", "14"]) {
     window.document.querySelector(`#insight-range [data-days="${d}"]`).click();
