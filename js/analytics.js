@@ -441,11 +441,41 @@ const Analytics = (() => {
   }
 
   /**
+   * How much each target contributes to the score.
+   *
+   * A flat average across the six nutrients is the obvious choice and the wrong
+   * one, for two reasons.
+   *
+   * First, they are not independent. Protein and carbs are 4 kcal/g and fat is
+   * 9, so once calories and protein land, carbs and fat are very nearly
+   * determined. Scoring kcal, carbs and fat equally counts energy adherence
+   * three times and lets it dominate everything else.
+   *
+   * Second, a ceiling most people clear without trying is not evidence of
+   * effort. Someone who never cooks with salt hits the sodium target every day
+   * by doing nothing, and a flat average hands them a free sixth of the score.
+   * Sodium still counts — going over is real — it just does not count like a
+   * target you have to work at.
+   *
+   * So these weights track distinct daily effort, not nutrient importance.
+   */
+  const SCORE_WEIGHTS = {
+    kcal: 0.30,     // energy adherence — the primary lever
+    protein: 0.30,  // floor, most often missed, most outcome-relevant at fixed kcal
+    fiber: 0.20,    // floor, and a genuinely separate behaviour: food quality
+    sodium: 0.10,   // ceiling guardrail — real, but usually cleared without effort
+    carbs: 0.05,    // largely implied once calories and protein land
+    fat: 0.05,
+  };
+
+  /**
    * One headline number, 0–100, so the tab opens with an answer rather than a
-   * chart to interpret. Deliberately blends three things people conflate:
-   *   logging consistency (30%), overall target hit rate (45%), protein (25%).
-   * Protein gets its own weight because it is the macro most often missed and
-   * the one that most changes outcomes at a fixed calorie level.
+   * chart to interpret. Two components: logging consistency (30%) and an
+   * effort-weighted target rate (70%, see SCORE_WEIGHTS).
+   *
+   * A nutrient with no goal set scores no days and drops out entirely, with the
+   * remaining weights renormalized — so zeroing a target removes it from the
+   * score rather than counting as a permanent miss.
    *
    * @param {Array} days
    * @param {Function} scoreDay (totalsLike, goals) → per-nutrient statuses,
@@ -453,33 +483,37 @@ const Analytics = (() => {
    */
   function nutritionScore(days, scoreDay, opts) {
     const cons = consistency(days, opts);
-    const parts = {
-      consistency: cons.rate,
-      targets: null,
-      protein: null,
-    };
+    const nutrients = [];
+    let targets = null;
+
     if (typeof scoreDay === "function") {
-      let hit = 0, n = 0, pHit = 0, pN = 0;
+      const tally = {};
+      for (const k of NUTRIENTS) tally[k] = { hit: 0, n: 0 };
       for (const d of loggedRows(days)) {
         const s = scoreDay(toTotalsLike(d), d.goals || {});
         if (!s) continue;
         for (const k of NUTRIENTS) {
           const cell = s[k];
           if (!cell || cell.status === "skip") continue;
-          n += 1;
-          if (cell.status === "hit") hit += 1;
-          if (k === "protein") {
-            pN += 1;
-            if (cell.status === "hit") pHit += 1;
-          }
+          tally[k].n += 1;
+          if (cell.status === "hit") tally[k].hit += 1;
         }
       }
-      parts.targets = n ? hit / n : null;
-      parts.protein = pN ? pHit / pN : null;
+      let acc = 0, wsum = 0;
+      for (const k of NUTRIENTS) {
+        const t = tally[k];
+        if (!t.n) continue; // no goal set for this nutrient in this range
+        const w = SCORE_WEIGHTS[k] || 0;
+        const hitRate = t.hit / t.n;
+        nutrients.push({ key: k, label: LABEL[k], weight: w, hitRate, hit: t.hit, n: t.n });
+        acc += hitRate * w;
+        wsum += w;
+      }
+      targets = wsum ? acc / wsum : null;
     }
 
-    // Renormalize over whichever components we actually have.
-    const weights = { consistency: 0.30, targets: 0.45, protein: 0.25 };
+    const parts = { consistency: cons.rate, targets, nutrients };
+    const weights = { consistency: 0.30, targets: 0.70 };
     let acc = 0, wsum = 0;
     for (const k of Object.keys(weights)) {
       if (parts[k] == null) continue;
@@ -487,12 +521,35 @@ const Analytics = (() => {
       wsum += weights[k];
     }
     const score = wsum ? Math.round((acc / wsum) * 100) : null;
-    return { score, grade: gradeFor(score), parts, consistency: cons };
+    const gap = biggestGap(nutrients);
+    return { score, grade: gradeFor(score, !!gap), parts, nutrients, gap, consistency: cons };
   }
 
-  function gradeFor(score) {
+  /**
+   * The target costing the score the most, weight included — so a shaky fiber
+   * habit outranks a rare calorie overshoot. Turns the number into a next step
+   * instead of a verdict. Null when nothing is meaningfully off.
+   */
+  function biggestGap(nutrients, opts) {
+    const minDays = (opts && opts.minDays) || 3;
+    const ranked = (nutrients || [])
+      .filter((n) => n.n >= minDays && n.hitRate < 0.8)
+      .map((n) => ({ ...n, cost: (1 - n.hitRate) * n.weight }))
+      .sort((a, b) => b.cost - a.cost);
+    return ranked[0] || null;
+  }
+
+  /**
+   * @param {number|null} score
+   * @param {boolean} [hasGap] true when a target is still being missed often.
+   *   The top grade is withheld in that case: claiming "dialed in" directly
+   *   above a line naming a missed target reads as the app not reading its own
+   *   output. Weighting means a single soft target can leave the number high
+   *   while a real habit is still unbuilt.
+   */
+  function gradeFor(score, hasGap) {
     if (score == null) return "No data yet";
-    if (score >= 85) return "Dialed in";
+    if (score >= 85) return hasGap ? "On track" : "Dialed in";
     if (score >= 70) return "On track";
     if (score >= 55) return "Mixed";
     if (score >= 35) return "Finding a rhythm";
@@ -864,7 +921,7 @@ const Analytics = (() => {
     buildDays, loggedRows, toTotalsLike,
     mean, median, stdev, summaryStats, rollingMean, linearFit,
     trendWeight, weightRate, estimateTdee, intakeForRate, projectWeight,
-    consistency, nutritionScore, gradeFor,
+    consistency, nutritionScore, gradeFor, biggestGap, SCORE_WEIGHTS,
     weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods,
     proteinPerKg, heatmapCells, heatmapWeeks, extremes, momentum, observations,
     fmtNum, fmtSigned, kgToDisplay,

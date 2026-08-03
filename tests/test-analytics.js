@@ -249,7 +249,8 @@ console.log("\n[7] Nutrition score");
   const lowProtein = makeDays(keys, () => ({ kcal: 2000, protein: 60, carbs: 200, fat: 65, fiber: 30, sodium: 2000 }));
   const sLowP = Analytics.nutritionScore(lowProtein, Phases.scoreDayTotals, { todayKey: END });
   ok(sLowP.score < sPerfect.score, "missing protein lowers the score");
-  approx(sLowP.parts.protein, 0, 0.001, "protein component zero when always short");
+  const lowPn = sLowP.nutrients.find((n) => n.key === "protein");
+  approx(lowPn.hitRate, 0, 0.001, "protein hit rate zero when always short");
 
   // Without a scorer it degrades to consistency only rather than throwing.
   const sNoScorer = Analytics.nutritionScore(perfect, null, { todayKey: END });
@@ -532,9 +533,64 @@ console.log("\n[17] Band semantics (floor / ceiling / range)");
   const modest = makeDays(keys, () => ({ kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000 }));
   const sHigh = Analytics.nutritionScore(highFloors, Phases.scoreDayTotals, { todayKey: END });
   const sModest = Analytics.nutritionScore(modest, Phases.scoreDayTotals, { todayKey: END });
-  ok(sHigh.parts.protein === 1, "score: high protein is full marks");
+  ok(sHigh.nutrients.find((n) => n.key === "protein").hitRate === 1, "score: high protein is full marks");
   ok(sHigh.score >= sModest.score - 1, "score: exceeding floors is not penalised versus hitting them exactly",
     `high ${sHigh.score} vs modest ${sModest.score}`);
+}
+
+
+console.log("\n[18] Effort weighting in the score");
+{
+  const keys = keysEndingAt(END, 14);
+  const on = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000 };
+  const perfect = makeDays(keys, () => on);
+  const base = Analytics.nutritionScore(perfect, Phases.scoreDayTotals, { todayKey: END });
+  ok(base.score === 100, "all targets met still scores 100");
+
+  const W = Analytics.SCORE_WEIGHTS;
+  approx(Object.values(W).reduce((a, b) => a + b, 0), 1, 0.0001, "effort weights sum to 1");
+  ok(W.kcal > W.carbs && W.kcal > W.fat, "energy outweighs the macros it largely determines");
+  ok(W.protein >= W.kcal, "protein carries at least as much as calories");
+  ok(W.sodium < W.protein && W.sodium < W.fiber, "the sodium guardrail carries less than the floors you work at");
+  ok(W.carbs === W.fat && W.carbs <= 0.05, "carbs and fat are residual once kcal and protein land");
+
+  // Missing an effortful target must cost more than missing an implied one.
+  const missProtein = Analytics.nutritionScore(makeDays(keys, () => ({ ...on, protein: 60 })), Phases.scoreDayTotals, { todayKey: END });
+  const missFat = Analytics.nutritionScore(makeDays(keys, () => ({ ...on, fat: 20 })), Phases.scoreDayTotals, { todayKey: END });
+  ok(missProtein.score < missFat.score, "missing protein costs more than missing fat",
+    `protein ${missProtein.score} vs fat ${missFat.score}`);
+
+  const missFiber = Analytics.nutritionScore(makeDays(keys, () => ({ ...on, fiber: 5 })), Phases.scoreDayTotals, { todayKey: END });
+  const missSodium = Analytics.nutritionScore(makeDays(keys, () => ({ ...on, sodium: 6000 })), Phases.scoreDayTotals, { todayKey: END });
+  ok(missFiber.score < missSodium.score, "missing fiber costs more than blowing the sodium ceiling",
+    `fiber ${missFiber.score} vs sodium ${missSodium.score}`);
+
+  // The free-component problem: clearing a ceiling effortlessly must not
+  // inflate the score the way a flat six-way average did.
+  const flatWouldGive = (hits) => hits / 6; // the old model, for contrast
+  const lowNa = makeDays(keys, () => ({ ...on, sodium: 100, protein: 60 }));
+  const s1 = Analytics.nutritionScore(lowNa, Phases.scoreDayTotals, { todayKey: END });
+  ok(s1.parts.targets < flatWouldGive(5), "trivially clearing sodium no longer props up a missed protein floor",
+    `weighted ${s1.parts.targets.toFixed(3)} vs flat ${flatWouldGive(5).toFixed(3)}`);
+
+  // Nutrients with no goal drop out and the rest renormalize.
+  const noFiberGoal = Analytics.buildDays({
+    keys,
+    totalsForDay: () => ({ count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 0 }, na: { mean: 2000 } }),
+    goalsForDay: () => ({ kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 0, sodium: 2300 }),
+    weightKgForDay: () => null,
+  });
+  const sNoFiber = Analytics.nutritionScore(noFiberGoal, Phases.scoreDayTotals, { todayKey: END });
+  ok(!sNoFiber.nutrients.some((n) => n.key === "fiber"), "a zeroed goal drops out of the breakdown");
+  ok(sNoFiber.score === 100, "a zeroed goal is not scored as a permanent miss", `got ${sNoFiber.score}`);
+
+  // Biggest gap ranks by weighted cost, not raw miss count.
+  const mixed = makeDays(keys, (k, i) => ({ ...on, fat: 20, protein: i < 7 ? 60 : 150 }));
+  const g = Analytics.nutritionScore(mixed, Phases.scoreDayTotals, { todayKey: END }).gap;
+  ok(g && g.key === "protein", "gap picks the costly target over the more-often-missed cheap one", `got ${g && g.key}`);
+  ok(g.n === 14 && g.hit === 7, "gap reports the underlying counts");
+  ok(Analytics.nutritionScore(perfect, Phases.scoreDayTotals, { todayKey: END }).gap === null, "no gap when everything lands");
+  ok(Analytics.biggestGap([{ key: "fiber", weight: 0.2, hitRate: 0, n: 2 }]) === null, "gap needs a few days before it speaks");
 }
 
 console.log(`\nanalytics: ${pass} passed, ${fail} failed\n`);

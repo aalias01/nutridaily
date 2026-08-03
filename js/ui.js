@@ -118,13 +118,19 @@ const UI = (() => {
       const g = Number(goal) || 0;
       const pct = g ? Math.min(100, (mean / g) * 100) : 0;
       fill.style.width = pct + "%";
-      // HUD warns past the printed goal for ceiling/range. Scoring bands stay in Phases.classify.
-      const isOver = Phases.hudBarOver(mean, g, Phases.BANDS[key]);
-      fill.classList.toggle("over", isOver);
-      val.classList.toggle("over", isOver);
+      // Today stays strict — it flags the moment you pass your number. But it
+      // now names which side of the scoring band you are on, so a day that
+      // reads amber here and green in Insights explains itself rather than
+      // looking like the two tabs disagree.
+      const st = Phases.hudState(mean, g, Phases.BANDS[key]);
+      fill.classList.toggle("near", st === "near");
+      fill.classList.toggle("over", st === "over");
+      val.classList.toggle("near", st === "near");
+      val.classList.toggle("over", st === "over");
+      const note = st === "near" ? " · slightly over" : st === "over" ? " · over" : "";
       const right = goalLabel(goal, key, unit);
-      if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${right}` : `${fmt(mean)}`;
-      else val.textContent = g ? `${fmt(mean)} / ${right}` : unit ? `${fmt(mean)} ${unit}` : `${fmt(mean)}`;
+      if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${right}${note}` : `${fmt(mean)}`;
+      else val.textContent = g ? `${fmt(mean)} / ${right}${note}` : unit ? `${fmt(mean)} ${unit}` : `${fmt(mean)}`;
     };
     $("#v-kcal-big").textContent = fmt(totals.kcal.mean);
     const lo = Math.max(0, Math.round(totals.kcal.mean - totals.kcal.sd));
@@ -974,12 +980,23 @@ const UI = (() => {
       weightSub = `${rate.n} weigh-ins · ${rate.spanDays} d`;
     }
 
+    // Name what is costing the most, so the number points somewhere.
+    let gapLine = "";
+    if (s.gap) {
+      const t = bandText(s.gap.key);
+      const missed = s.gap.n - s.gap.hit;
+      gapLine = `<span class="hs-gap">Biggest gap: <b>${esc(s.gap.label.toLowerCase())}</b> — ${t.hit} on ${s.gap.hit} of ${s.gap.n} logged days (${missed} ${esc(t[s.gap.key === "sodium" ? "over" : "under"])}).</span>`;
+    } else if (s.parts.targets != null && s.parts.consistency < 0.8) {
+      gapLine = `<span class="hs-gap">Targets are landing; logging days is what moves this number now.</span>`;
+    }
+
     root.innerHTML = `
       <div class="headline-top">
         ${dial}
         <div class="headline-lead">
           <b>${esc(s.grade)}</b>
           <span class="muted small">${esc(ctx.rangeLabel)} · ${cons.loggedDays} of ${cons.totalDays} days logged</span>
+          ${gapLine}
         </div>
       </div>
       <div class="headline-stats">

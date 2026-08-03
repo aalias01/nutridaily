@@ -554,11 +554,34 @@ const Phases = (() => {
     return "hit";
   }
 
-  /** Today HUD: warn when past the printed goal for ceiling/range; floors never warn high. */
-  function hudBarOver(mean, goal, band) {
-    if (!band || band.dir === "floor") return false;
+  /**
+   * Live day state for the Today HUD. Three levels, not two:
+   *
+   *   "ok"   — at or under the printed number (floors are always ok; they fill up)
+   *   "near" — past the printed number but still inside the scoring band
+   *   "over" — past the band, which is what Insights records as "over"
+   *
+   * The "near" level exists to reconcile the two tabs. Today stays strict — it
+   * flags the moment you pass your number, because that is a useful live nudge.
+   * Insights is banded, so the same day can read green there. "near" is exactly
+   * that zone, so the HUD can say "slightly over" instead of silently
+   * contradicting the other tab.
+   *
+   * "under" is deliberately not a state. Mid-morning every total is under, so
+   * warning on it would nag all day. Over is meaningful at any hour: you cannot
+   * un-eat it.
+   */
+  function hudState(mean, goal, band) {
     const g = Number(goal) || 0;
-    return g > 0 && Number.isFinite(mean) && mean > g;
+    if (!g || !Number.isFinite(mean)) return "ok";
+    if (!band || band.dir === "floor") return "ok";
+    if (mean <= g) return "ok";
+    return mean <= g * (1 + band.pct) ? "near" : "over";
+  }
+
+  /** Legacy boolean: true once past the printed goal (either warn level). */
+  function hudBarOver(mean, goal, band) {
+    return hudState(mean, goal, band) !== "ok";
   }
 
   function scoreDayTotals(totals, goals) {
@@ -875,6 +898,7 @@ const Phases = (() => {
     mergeProfiles,
     dayBefore,
     classify,
+    hudState,
     hudBarOver,
     scoreDayTotals,
     scoreRange,
