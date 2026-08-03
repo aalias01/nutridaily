@@ -4,6 +4,7 @@
   "description": "NutriDaily nutrition tracker (static)",
   "scripts": {
     "build": "node scripts/inject-client-id.js",
-    "test": "node tests/test-core.js && node tests/test-parse.js"
+    "test": "node tests/test-core.js && node tests/test-parse.js && node tests/test-analytics.js",
+    "test:ui": "node tests/smoke-insights.js"
   }
 }

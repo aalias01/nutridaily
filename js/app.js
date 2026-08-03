@@ -37,6 +37,8 @@ const App = (() => {
     insightDays: 14, // number or "phase"
     insightNutrient: "kcal",
     insightPhaseId: null, // null = active phase when daysBack is "phase"
+    insightRollup: "day", // day | week — weekly smooths out single-day noise
+    insightTopFoodMetric: "kcal", // kcal | protein | sodium | fiber
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
     yesterdayKey: null,
     // Close-the-gap sheet
@@ -344,9 +346,10 @@ const App = (() => {
       settings: state.settings,
       todayKey: Ledger.todayKey(),
       goalsForDay: (day) => Phases.goalsForDay(day, state.settings),
+      rollup: state.insightRollup,
+      topFoodMetric: state.insightTopFoodMetric,
     };
-    UI.renderTrends(opts);
-    UI.renderWeightTrend(opts);
+    UI.renderInsights(opts);
   }
 
   const LB_PER_KG = 1 / 0.45359237;
@@ -2971,11 +2974,39 @@ const App = (() => {
         refreshInsights();
       });
     }
+    const rollSeg = UI.$("#rollup-seg");
+    if (rollSeg) {
+      rollSeg.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-rollup]");
+        if (!btn) return;
+        state.insightRollup = btn.dataset.rollup === "week" ? "week" : "day";
+        refreshInsights();
+      });
+    }
+    const topMetric = UI.$("#topfood-metric");
+    if (topMetric) {
+      topMetric.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-metric]");
+        if (!btn) return;
+        state.insightTopFoodMetric = btn.dataset.metric;
+        refreshInsights();
+      });
+    }
+    const heatmap = UI.$("#insight-heatmap");
+    if (heatmap) {
+      heatmap.addEventListener("click", (e) => {
+        const cell = e.target.closest("[data-action='heatmap-day']");
+        if (!cell) return;
+        UI.renderDayDetail(cell.dataset.day);
+        const detail = UI.$("#day-detail");
+        if (detail) detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
     const canvas = UI.$("#trend-canvas");
     if (canvas) {
       canvas.style.cursor = "pointer";
       canvas.addEventListener("click", (e) => {
-        const day = UI.trendDayAtClientX(e.clientX);
+        const day = UI.onTrendTap(e.clientX);
         if (day) UI.renderDayDetail(day);
       });
     }
@@ -2983,13 +3014,8 @@ const App = (() => {
     if (wCanvas) {
       wCanvas.style.cursor = "pointer";
       wCanvas.addEventListener("click", (e) => {
-        const hit = UI.weightDayAtClientX(e.clientX);
-        const sum = UI.$("#weight-summary");
-        if (!hit || !sum) return;
-        const d = new Date(hit.day + "T12:00:00");
-        const label = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-        sum.textContent = `${label} · ${hit.value.toFixed(1)} ${hit.unit}`;
-        UI.renderDayDetail(hit.day);
+        const hit = UI.onWeightTap(e.clientX);
+        if (hit) UI.renderDayDetail(hit.day);
       });
     }
     let resizeT = null;
@@ -3194,6 +3220,8 @@ const App = (() => {
       state.insightDays = 14;
       state.insightNutrient = "kcal";
       state.insightPhaseId = null;
+      state.insightRollup = "day";
+      state.insightTopFoodMetric = "kcal";
       Phases.ensureMigrated(state.settings, null, state.viewDay);
       saveSettings();
       applyTheme();

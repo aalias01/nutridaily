@@ -34,7 +34,22 @@ For always-connected Drive auth locally, prefer `npx vercel dev` (see Deploy bel
 
 ## What gets tracked
 
-Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium. Daily goals and rings. Insights for logged days. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
+Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium. Daily goals and rings. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
+
+## Insights
+
+Everything is derived on device from your own log — no server, no model, no guesswork you can't inspect.
+
+- **Headline score** — one 0–100 number blending logging consistency, target hit rate, and protein specifically, plus average calories, weight trend and streak.
+- **Intake chart** — daily bars or weekly averages against that day's own target, with the hit band shaded and a 7-day rolling mean drawn on top. Tap any bar for the detail. Also: median, typical swing, range, and the last 7 days versus the 7 before.
+- **Energy expenditure** — an adaptive TDEE estimate: average intake minus what your weight trend actually did (7700 kcal/kg). Comes with the intake needed to lose 0.5 / 0.25 kg per week, maintain, or gain. Shown only when there is enough data; otherwise the card says exactly what is missing rather than printing a confident-looking number.
+- **Weight** — raw weigh-ins as dots with a gap-aware EMA trend line through them, rate per week from a regression on the weigh-ins, and a 4-week projection.
+- **Consistency** — a calendar heatmap coloured by how each day landed against target, streaks, weekday-versus-weekend logging rates, and a per-nutrient scorecard with under / on-target / over bars.
+- **Breakdown** — macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by calories, protein, sodium or fiber.
+
+Observations under the headline are descriptive only — they report what the numbers say and never grade you on it.
+
+Numbers are estimates from logged data. Nothing here is medical advice; talk to a clinician or dietitian for anything that matters.
 
 ## Your data
 
@@ -119,7 +134,10 @@ Use the localhost origin/redirect URI you registered (often `http://localhost:30
 ## Tests
 
 ```bash
-npm test
+npm test          # core, parser, analytics — no dependencies
+
+npm install --no-save jsdom
+npm run test:ui   # boots index.html headless and exercises the Insights tab
 ```
 
 ## License

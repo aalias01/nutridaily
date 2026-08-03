@@ -667,286 +667,141 @@ const UI = (() => {
     return streak;
   }
 
-  /**
-   * @param {object} opts
-   * @param {number|string} opts.daysBack — number of days, or "phase"
-   * @param {string} opts.nutrient — kcal|protein|carbs|fat|fiber|sodium
-   * @param {string|null} opts.phaseId — selected phase for "phase" range
-   * @param {object} opts.settings
-   * @param {string} opts.todayKey
-   * @param {(day:string)=>object} opts.goalsForDay
-   */
-  function renderTrends(opts) {
-    const canvas = $("#trend-canvas");
-    if (!canvas) return;
-    const settings = (opts && opts.settings) || {};
-    const todayKey = (opts && opts.todayKey) || Ledger.todayKey();
-    const nutrient = (opts && opts.nutrient) || "kcal";
-    const phaseId = opts && opts.phaseId;
-    const goalsForDay = (opts && opts.goalsForDay) || ((day) =>
-      (typeof Phases !== "undefined" ? Phases.goalsForDay(day, settings) : (settings.goals || {})));
-    const end = new Date(todayKey + "T12:00:00");
-    let keys = [];
-    const daysBack = opts && opts.daysBack;
-    let selectedPhase = null;
-    if (daysBack === "phase" && typeof Phases !== "undefined") {
-      selectedPhase = Phases.phaseById(settings.phases, phaseId) || Phases.activePhase(settings.phases);
-      if (selectedPhase) keys = Phases.phaseDayKeys(selectedPhase, todayKey);
-    }
-    if (!keys.length) {
-      const n = Number(daysBack) || 14;
-      for (let i = n - 1; i >= 0; i--) {
-        const d = new Date(end);
-        d.setDate(d.getDate() - i);
-        keys.push(Ledger.todayKey(d));
-      }
-    }
+  // =====================================================================
+  // Insights
+  //
+  // One render pass builds a single derived range (via Analytics) and every
+  // panel reads from it, so the headline, charts and breakdowns can never
+  // disagree about what "the last 30 days" means.
+  // =====================================================================
 
-    const nutKey = {
-      kcal: { total: (t) => t.kcal.mean, goal: (g) => g.kcal, unit: "kcal", label: "kcal", overMul: 1.10, underMul: 0.90 },
-      protein: { total: (t) => t.p.mean, goal: (g) => g.protein, unit: "g", label: "protein", overMul: 1.20, underMul: 0.95 },
-      carbs: { total: (t) => t.c.mean, goal: (g) => g.carbs, unit: "g", label: "carbs", overMul: 1.15, underMul: 0.85 },
-      fat: { total: (t) => t.f.mean, goal: (g) => g.fat, unit: "g", label: "fat", overMul: 1.15, underMul: 0.85 },
-      fiber: { total: (t) => t.fb.mean, goal: (g) => g.fiber, unit: "g", label: "fiber", overMul: 1.30, underMul: 0.90 },
-      sodium: { total: (t) => t.na.mean, goal: (g) => g.sodium, unit: "mg", label: "sodium", overMul: 1.05, underMul: 0 },
-    }[nutrient] || {
-      total: (t) => t.kcal.mean, goal: (g) => g.kcal, unit: "kcal", label: "kcal", overMul: 1.10, underMul: 0.90,
+  /** Per-render cache shared by all Insights panels. */
+  let _insight = null;
+
+  const NUT_META = {
+    kcal:    { label: "Calories", unit: "",    overMul: 1.10, underMul: 0.90 },
+    protein: { label: "Protein",  unit: " g",  overMul: 1.20, underMul: 0.95 },
+    carbs:   { label: "Carbs",    unit: " g",  overMul: 1.15, underMul: 0.85 },
+    fat:     { label: "Fat",      unit: " g",  overMul: 1.15, underMul: 0.85 },
+    fiber:   { label: "Fiber",    unit: " g",  overMul: 1.30, underMul: 0.90 },
+    sodium:  { label: "Sodium",   unit: " mg", overMul: 1.05, underMul: 0 },
+  };
+
+  function nutMeta(key) { return NUT_META[key] || NUT_META.kcal; }
+
+  // ------------------------------------------------------------ canvas util
+
+  function cssVar(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  /** Theme-aware palette, re-read each render so dark mode flips cleanly. */
+  function chartTheme() {
+    return {
+      ink: cssVar("--ink", "#23282d"),
+      muted: cssVar("--muted", "#7b8088"),
+      line: cssVar("--line", "#e6e3da"),
+      accent: cssVar("--accent", "#3d9970"),
+      warn: cssVar("--warn", "#d0703c"),
+      info: cssVar("--info", "#4a7dbd"),
+      card: cssVar("--card", "#ffffff"),
     };
+  }
 
-    const totalsMap = {};
-    keys.forEach((day) => { totalsMap[day] = Ledger.totalsFor(day); });
-    const points = keys.map((day) => {
-      const t = totalsMap[day];
-      const g = goalsForDay(day);
-      return {
-        day,
-        value: t.count ? nutKey.total(t) : null,
-        kcal: t.count ? t.kcal.mean : null,
-        p: t.count ? t.p.mean : null,
-        c: t.count ? t.c.mean : null,
-        f: t.count ? t.f.mean : null,
-        fb: t.count ? t.fb.mean : null,
-        na: t.count ? t.na.mean : null,
-        count: t.count,
-        goal: nutKey.goal(g),
-      };
-    });
-    const logged = points.filter((p) => p.count);
-
-    const ctxHeader = $("#phase-context");
-    const backBtn = $("#btn-phase-current");
-    if (ctxHeader && typeof Phases !== "undefined") {
-      const ctxPhase = daysBack === "phase" ? selectedPhase : Phases.activePhase(settings.phases);
-      ctxHeader.textContent = Phases.phaseContext(settings, todayKey, ctxPhase);
-    }
-    if (backBtn) {
-      const viewingPast = daysBack === "phase" && selectedPhase && selectedPhase.endDay != null;
-      backBtn.hidden = !viewingPast;
-    }
-
-    // Phase history list (hidden until 2+ phases)
-    const histRoot = $("#phase-history");
-    const histList = $("#phase-history-list");
-    const histSum = $("#phase-history-summary");
-    if (histRoot && histList && typeof Phases !== "undefined") {
-      const rows = Phases.phaseHistoryRows(settings, todayKey, (day) => Ledger.totalsFor(day));
-      if (rows.length < 2) {
-        histRoot.hidden = true;
-      } else {
-        histRoot.hidden = false;
-        if (histSum) histSum.textContent = `Phase history (${rows.length})`;
-        const selId = daysBack === "phase" && selectedPhase
-          ? selectedPhase.id
-          : (Phases.activePhase(settings.phases) || {}).id;
-        histList.innerHTML = rows.map((r) => {
-          const logs = r.logged
-            ? `${r.logged}/${r.days} logged`
-            : (r.days ? "no logs" : "0 d");
-          const bits = [r.rangeLabel, `${r.days} d`, logs];
-          if (r.kcalLabel) bits.push(r.kcalLabel);
-          if (r.weightLabel) bits.push(r.weightLabel);
-          const activeCls = r.id === selId ? " active" : "";
-          const chip = r.active ? '<span class="phase-chip">Active</span>' : "";
-          return `<button type="button" class="phase-hist-row${activeCls}" data-phase-id="${esc(r.id)}">
-            <span class="phase-hist-title">${esc(r.name)} · ${esc(r.kindLabel)} ${chip}</span>
-            <span class="muted small">${esc(bits.join(" · "))}</span>
-          </button>`;
-        }).join("");
-      }
-    }
-
-    const nutPills = $("#insight-nutrient");
-    if (nutPills) {
-      nutPills.querySelectorAll("button").forEach((b) =>
-        b.classList.toggle("active", b.dataset.nutrient === nutrient)
-      );
-    }
-
-    const w = canvas.clientWidth || 320;
-    const h = 168;
-    canvas.width = w * 2; canvas.height = h * 2;
+  /** Size a canvas for the device pixel ratio and return a CSS-pixel context. */
+  function setupCanvas(canvas, height) {
+    const w = Math.max(160, canvas.clientWidth || 320);
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(height * dpr);
+    canvas.style.height = height + "px";
     const ctx = canvas.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(2, 2);
-    ctx.clearRect(0, 0, w, h);
-    const maxV = Math.max(
-      ...points.map((p) => p.goal || 0),
-      ...logged.map((p) => p.value),
-      1
-    ) * 1.15;
-    const pad = { l: 8, r: 8, t: 12, b: 28 };
-    const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
-    const barW = Math.max(2, iw / keys.length - 2);
-
-    // Step goal line (per-day targets for selected nutrient)
-    ctx.strokeStyle = "rgba(61,153,112,0.55)";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    points.forEach((p, i) => {
-      const x0 = pad.l + i * (iw / keys.length);
-      const x1 = pad.l + (i + 1) * (iw / keys.length);
-      const gy = pad.t + ih * (1 - (p.goal || 0) / maxV);
-      if (i === 0) ctx.moveTo(x0, gy);
-      else ctx.lineTo(x0, gy);
-      ctx.lineTo(x1, gy);
-    });
-    ctx.stroke();
-    ctx.lineWidth = 1;
-
-    // Phase start markers
-    if (typeof Phases !== "undefined" && Array.isArray(settings.phases)) {
-      ctx.strokeStyle = "rgba(80,100,90,0.35)";
-      ctx.setLineDash([3, 3]);
-      for (const ph of settings.phases) {
-        const idx = keys.indexOf(ph.startDay);
-        if (idx < 0) continue;
-        const x = pad.l + idx * (iw / keys.length);
-        ctx.beginPath();
-        ctx.moveTo(x, pad.t);
-        ctx.lineTo(x, pad.t + ih);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-    }
-
-    points.forEach((p, i) => {
-      if (p.value == null) return;
-      const x = pad.l + (i + 0.15) * (iw / keys.length);
-      const bh = (p.value / maxV) * ih;
-      const over = p.goal && p.value > p.goal * nutKey.overMul;
-      const under = nutKey.underMul > 0 && p.goal && p.value < p.goal * nutKey.underMul;
-      ctx.fillStyle = over ? "#d0703c" : under ? "#6a8f7a" : "#3d9970";
-      ctx.fillRect(x, pad.t + ih - bh, barW, bh);
-    });
-
-    ctx.fillStyle = "rgba(100,100,100,0.85)";
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, height);
     ctx.font = "10px system-ui,sans-serif";
-    ctx.textAlign = "center";
-    // Fit labels to chart width so 14/30/90d never collide (MM-DD ≈ 34px)
-    const labelW = 34;
-    const maxLabels = Math.max(2, Math.min(keys.length, Math.floor(iw / labelW)));
-    const labelIdx = [];
-    if (keys.length <= maxLabels) {
-      for (let i = 0; i < keys.length; i++) labelIdx.push(i);
-    } else {
-      for (let k = 0; k < maxLabels; k++) {
-        labelIdx.push(Math.round((k * (keys.length - 1)) / (maxLabels - 1)));
-      }
-    }
-    const seen = new Set();
-    let lastX = -Infinity;
-    labelIdx.forEach((i) => {
-      if (seen.has(i)) return;
-      seen.add(i);
-      const x = pad.l + (i + 0.5) * (iw / keys.length);
-      if (x - lastX < labelW * 0.9) return; // skip if still too close
-      lastX = x;
-      ctx.fillText(keys[i].slice(5), x, h - 8);
-    });
-    ctx.textAlign = "start";
-    _trendHit = { keys, pad, iw, w };
-
-    const avg = (key) => logged.length ? logged.reduce((s, p) => s + p[key], 0) / logged.length : 0;
-    const avgSel = logged.length ? logged.reduce((s, p) => s + p.value, 0) / logged.length : 0;
-    const weekKeys = keys.slice(-7);
-    const weekLogged = weekKeys.map((d) => totalsMap[d]).filter((t) => t && t.count);
-    const weekAvg = weekLogged.length
-      ? Math.round(weekLogged.reduce((s, t) => s + nutKey.total(t), 0) / weekLogged.length)
-      : 0;
-    const viewingPastPhase = daysBack === "phase" && selectedPhase && selectedPhase.endDay != null;
-    const streak = streakEndingToday();
-    const rangeLabel = daysBack === "phase" && selectedPhase
-      ? selectedPhase.name
-      : `${keys.length} days`;
-    const unitSuffix = nutKey.unit === "kcal" ? " kcal" : ` ${nutKey.unit}`;
-    const streakBit = viewingPastPhase ? "" : ` · streak ${streak}d`;
-    $("#trend-summary").textContent = logged.length
-      ? `${logged.length} of ${keys.length} days logged (${rangeLabel}) · avg ${fmt(avgSel)}${unitSuffix} ${nutKey.label} · P ${fmt(avg("p"))} · C ${fmt(avg("c"))} · F ${fmt(avg("f"))} · 7d ${fmt(weekAvg)}${unitSuffix}${streakBit}`
-      : "No logged days in this range yet.";
-
-    // Scorecard + callouts
-    const scoreRoot = $("#insight-scorecard");
-    const callRoot = $("#insight-callouts");
-    if (scoreRoot && typeof Phases !== "undefined") {
-      const excludeToday = viewingPastPhase
-        ? null
-        : (!totalsMap[todayKey] || !totalsMap[todayKey].count ? todayKey : null);
-      const scorecard = Phases.scoreRange(
-        keys,
-        (day) => totalsMap[day],
-        settings,
-        { excludeDay: excludeToday }
-      );
-      const unit = (k) => (k === "kcal" ? "" : k === "sodium" ? " mg" : " g");
-      scoreRoot.innerHTML = scorecard.logged
-        ? `<b>Target scorecard</b><ul class="score-list">${scorecard.nutrients.map((n) => {
-            const avg = n.n ? `${n.avgDelta >= 0 ? "+" : ""}${fmt(n.avgDelta)}${unit(n.key)}` : "—";
-            return `<li><span class="score-name">${esc(n.label)}</span>
-              <span class="score-counts">${n.hit} hit · ${n.under} under · ${n.over} over</span>
-              <span class="muted small">avg ${avg}</span></li>`;
-          }).join("")}</ul>`
-        : `<span class="muted">Target hit rates appear after a few logged days.</span>`;
-
-      const calls = Phases.callouts(scorecard);
-      const bal = Phases.kcalBalance(keys, (day) => totalsMap[day], settings);
-      const wDelta = keys.length
-        ? Phases.weightDelta(settings, keys[0], keys[keys.length - 1])
-        : null;
-      const bits = [];
-      if (calls.need) bits.push(`<p class="callout need">${esc(calls.need)}</p>`);
-      if (calls.over) bits.push(`<p class="callout over">${esc(calls.over)}</p>`);
-      if (bal) {
-        const sign = bal.sum >= 0 ? "+" : "";
-        bits.push(`<p class="muted small">Cumulative vs calorie target: ${sign}${fmt(bal.sum)} kcal across ${bal.n} days (≈ ${sign}${(bal.sum / 7700).toFixed(2)} kg).</p>`);
-      }
-      if (wDelta) {
-        const sign = wDelta.delta >= 0 ? "+" : "";
-        const wu = (settings.weightUnit === "kg") ? "kg" : "lb";
-        const f = wu === "kg" ? wDelta.first : wDelta.first / 0.45359237;
-        const l = wu === "kg" ? wDelta.last : wDelta.last / 0.45359237;
-        const d = wu === "kg" ? wDelta.delta : wDelta.delta / 0.45359237;
-        bits.push(`<p class="muted small">Weight: ${f.toFixed(1)} → ${l.toFixed(1)} ${wu} (${sign}${d.toFixed(1)} ${wu}, ${wDelta.n} weigh-ins).</p>`);
-      }
-      if (callRoot) callRoot.innerHTML = bits.join("") || "";
-    }
-
-    renderDayDetail(null);
-
-    const contrib = new Map();
-    for (const day of keys) {
-      for (const e of Ledger.entriesFor(day)) {
-        const cur = contrib.get(e.name) || 0;
-        contrib.set(e.name, cur + (e.macros.kcal || 0));
-      }
-    }
-    const top = [...contrib.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-    const totalTop = top.reduce((s, [, k]) => s + k, 0) || 1;
-    $("#top-foods").innerHTML = top.length
-      ? `<b>Top foods</b> (kcal share)<ul class="ing-list">${top.map(([n, k]) =>
-          `<li>${esc(n)} — ${fmt(k)} kcal (${Math.round((k / totalTop) * 100)}%)</li>`
-        ).join("")}</ul>`
-      : `<span class="muted">Top foods will appear as you log.</span>`;
+    return { ctx, w, h: height };
   }
+
+  /** Round gridline step (1/2/5 × 10ⁿ) so axis labels read as human numbers. */
+  function niceStep(range, count) {
+    if (!(range > 0)) return 1;
+    const raw = range / Math.max(1, count);
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    const mult = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+    return mult * mag;
+  }
+
+  /** Compact axis labels: 2400 → "2.4k". */
+  function axisNum(v) {
+    const a = Math.abs(v);
+    if (a >= 10000) return Math.round(v / 1000) + "k";
+    if (a >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    return String(Math.round(v));
+  }
+
+  /** Horizontal gridlines + left labels. Returns the value→y mapper. */
+  function drawYAxis(ctx, box, minV, maxV, theme) {
+    const { pad, iw, ih } = box;
+    const yAt = (v) => pad.t + ih * (1 - (v - minV) / (maxV - minV || 1));
+    const step = niceStep(maxV - minV, 3);
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = theme.muted;
+    for (let v = Math.ceil(minV / step) * step; v <= maxV + 1e-9; v += step) {
+      const y = yAt(v);
+      if (y < pad.t - 1 || y > pad.t + ih + 1) continue;
+      ctx.strokeStyle = theme.line;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, Math.round(y) + 0.5);
+      ctx.lineTo(pad.l + iw, Math.round(y) + 0.5);
+      ctx.stroke();
+      ctx.fillText(axisNum(v), pad.l - 5, y);
+    }
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
+    return yAt;
+  }
+
+  /** Evenly spread x labels, dropping any that would collide. */
+  function drawXLabels(ctx, box, labels, theme, labelW) {
+    const { pad, iw, h } = box;
+    const lw = labelW || 34;
+    const n = labels.length;
+    if (!n) return;
+    ctx.fillStyle = theme.muted;
+    ctx.textAlign = "center";
+    const maxLabels = Math.max(2, Math.min(n, Math.floor(iw / lw)));
+    const idx = [];
+    if (n <= maxLabels) {
+      for (let i = 0; i < n; i++) idx.push(i);
+    } else {
+      for (let k = 0; k < maxLabels; k++) idx.push(Math.round((k * (n - 1)) / (maxLabels - 1)));
+    }
+    let lastX = -Infinity;
+    const seen = new Set();
+    for (const i of idx) {
+      if (seen.has(i)) continue;
+      seen.add(i);
+      const x = pad.l + (i + 0.5) * (iw / n);
+      if (x - lastX < lw * 0.9) continue;
+      lastX = x;
+      ctx.fillText(labels[i], x, h - 8);
+    }
+    ctx.textAlign = "start";
+  }
+
+  function withAlpha(hex, alpha) {
+    const m = String(hex).trim().match(/^#?([0-9a-f]{6})$/i);
+    if (!m) return hex;
+    const n = parseInt(m[1], 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+  }
+
+  // -------------------------------------------------------------- range
 
   function insightRangeKeys(opts) {
     const settings = (opts && opts.settings) || {};
@@ -971,173 +826,942 @@ const UI = (() => {
     return { keys, selectedPhase, daysBack, todayKey, settings };
   }
 
-  function renderWeightTrend(opts) {
+  /**
+   * Build the shared derived range once per render.
+   * Everything below reads `_insight` rather than recomputing.
+   */
+  function buildInsightContext(opts) {
+    const o = opts || {};
+    const { keys, selectedPhase, daysBack, todayKey, settings } = insightRangeKeys(o);
+    const goalsForDay = o.goalsForDay || ((day) =>
+      (typeof Phases !== "undefined" ? Phases.goalsForDay(day, settings) : (settings.goals || {})));
+    const days = Analytics.buildDays({
+      keys,
+      totalsForDay: (day) => Ledger.totalsFor(day),
+      goalsForDay,
+      weightKgForDay: (day) =>
+        (typeof Phases !== "undefined" ? Phases.weightForDay(settings, day) : null),
+    });
+    const viewingPastPhase = daysBack === "phase" && !!selectedPhase && selectedPhase.endDay != null;
+    const scoreDay = typeof Phases !== "undefined" ? Phases.scoreDayTotals : null;
+    const ctx = {
+      keys, days, settings, todayKey, selectedPhase, daysBack, viewingPastPhase, scoreDay,
+      nutrient: o.nutrient || "kcal",
+      rollup: o.rollup === "week" ? "week" : "day",
+      topFoodMetric: o.topFoodMetric || "kcal",
+      weightUnit: settings.weightUnit === "kg" ? "kg" : "lb",
+      // Today is still in progress; counting it as a miss would be wrong.
+      scoreOpts: { todayKey: viewingPastPhase ? null : todayKey },
+      rangeLabel: daysBack === "phase" && selectedPhase ? selectedPhase.name : `${keys.length} days`,
+    };
+    ctx.tdee = Analytics.estimateTdee(days);
+    ctx.trend = Analytics.trendWeight(days);
+    ctx.score = Analytics.nutritionScore(days, scoreDay, ctx.scoreOpts);
+    ctx.consistency = ctx.score.consistency;
+    _insight = ctx;
+    return ctx;
+  }
+
+  // ------------------------------------------------------- headline card
+
+  /**
+   * The answer, before the charts: one score, then the three numbers people
+   * actually open the app for (average intake, weight rate, logging streak).
+   */
+  function renderHeadline(ctx) {
+    const root = $("#insight-headline");
+    if (!root) return;
+    const logged = Analytics.loggedRows(ctx.days);
+    if (!logged.length) {
+      root.innerHTML = `<div class="headline-empty">
+        <b>No logged days in this range yet.</b>
+        <span class="muted small">Log a day or two and this fills in with your averages, trends and target hit rates.</span>
+      </div>`;
+      return;
+    }
+
+    const s = ctx.score;
+    const kcalAvg = Analytics.mean(logged.map((d) => d.kcal));
+    const kcalGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).kcal));
+    const rate = Analytics.weightRate(ctx.trend);
+    const cons = ctx.consistency;
+
+    const dial = s.score == null ? "" : `
+      <div class="score-dial" style="--pct:${Math.max(0, Math.min(100, s.score))}">
+        <div class="score-dial-inner">
+          <span class="score-value">${s.score}</span>
+          <span class="score-max">/100</span>
+        </div>
+      </div>`;
+
+    const stat = (label, value, sub) => `
+      <div class="headline-stat">
+        <span class="hs-label">${esc(label)}</span>
+        <span class="hs-value">${esc(value)}</span>
+        <span class="hs-sub muted small">${esc(sub || "")}</span>
+      </div>`;
+
+    const kcalSub = kcalGoal
+      ? `${Analytics.fmtSigned(kcalAvg - kcalGoal)} vs target`
+      : "no calorie target set";
+
+    let weightVal = "—";
+    let weightSub = "needs 2+ weigh-ins";
+    if (rate) {
+      const perWeek = Analytics.kgToDisplay(rate.kgPerWeek, ctx.weightUnit);
+      weightVal = `${Analytics.fmtSigned(perWeek, 2)} ${ctx.weightUnit}/wk`;
+      weightSub = `${rate.n} weigh-ins · ${rate.spanDays} d`;
+    }
+
+    root.innerHTML = `
+      <div class="headline-top">
+        ${dial}
+        <div class="headline-lead">
+          <b>${esc(s.grade)}</b>
+          <span class="muted small">${esc(ctx.rangeLabel)} · ${cons.loggedDays} of ${cons.totalDays} days logged</span>
+        </div>
+      </div>
+      <div class="headline-stats">
+        ${stat("Avg calories", `${fmt(kcalAvg)}`, kcalSub)}
+        ${stat("Weight trend", weightVal, weightSub)}
+        ${stat("Streak", `${cons.currentStreak} d`, `best ${cons.longestStreak} d`)}
+      </div>`;
+  }
+
+  /** Short factual notes; nothing here praises or scolds. */
+  function renderObservations(ctx) {
+    const root = $("#insight-observations");
+    if (!root) return;
+    const obs = Analytics.observations(ctx.days, ctx.scoreOpts);
+    root.innerHTML = obs.map((o) =>
+      `<p class="obs obs-${esc(o.tone)}">${esc(o.text)}</p>`
+    ).join("");
+  }
+
+  // ---------------------------------------------------------- intake chart
+
+  /**
+   * Daily bars (or weekly averages) against the day's own target, with the
+   * hit band shaded and a 7-day rolling mean on top. The rolling line is the
+   * point of the chart: single days are noise, the line is the behaviour.
+   */
+  function renderTrendChart(ctx) {
+    const canvas = $("#trend-canvas");
+    if (!canvas) return;
+    const theme = chartTheme();
+    const meta = nutMeta(ctx.nutrient);
+    const weekly = ctx.rollup === "week";
+
+    const series = weekly
+      ? Analytics.weeklyRollup(ctx.days, ctx.nutrient).map((w) => ({
+          key: w.weekStart,
+          label: w.label,
+          value: w.value,
+          goal: w.goal,
+          logged: w.loggedDays > 0,
+          sub: `${w.rangeLabel} · ${w.loggedDays}/${w.days} logged`,
+          partial: w.partial,
+        }))
+      : ctx.days.map((d) => ({
+          key: d.day,
+          label: d.day.slice(5),
+          value: d.logged ? d[ctx.nutrient] : null,
+          goal: (d.goals || {})[ctx.nutrient] || 0,
+          logged: d.logged,
+          sub: typeof Phases !== "undefined" ? Phases.shortDate(d.day) : d.day,
+          partial: false,
+        }));
+
+    const roll = weekly ? [] : Analytics.rollingMean(series.map((p) => p.value), 7, 3);
+    const h = 190;
+    const { ctx: c, w } = setupCanvas(canvas, h);
+    const pad = { l: 34, r: 10, t: 12, b: 26 };
+    const iw = w - pad.l - pad.r;
+    const ih = h - pad.t - pad.b;
+    const box = { pad, iw, ih, w, h };
+    const slot = iw / Math.max(1, series.length);
+
+    const values = series.map((p) => p.value).filter(Number.isFinite);
+    const goals = series.map((p) => p.goal).filter((g) => g > 0);
+    const maxV = Math.max(...values, ...goals, 1) * 1.12;
+    const yAt = drawYAxis(c, box, 0, maxV, theme);
+
+    // Hit band for the current nutrient, so "on target" is a region not a line.
+    const band = (typeof Phases !== "undefined" && Phases.BANDS[ctx.nutrient]) || null;
+    if (band) {
+      c.fillStyle = withAlpha(theme.accent, 0.10);
+      series.forEach((p, i) => {
+        if (!p.goal) return;
+        const x = pad.l + i * slot;
+        const lo = band.dir === "ceiling" ? 0 : p.goal * (1 - band.pct);
+        const hi = band.dir === "floor" ? maxV : p.goal * (1 + band.pct);
+        const yHi = yAt(Math.min(hi, maxV));
+        const yLo = yAt(Math.max(0, lo));
+        c.fillRect(x, yHi, slot, Math.max(1, yLo - yHi));
+      });
+    }
+
+    // Target step line.
+    c.strokeStyle = withAlpha(theme.accent, 0.8);
+    c.lineWidth = 1.5;
+    c.beginPath();
+    series.forEach((p, i) => {
+      const x0 = pad.l + i * slot;
+      const x1 = pad.l + (i + 1) * slot;
+      const gy = yAt(p.goal || 0);
+      if (i === 0) c.moveTo(x0, gy); else c.lineTo(x0, gy);
+      c.lineTo(x1, gy);
+    });
+    c.stroke();
+    c.lineWidth = 1;
+
+    // Phase boundaries (daily view only — weeks blur them).
+    if (!weekly && typeof Phases !== "undefined" && Array.isArray(ctx.settings.phases)) {
+      c.strokeStyle = withAlpha(theme.muted, 0.45);
+      c.setLineDash([3, 3]);
+      for (const ph of ctx.settings.phases) {
+        const idx = ctx.keys.indexOf(ph.startDay);
+        if (idx <= 0) continue;
+        const x = Math.round(pad.l + idx * slot) + 0.5;
+        c.beginPath();
+        c.moveTo(x, pad.t);
+        c.lineTo(x, pad.t + ih);
+        c.stroke();
+      }
+      c.setLineDash([]);
+    }
+
+    // Bars.
+    const barW = Math.max(2, slot - Math.min(4, slot * 0.3));
+    const inset = (slot - barW) / 2;
+    series.forEach((p, i) => {
+      if (!Number.isFinite(p.value)) return;
+      const x = pad.l + i * slot + inset;
+      const y = yAt(p.value);
+      const over = p.goal && p.value > p.goal * meta.overMul;
+      const under = meta.underMul > 0 && p.goal && p.value < p.goal * meta.underMul;
+      const base = over ? theme.warn : under ? withAlpha(theme.accent, 0.55) : theme.accent;
+      c.fillStyle = p.partial ? withAlpha(base, 0.55) : base;
+      c.fillRect(x, y, barW, Math.max(1, pad.t + ih - y));
+    });
+
+    // 7-day rolling mean.
+    if (!weekly && roll.some((v) => v != null)) {
+      c.strokeStyle = theme.info;
+      c.lineWidth = 2;
+      c.lineJoin = "round";
+      c.beginPath();
+      let started = false;
+      roll.forEach((v, i) => {
+        if (v == null) { started = false; return; }
+        const x = pad.l + (i + 0.5) * slot;
+        const y = yAt(v);
+        if (!started) { c.moveTo(x, y); started = true; } else { c.lineTo(x, y); }
+      });
+      c.stroke();
+      c.lineWidth = 1;
+    }
+
+    drawXLabels(c, box, series.map((p) => p.label), theme, weekly ? 40 : 34);
+
+    _trendHit = { series, pad, iw, w, slot, weekly, nutrient: ctx.nutrient };
+
+    const legend = $("#trend-legend");
+    if (legend) {
+      const bits = [
+        `<span class="lg"><i class="sw sw-bar"></i>${weekly ? "Weekly avg" : "Daily"}</span>`,
+        `<span class="lg"><i class="sw sw-goal"></i>Target</span>`,
+      ];
+      if (!weekly) bits.push(`<span class="lg"><i class="sw sw-roll"></i>7-day avg</span>`);
+      legend.innerHTML = bits.join("");
+    }
+  }
+
+  /** One-line summary under the intake chart. */
+  function renderTrendSummary(ctx) {
+    const el = $("#trend-summary");
+    if (!el) return;
+    const logged = Analytics.loggedRows(ctx.days);
+    if (!logged.length) {
+      el.textContent = "No logged days in this range yet.";
+      return;
+    }
+    const meta = nutMeta(ctx.nutrient);
+    const avgSel = Analytics.mean(logged.map((d) => d[ctx.nutrient]));
+    const last7 = Analytics.loggedRows(ctx.days.slice(-7));
+    const weekAvg = Analytics.mean(last7.map((d) => d[ctx.nutrient]));
+    const bits = [
+      `${logged.length} of ${ctx.days.length} days logged (${ctx.rangeLabel})`,
+      `avg ${fmt(avgSel)}${meta.unit} ${meta.label.toLowerCase()}`,
+      `P ${fmt(Analytics.mean(logged.map((d) => d.protein)))} · C ${fmt(Analytics.mean(logged.map((d) => d.carbs)))} · F ${fmt(Analytics.mean(logged.map((d) => d.fat)))}`,
+    ];
+    if (weekAvg != null) bits.push(`last 7 d ${fmt(weekAvg)}${meta.unit}`);
+    if (!ctx.viewingPastPhase) bits.push(`streak ${ctx.consistency.currentStreak} d`);
+    el.textContent = bits.join(" · ");
+  }
+
+  /** Distribution stats for the selected nutrient — the spread, not just the mean. */
+  function renderIntakeStats(ctx) {
+    const root = $("#intake-stats");
+    if (!root) return;
+    const stats = Analytics.summaryStats(ctx.days, ctx.nutrient);
+    if (!stats.n) { root.innerHTML = ""; return; }
+    const meta = nutMeta(ctx.nutrient);
+    const u = meta.unit;
+    const mom = Analytics.momentum(ctx.days, ctx.nutrient, 7);
+    const cells = [
+      { k: "Average", v: `${fmt(stats.avg)}${u}` },
+      { k: "Median", v: `${fmt(stats.median)}${u}` },
+      { k: "Typical swing", v: stats.sd == null ? "—" : `±${fmt(stats.sd)}${u}` },
+      { k: "Range", v: `${fmt(stats.min)} – ${fmt(stats.max)}${u}` },
+    ];
+    if (mom) cells.push({ k: "vs prior 7 d", v: `${Analytics.fmtSigned(mom.delta)}${u}` });
+    root.innerHTML = cells.map((c) =>
+      `<div class="stat"><span class="stat-k">${esc(c.k)}</span><span class="stat-v">${esc(c.v)}</span></div>`
+    ).join("");
+  }
+
+  // ------------------------------------------------------------ energy card
+
+  /**
+   * Adaptive energy expenditure: what the data says you burn, rather than
+   * what a formula guesses. Shown only when the inputs support it — otherwise
+   * the card explains exactly what is missing.
+   */
+  function renderTdeeCard(ctx) {
+    const root = $("#tdee-card");
+    if (!root) return;
+    const t = ctx.tdee;
+    const kcalGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).kcal));
+
+    if (t.tdee == null) {
+      root.innerHTML = `
+        <div class="card-head-row"><b>Energy expenditure</b><span class="conf conf-none">not enough data</span></div>
+        <p class="muted small">${esc(t.reason || "Log food and weigh in over a couple of weeks and an estimate appears here.")}</p>
+        <p class="muted small">It works by comparing what you ate with how your weight trend actually moved — no formula, just your data.</p>`;
+      return;
+    }
+
+    const confLabel = { high: "high confidence", medium: "medium confidence", low: "rough estimate" }[t.confidence] || "";
+    // A margin wider than ~1200 kcal says nothing useful; hide it rather than
+    // dress up noise as precision.
+    const margin = Number.isFinite(t.marginKcal) && t.marginKcal > 0 && t.marginKcal < 1200
+      ? ` ± ${fmt(t.marginKcal)}`
+      : "";
+    const perWeek = Analytics.kgToDisplay(t.kgPerWeek, ctx.weightUnit);
+    const dir = Math.abs(t.kgPerWeek) < 0.05 ? "holding steady" : (t.kgPerWeek < 0 ? "losing" : "gaining");
+
+    const rateRow = (label, kgWk) => {
+      const target = Analytics.intakeForRate(t, kgWk);
+      if (target == null) return "";
+      const delta = kcalGoal ? target - kcalGoal : null;
+      const sub = delta == null ? "" : `${Analytics.fmtSigned(delta)} vs your target`;
+      return `<div class="rate-row"><span class="rate-k">${esc(label)}</span>
+        <span class="rate-v">${fmt(target)} kcal/day</span>
+        <span class="muted small">${esc(sub)}</span></div>`;
+    };
+
+    root.innerHTML = `
+      <div class="card-head-row"><b>Energy expenditure</b><span class="conf conf-${esc(t.confidence)}">${esc(confLabel)}</span></div>
+      <div class="tdee-big">${fmt(t.tdee)}<span class="tdee-unit"> kcal/day${esc(margin)}</span></div>
+      <p class="muted small">From ${t.loggedDays} logged days and ${t.weighIns} weigh-ins over ${t.spanDays} days:
+        you ate ${fmt(t.intakeAvg)} kcal/day while ${esc(dir)} ${Math.abs(perWeek).toFixed(2)} ${esc(ctx.weightUnit)}/week.</p>
+      <div class="rate-table">
+        <div class="rate-head muted small">To move at…</div>
+        ${rateRow("Lose 0.5 kg/wk", -0.5)}
+        ${rateRow("Lose 0.25 kg/wk", -0.25)}
+        ${rateRow("Maintain", 0)}
+        ${rateRow("Gain 0.25 kg/wk", 0.25)}
+      </div>
+      <p class="muted small">Estimates, not prescriptions — expenditure shifts with activity, sleep and time. Recheck it every few weeks.</p>`;
+  }
+
+  /**
+   * Target callouts + cumulative balance + weight delta.
+   * @returns {object|null} the scorecard, reused by renderScorecard.
+   */
+  function renderCallouts(ctx) {
+    const callRoot = $("#insight-callouts");
+    if (!callRoot || typeof Phases === "undefined") return null;
+    const totalsMap = {};
+    for (const d of ctx.days) totalsMap[d.day] = Ledger.totalsFor(d.day);
+    const scorecard = Phases.scoreRange(
+      ctx.keys,
+      (day) => totalsMap[day],
+      ctx.settings,
+      { excludeDay: ctx.scoreOpts.todayKey && !(totalsMap[ctx.todayKey] || {}).count ? ctx.todayKey : null }
+    );
+    const calls = Phases.callouts(scorecard);
+    const bal = Phases.kcalBalance(ctx.keys, (day) => totalsMap[day], ctx.settings);
+    const wDelta = ctx.keys.length
+      ? Phases.weightDelta(ctx.settings, ctx.keys[0], ctx.keys[ctx.keys.length - 1])
+      : null;
+
+    const bits = [];
+    if (calls.need) bits.push(`<p class="callout need">${esc(calls.need)}</p>`);
+    if (calls.over) bits.push(`<p class="callout over">${esc(calls.over)}</p>`);
+    if (bal) {
+      const sign = bal.sum >= 0 ? "+" : "";
+      bits.push(`<p class="muted small">Cumulative vs calorie target: ${sign}${fmt(bal.sum)} kcal across ${bal.n} days (≈ ${sign}${(bal.sum / 7700).toFixed(2)} kg).</p>`);
+    }
+    if (wDelta) {
+      const sign = wDelta.delta >= 0 ? "+" : "";
+      const wu = ctx.weightUnit;
+      const f = Analytics.kgToDisplay(wDelta.first, wu);
+      const l = Analytics.kgToDisplay(wDelta.last, wu);
+      const d = Analytics.kgToDisplay(wDelta.delta, wu);
+      bits.push(`<p class="muted small">Weight: ${f.toFixed(1)} → ${l.toFixed(1)} ${wu} (${sign}${d.toFixed(1)} ${wu}, ${wDelta.n} weigh-ins).</p>`);
+    }
+    callRoot.innerHTML = bits.join("");
+    return scorecard;
+  }
+
+  function renderScorecard(scorecard) {
+    const scoreRoot = $("#insight-scorecard");
+    if (!scoreRoot) return;
+    if (!scorecard || !scorecard.logged) {
+      scoreRoot.innerHTML = `<b>Target scorecard</b><p class="muted small">Hit rates appear after a few logged days.</p>`;
+      return;
+    }
+    const unit = (k) => (k === "kcal" ? "" : k === "sodium" ? " mg" : " g");
+    scoreRoot.innerHTML = `<b>Target scorecard</b>
+      <p class="muted small">Across ${scorecard.logged} logged days.</p>
+      <ul class="score-list">${scorecard.nutrients.map((n) => {
+        const avg = n.n ? `${n.avgDelta >= 0 ? "+" : ""}${fmt(n.avgDelta)}${unit(n.key)}` : "—";
+        const total = n.hit + n.under + n.over;
+        const pct = (v) => (total ? (v / total) * 100 : 0);
+        return `<li>
+          <span class="score-name">${esc(n.label)}</span>
+          <span class="score-bar" role="img" aria-label="${n.hit} hit, ${n.under} under, ${n.over} over">
+            <i class="sb-under" style="width:${pct(n.under)}%"></i><i class="sb-hit" style="width:${pct(n.hit)}%"></i><i class="sb-over" style="width:${pct(n.over)}%"></i>
+          </span>
+          <span class="muted small">${total ? Math.round(pct(n.hit)) + "% on target" : "—"} · avg ${avg}</span>
+        </li>`;
+      }).join("")}</ul>
+      <p class="muted small score-key"><i class="sw sw-under"></i>under <i class="sw sw-hit"></i>on target <i class="sw sw-over"></i>over</p>`;
+  }
+
+  // -------------------------------------------------------------- heatmap
+
+  /** Whole-range consistency at a glance, in the layout commit graphs taught. */
+  function renderHeatmap(ctx) {
+    const root = $("#insight-heatmap");
+    if (!root) return;
+    const cells = Analytics.heatmapCells(ctx.days, ctx.nutrient, ctx.scoreDay);
+    const weeks = Analytics.heatmapWeeks(cells);
+    if (!weeks.length) { root.innerHTML = ""; return; }
+    const cons = ctx.consistency;
+    const meta = nutMeta(ctx.nutrient);
+
+    const dowLabels = ["M", "T", "W", "T", "F", "S", "S"];
+    const cols = weeks.map((wk) => {
+      const inner = wk.cells.map((c) => {
+        if (!c) return `<i class="hm-cell hm-void"></i>`;
+        const title = c.logged
+          ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""}`
+          : `${c.day} · not logged`;
+        return `<button type="button" class="hm-cell hm-${esc(c.status)}" data-action="heatmap-day" data-day="${esc(c.day)}" title="${esc(title)}" aria-label="${esc(title)}"></button>`;
+      }).join("");
+      return `<div class="hm-col">${inner}</div>`;
+    }).join("");
+
+    const monthRow = weeks.map((wk, i) => {
+      const d = Analytics.dateOf(wk.weekStart);
+      const prev = i > 0 ? Analytics.dateOf(weeks[i - 1].weekStart) : null;
+      const show = !prev || d.getMonth() !== prev.getMonth();
+      return `<div class="hm-month">${show ? esc(d.toLocaleDateString(undefined, { month: "short" })) : ""}</div>`;
+    }).join("");
+
+    const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+    root.innerHTML = `
+      <div class="card-head-row"><b>Logging calendar</b><span class="muted small">${esc(nutMeta(ctx.nutrient).label)} vs target</span></div>
+      <div class="hm-scroll">
+        <div class="hm-grid-wrap">
+          <div class="hm-months" style="--cols:${weeks.length}">${monthRow}</div>
+          <div class="hm-body">
+            <div class="hm-dow">${dowLabels.map((l) => `<span>${l}</span>`).join("")}</div>
+            <div class="hm-grid">${cols}</div>
+          </div>
+        </div>
+      </div>
+      <p class="muted small hm-key"><i class="hm-cell hm-empty"></i>none <i class="hm-cell hm-under"></i>under <i class="hm-cell hm-hit"></i>on target <i class="hm-cell hm-over"></i>over</p>
+      <div class="stat-grid">
+        <div class="stat"><span class="stat-k">Days logged</span><span class="stat-v">${cons.loggedDays}/${cons.totalDays}</span></div>
+        <div class="stat"><span class="stat-k">Current streak</span><span class="stat-v">${cons.currentStreak} d</span></div>
+        <div class="stat"><span class="stat-k">Best streak</span><span class="stat-v">${cons.longestStreak} d</span></div>
+        <div class="stat"><span class="stat-k">Weekday / weekend</span><span class="stat-v">${pct(cons.weekdayRate)} / ${pct(cons.weekendRate)}</span></div>
+      </div>`;
+  }
+
+  // ------------------------------------------------------------ breakdown
+
+  /** Macro split as a share of calories, next to the split your targets imply. */
+  function renderMacroSplit(ctx) {
+    const root = $("#macro-split");
+    if (!root) return;
+    const split = Analytics.macroSplit(ctx.days);
+    if (!split.actual) {
+      root.innerHTML = `<b>Macro split</b><p class="muted small">Appears once you have a logged day.</p>`;
+      return;
+    }
+    const theme = chartTheme();
+    const parts = [
+      { key: "protein", label: "Protein", color: theme.accent },
+      { key: "carbs", label: "Carbs", color: theme.info },
+      { key: "fat", label: "Fat", color: theme.warn },
+    ];
+
+    // Donut via stroke-dasharray on a single circle per slice.
+    const R = 42, C = 2 * Math.PI * R;
+    let offset = 0;
+    const arcs = parts.map((p) => {
+      const frac = split.actual[p.key];
+      const seg = `<circle class="donut-seg" cx="60" cy="60" r="${R}" fill="none"
+        stroke="${p.color}" stroke-width="16"
+        stroke-dasharray="${(frac * C).toFixed(2)} ${(C - frac * C).toFixed(2)}"
+        stroke-dashoffset="${(-offset * C).toFixed(2)}"
+        transform="rotate(-90 60 60)"></circle>`;
+      offset += frac;
+      return seg;
+    }).join("");
+
+    const rows = parts.map((p) => {
+      const a = split.actual[p.key];
+      const t = split.target ? split.target[p.key] : null;
+      const g = split.actual.grams[p.key];
+      const gt = split.target ? split.target.grams[p.key] : null;
+      const drift = t == null ? "" : `${Analytics.fmtSigned((a - t) * 100)} pts vs target`;
+      return `<li>
+        <span class="ms-dot" style="background:${p.color}"></span>
+        <span class="ms-name">${esc(p.label)}</span>
+        <span class="ms-pct">${Math.round(a * 100)}%</span>
+        <span class="muted small">${fmt(g)} g${gt != null ? ` of ${fmt(gt)} g` : ""}${drift ? ` · ${drift}` : ""}</span>
+      </li>`;
+    }).join("");
+
+    root.innerHTML = `
+      <div class="card-head-row"><b>Macro split</b><span class="muted small">share of calories</span></div>
+      <div class="donut-row">
+        <svg class="donut" viewBox="0 0 120 120" role="img" aria-label="Macro split donut">
+          ${arcs}
+          <text x="60" y="56" class="donut-mid">${Math.round(split.actual.protein * 100)}%</text>
+          <text x="60" y="72" class="donut-sub">protein</text>
+        </svg>
+        <ul class="macro-list">${rows}</ul>
+      </div>`;
+  }
+
+  /** Where the calories land across the day. */
+  function renderMealSplit(ctx) {
+    const root = $("#meal-split");
+    if (!root) return;
+    const meals = Analytics.byMeal(ctx.keys, (day) => Ledger.entriesFor(day));
+    const total = meals.reduce((s, m) => s + m.kcal, 0);
+    if (!total) {
+      root.innerHTML = `<b>Calories by meal</b><p class="muted small">Appears once you log meals.</p>`;
+      return;
+    }
+    const theme = chartTheme();
+    const colors = {
+      breakfast: theme.info,
+      lunch: theme.accent,
+      dinner: cssVar("--accent-ink", "#2c7a57"),
+      snack: theme.warn,
+    };
+    const bar = meals.filter((m) => m.kcal > 0).map((m) =>
+      `<i style="width:${(m.pct * 100).toFixed(2)}%;background:${colors[m.meal]}" title="${esc(m.label)} ${Math.round(m.pct * 100)}%"></i>`
+    ).join("");
+    const rows = meals.map((m) => `
+      <li>
+        <span class="ms-dot" style="background:${colors[m.meal]}"></span>
+        <span class="ms-name">${esc(m.label)}</span>
+        <span class="ms-pct">${Math.round(m.pct * 100)}%</span>
+        <span class="muted small">${fmt(m.avgKcal)} kcal on the ${m.daysPresent} day${m.daysPresent === 1 ? "" : "s"} it appears</span>
+      </li>`).join("");
+    root.innerHTML = `
+      <div class="card-head-row"><b>Calories by meal</b><span class="muted small">${esc(ctx.rangeLabel)}</span></div>
+      <div class="stack-bar">${bar}</div>
+      <ul class="macro-list">${rows}</ul>`;
+  }
+
+  /** Day-of-week pattern — where the weekend drift hides. */
+  function renderDowPattern(ctx) {
+    const root = $("#dow-pattern");
+    if (!root) return;
+    const rows = Analytics.byDayOfWeek(ctx.days, ctx.nutrient);
+    const meta = nutMeta(ctx.nutrient);
+    const vals = rows.map((r) => r.avg).filter(Number.isFinite);
+    if (!vals.length) {
+      root.innerHTML = `<b>By day of week</b><p class="muted small">Appears once you have logged days.</p>`;
+      return;
+    }
+    const goalMax = Math.max(...rows.map((r) => r.goal || 0));
+    const max = Math.max(...vals, goalMax, 1) * 1.05;
+    const theme = chartTheme();
+
+    const bars = rows.map((r) => {
+      if (r.avg == null) {
+        return `<div class="dow-row"><span class="dow-k">${esc(r.label)}</span>
+          <span class="dow-track"></span><span class="muted small dow-v">no data</span></div>`;
+      }
+      const pct = (r.avg / max) * 100;
+      const goalPct = r.goal ? (r.goal / max) * 100 : null;
+      const over = r.goal && r.avg > r.goal * meta.overMul;
+      const under = meta.underMul > 0 && r.goal && r.avg < r.goal * meta.underMul;
+      const color = over ? theme.warn : under ? withAlpha(theme.accent, 0.55) : theme.accent;
+      const mark = goalPct == null ? "" : `<i class="dow-goal" style="left:${goalPct.toFixed(2)}%"></i>`;
+      return `<div class="dow-row${r.weekend ? " weekend" : ""}">
+        <span class="dow-k">${esc(r.label)}</span>
+        <span class="dow-track"><i class="dow-fill" style="width:${pct.toFixed(2)}%;background:${color}"></i>${mark}</span>
+        <span class="dow-v">${fmt(r.avg)}<span class="muted small"> (${r.n})</span></span>
+      </div>`;
+    }).join("");
+
+    const we = Analytics.weekendEffect(ctx.days, ctx.nutrient);
+    const note = we
+      ? `<p class="muted small">Weekends average ${Analytics.fmtSigned(we.delta)}${meta.unit} vs weekdays (${fmt(we.weekdayAvg)} → ${fmt(we.weekendAvg)}).</p>`
+      : `<p class="muted small">Needs a few more logged weekdays and weekends to compare.</p>`;
+
+    root.innerHTML = `
+      <div class="card-head-row"><b>By day of week</b><span class="muted small">avg ${esc(meta.label.toLowerCase())}</span></div>
+      <div class="dow-list">${bars}</div>
+      ${note}`;
+  }
+
+  /**
+   * Top contributors by the metric you choose. Ranking by sodium or protein —
+   * not only calories — is what makes this actionable.
+   */
+  function renderTopFoods(ctx) {
+    const root = $("#top-foods");
+    if (!root) return;
+    const metric = ctx.topFoodMetric;
+    const unit = { kcal: " kcal", protein: " g", sodium: " mg", fiber: " g" }[metric] || "";
+    const rows = Analytics.topFoods(ctx.keys, (day) => Ledger.entriesFor(day), metric, 6);
+    const pills = $("#topfood-metric");
+    if (pills) {
+      pills.querySelectorAll("button").forEach((b) =>
+        b.classList.toggle("active", b.dataset.metric === metric)
+      );
+    }
+    if (!rows.length) {
+      root.innerHTML = `<p class="muted small">Top foods appear as you log.</p>`;
+      return;
+    }
+    const max = rows[0].value || 1;
+    root.innerHTML = `<ul class="topfood-list">${rows.map((r) => `
+      <li>
+        <span class="tf-name">${esc(r.name)}</span>
+        <span class="tf-track"><i style="width:${((r.value / max) * 100).toFixed(2)}%"></i></span>
+        <span class="tf-v">${fmt(r.value)}${esc(unit)}<span class="muted small"> · ${Math.round(r.pct * 100)}%</span></span>
+      </li>`).join("")}</ul>
+      <p class="muted small">${rows.length} of your foods, ${Math.round(rows.reduce((s, r) => s + r.pct, 0) * 100)}% of range ${esc(nutMeta(metric).label.toLowerCase())}.</p>`;
+  }
+
+  // ------------------------------------------------------------ weight chart
+
+  /**
+   * Raw weigh-ins as dots with the EMA trend line through them. The scale
+   * bounces on water and gut content; the trend is the part that means
+   * anything, so it is drawn as the primary line.
+   */
+  function renderWeightChart(ctx) {
     const canvas = $("#weight-canvas");
     const summary = $("#weight-summary");
     if (!canvas || !summary) return;
-    if (typeof Phases === "undefined") {
-      summary.textContent = "";
-      return;
-    }
-    const { keys, selectedPhase, daysBack, settings } = insightRangeKeys(opts);
-    const unit = settings.weightUnit === "kg" ? "kg" : "lb";
-    const toDisplay = (kg) => (unit === "kg" ? kg : kg / 0.45359237);
+    const theme = chartTheme();
+    const unit = ctx.weightUnit;
+    const toDisp = (kg) => Analytics.kgToDisplay(kg, unit);
 
+    const series = ctx.trend.map((p) => ({
+      day: p.day,
+      raw: p.raw == null ? null : toDisp(p.raw),
+      trend: p.trend == null ? null : toDisp(p.trend),
+    }));
+    const anchors = series.filter((p) => p.raw != null);
     const byDay = {};
-    const series = keys.map((day) => {
-      const kg = Phases.weightForDay(settings, day);
-      const value = kg == null ? null : toDisplay(kg);
-      if (value != null) byDay[day] = value;
-      return { day, value };
-    });
-    const logged = series.filter((p) => p.value != null);
+    for (const p of anchors) byDay[p.day] = p.raw;
 
-    const w = canvas.clientWidth || 320;
-    const h = 150;
-    canvas.width = w * 2;
-    canvas.height = h * 2;
-    const ctx = canvas.getContext("2d");
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(2, 2);
-    ctx.clearRect(0, 0, w, h);
-    const pad = { l: 28, r: 10, t: 12, b: 28 };
+    const h = 175;
+    const { ctx: c, w } = setupCanvas(canvas, h);
+    const pad = { l: 34, r: 10, t: 12, b: 26 };
     const iw = w - pad.l - pad.r;
     const ih = h - pad.t - pad.b;
-    _weightHit = { keys, pad, iw, w, byDay, unit };
+    const box = { pad, iw, ih, w, h };
+    const xAt = (i) => pad.l + (i + 0.5) * (iw / Math.max(1, series.length));
+    _weightHit = { keys: ctx.keys, pad, iw, w, byDay, unit };
 
-    if (logged.length < 2) {
-      summary.textContent = logged.length === 1
-        ? `One weigh-in in range (${logged[0].value.toFixed(1)} ${unit}). Log another day to see a trend.`
+    const legend = $("#weight-legend");
+    if (legend) {
+      legend.innerHTML = anchors.length
+        ? `<span class="lg"><i class="sw sw-dot"></i>Weigh-in</span><span class="lg"><i class="sw sw-trendline"></i>Trend</span>`
+        : "";
+    }
+
+    if (anchors.length < 2) {
+      summary.textContent = anchors.length === 1
+        ? `One weigh-in in range (${anchors[0].raw.toFixed(1)} ${unit}). Log another day to see a trend.`
         : "Log weight on Today (2+ days in this range) to see a trend.";
-      ctx.fillStyle = "rgba(100,100,100,0.7)";
-      ctx.font = "12px system-ui,sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText("Need 2+ weigh-ins", w / 2, h / 2);
-      ctx.textAlign = "start";
+      c.fillStyle = theme.muted;
+      c.font = "12px system-ui,sans-serif";
+      c.textAlign = "center";
+      c.fillText("Need 2+ weigh-ins", w / 2, h / 2);
+      c.textAlign = "start";
+      renderWeightStats(ctx, null);
       return;
     }
 
-    let minV = Math.min(...logged.map((p) => p.value));
-    let maxV = Math.max(...logged.map((p) => p.value));
-    if (maxV - minV < 1) {
-      minV -= 1;
-      maxV += 1;
-    }
-    const padY = (maxV - minV) * 0.12;
-    minV -= padY;
-    maxV += padY;
-    const yAt = (v) => pad.t + ih * (1 - (v - minV) / (maxV - minV));
-    const xAt = (i) => pad.l + (i + 0.5) * (iw / keys.length);
+    const all = series.flatMap((p) => [p.raw, p.trend]).filter(Number.isFinite);
+    let minV = Math.min(...all);
+    let maxV = Math.max(...all);
+    if (maxV - minV < 1) { minV -= 1; maxV += 1; }
+    const padY = (maxV - minV) * 0.15;
+    minV -= padY; maxV += padY;
+    const yAt = drawYAxis(c, box, minV, maxV, theme);
 
-    // Y-axis ticks
-    ctx.fillStyle = "rgba(100,100,100,0.85)";
-    ctx.font = "10px system-ui,sans-serif";
-    ctx.textAlign = "right";
-    const ticks = 3;
-    for (let t = 0; t < ticks; t++) {
-      const v = minV + ((maxV - minV) * t) / (ticks - 1);
-      const y = yAt(v);
-      ctx.strokeStyle = "rgba(120,120,120,0.15)";
-      ctx.beginPath();
-      ctx.moveTo(pad.l, y);
-      ctx.lineTo(pad.l + iw, y);
-      ctx.stroke();
-      ctx.fillText(v.toFixed(0), pad.l - 4, y + 3);
-    }
-    ctx.textAlign = "start";
-
-    // Line through weigh-ins in calendar order
-    ctx.strokeStyle = "#d0703c";
-    ctx.lineWidth = 2;
-    ctx.lineJoin = "round";
-    ctx.beginPath();
+    // Faint raw connector so gaps read as gaps.
+    c.strokeStyle = withAlpha(theme.muted, 0.35);
+    c.lineWidth = 1;
+    c.beginPath();
     let started = false;
     series.forEach((p, i) => {
-      if (p.value == null) return;
-      const x = xAt(i);
-      const y = yAt(p.value);
-      if (!started) { ctx.moveTo(x, y); started = true; }
-      else ctx.lineTo(x, y);
+      if (p.raw == null) return;
+      const x = xAt(i), y = yAt(p.raw);
+      if (!started) { c.moveTo(x, y); started = true; } else { c.lineTo(x, y); }
     });
-    ctx.stroke();
-    ctx.lineWidth = 1;
+    c.stroke();
 
-    // Hollow dots
-    const cardFill = getComputedStyle(document.documentElement).getPropertyValue("--card").trim() || "#fff";
+    // Trend line.
+    c.strokeStyle = theme.warn;
+    c.lineWidth = 2.5;
+    c.lineJoin = "round";
+    c.beginPath();
+    started = false;
     series.forEach((p, i) => {
-      if (p.value == null) return;
-      const x = xAt(i);
-      const y = yAt(p.value);
-      ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = cardFill;
-      ctx.fill();
-      ctx.strokeStyle = "#d0703c";
-      ctx.stroke();
+      if (p.trend == null) return;
+      const x = xAt(i), y = yAt(p.trend);
+      if (!started) { c.moveTo(x, y); started = true; } else { c.lineTo(x, y); }
+    });
+    c.stroke();
+    c.lineWidth = 1;
+
+    // Raw weigh-in dots.
+    series.forEach((p, i) => {
+      if (p.raw == null) return;
+      const x = xAt(i), y = yAt(p.raw);
+      c.beginPath();
+      c.arc(x, y, 3.5, 0, Math.PI * 2);
+      c.fillStyle = theme.card;
+      c.fill();
+      c.strokeStyle = withAlpha(theme.muted, 0.8);
+      c.stroke();
     });
 
-    // X labels (same spacing heuristic as nutrition chart)
-    ctx.fillStyle = "rgba(100,100,100,0.85)";
-    ctx.font = "10px system-ui,sans-serif";
-    ctx.textAlign = "center";
-    const labelW = 34;
-    const maxLabels = Math.max(2, Math.min(keys.length, Math.floor(iw / labelW)));
-    const labelIdx = [];
-    if (keys.length <= maxLabels) {
-      for (let i = 0; i < keys.length; i++) labelIdx.push(i);
-    } else {
-      for (let k = 0; k < maxLabels; k++) {
-        labelIdx.push(Math.round((k * (keys.length - 1)) / (maxLabels - 1)));
-      }
+    drawXLabels(c, box, ctx.keys.map((k) => k.slice(5)), theme, 34);
+
+    const rate = Analytics.weightRate(ctx.trend);
+    const first = anchors[0], last = anchors[anchors.length - 1];
+    const delta = last.raw - first.raw;
+    const bits = [
+      `${anchors.length} weigh-ins (${ctx.rangeLabel})`,
+      `${first.raw.toFixed(1)} → ${last.raw.toFixed(1)} ${unit} (${Analytics.fmtSigned(delta, 1)} ${unit})`,
+    ];
+    if (rate) bits.push(`trend ${Analytics.fmtSigned(toDisp(rate.kgPerWeek), 2)} ${unit}/week`);
+    summary.textContent = bits.join(" · ") + ". Tap a point for the day.";
+    renderWeightStats(ctx, rate);
+  }
+
+  function renderWeightStats(ctx, rate) {
+    const root = $("#weight-stats");
+    if (!root) return;
+    if (!rate) { root.innerHTML = ""; return; }
+    const unit = ctx.weightUnit;
+    const toDisp = (kg) => Analytics.kgToDisplay(kg, unit);
+    const proj = Analytics.projectWeight(ctx.days, { weeks: 4 });
+    const cells = [
+      { k: "Trend now", v: `${toDisp(rate.last).toFixed(1)} ${unit}` },
+      { k: "Rate", v: `${Analytics.fmtSigned(toDisp(rate.kgPerWeek), 2)} ${unit}/wk` },
+      { k: "Weigh-ins", v: `${rate.n} over ${rate.spanDays} d` },
+    ];
+    if (proj && proj.confident) {
+      cells.push({ k: "In 4 weeks", v: `≈ ${toDisp(proj.projectedKg).toFixed(1)} ${unit}` });
     }
-    const seen = new Set();
-    let lastX = -Infinity;
-    labelIdx.forEach((i) => {
-      if (seen.has(i)) return;
-      seen.add(i);
-      const x = xAt(i);
-      if (x - lastX < labelW * 0.9) return;
-      lastX = x;
-      ctx.fillText(keys[i].slice(5), x, h - 8);
-    });
-    ctx.textAlign = "start";
-
-    const first = logged[0];
-    const last = logged[logged.length - 1];
-    const delta = last.value - first.value;
-    const sign = delta >= 0 ? "+" : "";
-    const rangeLabel = daysBack === "phase" && selectedPhase
-      ? selectedPhase.name
-      : `${keys.length} days`;
-    summary.textContent =
-      `${logged.length} weigh-ins (${rangeLabel}) · ${first.value.toFixed(1)} → ${last.value.toFixed(1)} ${unit} (${sign}${delta.toFixed(1)} ${unit}). Tap a point for the day.`;
+    root.innerHTML = cells.map((c) =>
+      `<div class="stat"><span class="stat-k">${esc(c.k)}</span><span class="stat-v">${esc(c.v)}</span></div>`
+    ).join("");
   }
 
+  // ------------------------------------------------------- phase chrome
+
+  function renderPhaseChrome(ctx) {
+    const ctxHeader = $("#phase-context");
+    const backBtn = $("#btn-phase-current");
+    if (typeof Phases === "undefined") return;
+    if (ctxHeader) {
+      const p = ctx.daysBack === "phase" ? ctx.selectedPhase : Phases.activePhase(ctx.settings.phases);
+      ctxHeader.textContent = Phases.phaseContext(ctx.settings, ctx.todayKey, p);
+    }
+    if (backBtn) backBtn.hidden = !ctx.viewingPastPhase;
+
+    const histRoot = $("#phase-history");
+    const histList = $("#phase-history-list");
+    const histSum = $("#phase-history-summary");
+    if (!histRoot || !histList) return;
+    const rows = Phases.phaseHistoryRows(ctx.settings, ctx.todayKey, (day) => Ledger.totalsFor(day));
+    if (rows.length < 2) { histRoot.hidden = true; return; }
+    histRoot.hidden = false;
+    if (histSum) histSum.textContent = `Phase history (${rows.length})`;
+    const selId = ctx.daysBack === "phase" && ctx.selectedPhase
+      ? ctx.selectedPhase.id
+      : (Phases.activePhase(ctx.settings.phases) || {}).id;
+    histList.innerHTML = rows.map((r) => {
+      const logs = r.logged ? `${r.logged}/${r.days} logged` : (r.days ? "no logs" : "0 d");
+      const bits = [r.rangeLabel, `${r.days} d`, logs];
+      if (r.kcalLabel) bits.push(r.kcalLabel);
+      if (r.weightLabel) bits.push(r.weightLabel);
+      const chip = r.active ? '<span class="phase-chip">Active</span>' : "";
+      return `<button type="button" class="phase-hist-row${r.id === selId ? " active" : ""}" data-phase-id="${esc(r.id)}">
+        <span class="phase-hist-title">${esc(r.name)} · ${esc(r.kindLabel)} ${chip}</span>
+        <span class="muted small">${esc(bits.join(" · "))}</span>
+      </button>`;
+    }).join("");
+  }
+
+  // ------------------------------------------------------------- entry point
+
+  /** Single render pass for the whole Insights tab. */
+  function renderInsights(opts) {
+    if (typeof Analytics === "undefined") return;
+    const ctx = buildInsightContext(opts);
+
+    const nutPills = $("#insight-nutrient");
+    if (nutPills) {
+      nutPills.querySelectorAll("button").forEach((b) =>
+        b.classList.toggle("active", b.dataset.nutrient === ctx.nutrient)
+      );
+    }
+    const rollSeg = $("#rollup-seg");
+    if (rollSeg) {
+      rollSeg.querySelectorAll("button").forEach((b) =>
+        b.classList.toggle("on", b.dataset.rollup === ctx.rollup)
+      );
+    }
+
+    renderPhaseChrome(ctx);
+    renderHeadline(ctx);
+    renderObservations(ctx);
+    renderTrendChart(ctx);
+    renderTrendSummary(ctx);
+    renderIntakeStats(ctx);
+    renderTdeeCard(ctx);
+    renderScorecard(renderCallouts(ctx));
+    renderHeatmap(ctx);
+    renderMacroSplit(ctx);
+    renderMealSplit(ctx);
+    renderDowPattern(ctx);
+    renderTopFoods(ctx);
+    renderWeightChart(ctx);
+    hideTip("#trend-tip");
+    hideTip("#weight-tip");
+    renderDayDetail(null);
+  }
+
+  // Back-compat: app.js historically called these two separately.
+  function renderTrends(opts) { renderInsights(opts); }
+  function renderWeightTrend() { /* folded into renderInsights */ }
+
+  // ----------------------------------------------------------------- tips
+
+  function hideTip(sel) {
+    const el = $(sel);
+    if (el) { el.hidden = true; el.innerHTML = ""; }
+  }
+
+  function showTip(sel, wrapSel, x, html) {
+    const el = $(sel);
+    const wrap = $(wrapSel);
+    if (!el || !wrap) return;
+    el.innerHTML = html;
+    el.hidden = false;
+    const wrapW = wrap.clientWidth || 320;
+    const tipW = el.offsetWidth || 140;
+    const left = Math.max(4, Math.min(wrapW - tipW - 4, x - tipW / 2));
+    el.style.left = left + "px";
+  }
+
+  function indexAtClientX(canvasSel, hit, clientX) {
+    if (!hit) return -1;
+    const canvas = $(canvasSel);
+    if (!canvas) return -1;
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const n = hit.series ? hit.series.length : hit.keys.length;
+    if (x < hit.pad.l || x > hit.pad.l + hit.iw || !n) return -1;
+    return Math.min(n - 1, Math.max(0, Math.floor(((x - hit.pad.l) / hit.iw) * n)));
+  }
+
+  /**
+   * Tap on the intake chart: show a tooltip and, in daily mode, return the day
+   * so the caller can open the day detail.
+   * @returns {string|null} day key
+   */
+  function onTrendTap(clientX) {
+    const hit = _trendHit;
+    const i = indexAtClientX("#trend-canvas", hit, clientX);
+    if (i < 0) { hideTip("#trend-tip"); return null; }
+    const p = hit.series[i];
+    const meta = nutMeta(hit.nutrient);
+    const x = hit.pad.l + (i + 0.5) * hit.slot;
+    const value = Number.isFinite(p.value)
+      ? `<b>${fmt(p.value)}${esc(meta.unit)}</b>`
+      : `<b class="muted">not logged</b>`;
+    const goal = p.goal ? `<span class="muted small">target ${fmt(p.goal)}${esc(meta.unit)}</span>` : "";
+    showTip("#trend-tip", "#section-intake .canvas-wrap", x,
+      `<span class="tip-day">${esc(p.sub || p.key)}</span>${value}${goal}`);
+    // Weekly bars span 7 days, so there is no single day to open.
+    return hit.weekly ? null : p.key;
+  }
+
+  /** Tap on the weight chart: nearest weigh-in within ~2 day slots. */
+  function onWeightTap(clientX) {
+    const hit = _weightHit;
+    const i = indexAtClientX("#weight-canvas", hit, clientX);
+    if (i < 0) { hideTip("#weight-tip"); return null; }
+    const { keys, byDay, unit } = hit;
+    let day = byDay[keys[i]] != null ? keys[i] : null;
+    if (!day) {
+      let bestDist = Infinity;
+      for (let j = 0; j < keys.length; j++) {
+        if (byDay[keys[j]] == null) continue;
+        const dist = Math.abs(j - i);
+        if (dist < bestDist) { bestDist = dist; day = keys[j]; }
+      }
+      if (bestDist > 2) day = null;
+    }
+    if (!day) { hideTip("#weight-tip"); return null; }
+    const idx = keys.indexOf(day);
+    const x = hit.pad.l + (idx + 0.5) * (hit.iw / Math.max(1, keys.length));
+    const label = new Date(day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    showTip("#weight-tip", "#section-weight .canvas-wrap", x,
+      `<span class="tip-day">${esc(label)}</span><b>${byDay[day].toFixed(1)} ${esc(unit)}</b>`);
+    return { day, value: byDay[day], unit };
+  }
+
+  // Legacy query helpers kept for callers that only want the day key.
   function trendDayAtClientX(clientX) {
-    if (!_trendHit) return null;
-    const canvas = $("#trend-canvas");
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const { keys, pad, iw } = _trendHit;
-    if (x < pad.l || x > pad.l + iw) return null;
-    const i = Math.min(keys.length - 1, Math.max(0, Math.floor(((x - pad.l) / iw) * keys.length)));
-    return keys[i];
+    const hit = _trendHit;
+    const i = indexAtClientX("#trend-canvas", hit, clientX);
+    if (i < 0 || hit.weekly) return null;
+    return hit.series[i].key;
   }
 
-  /** Nearest day with a weigh-in near the tap; null if none close. */
   function weightDayAtClientX(clientX) {
-    if (!_weightHit) return null;
-    const canvas = $("#weight-canvas");
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const { keys, pad, iw, byDay, unit } = _weightHit;
-    if (x < pad.l || x > pad.l + iw || !keys.length) return null;
-    const i = Math.min(keys.length - 1, Math.max(0, Math.floor(((x - pad.l) / iw) * keys.length)));
-    // Prefer exact day, else nearest weigh-in within ~1.5 day slots
+    const hit = _weightHit;
+    const i = indexAtClientX("#weight-canvas", hit, clientX);
+    if (i < 0) return null;
+    const { keys, byDay, unit } = hit;
     if (byDay[keys[i]] != null) return { day: keys[i], value: byDay[keys[i]], unit };
-    let best = null;
-    let bestDist = Infinity;
+    let best = null, bestDist = Infinity;
     for (let j = 0; j < keys.length; j++) {
       if (byDay[keys[j]] == null) continue;
       const dist = Math.abs(j - i);
@@ -1414,7 +2038,10 @@ const UI = (() => {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
-    syncReviewLogAsUI, renderFoodDetail, renderTrends, renderWeightTrend, trendDayAtClientX, weightDayAtClientX, renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
+    syncReviewLogAsUI, renderFoodDetail,
+    renderInsights, renderTrends, renderWeightTrend,
+    onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX,
+    renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
     titleCaseName, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
   };

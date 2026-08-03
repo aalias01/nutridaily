@@ -124,22 +124,79 @@
         <summary id="phase-history-summary">Phase history</summary>
         <div id="phase-history-list"></div>
       </details>
-      <div class="range-pills nutrient-pills" id="insight-nutrient" aria-label="Chart nutrient">
-        <button type="button" data-nutrient="kcal" class="active">Kcal</button>
-        <button type="button" data-nutrient="protein">Protein</button>
-        <button type="button" data-nutrient="carbs">Carbs</button>
-        <button type="button" data-nutrient="fat">Fat</button>
-        <button type="button" data-nutrient="fiber">Fiber</button>
-        <button type="button" data-nutrient="sodium">Sodium</button>
-      </div>
-      <div class="canvas-wrap"><canvas id="trend-canvas"></canvas></div>
-      <p id="trend-summary" class="muted"></p>
-      <p class="muted small chart-section-label">Weight</p>
-      <div class="canvas-wrap"><canvas id="weight-canvas"></canvas></div>
-      <p id="weight-summary" class="muted"></p>
-      <div id="insight-callouts"></div>
-      <div id="insight-scorecard" class="card-block"></div>
-      <div id="top-foods" class="card-block"></div>
+      <!-- Headline: the answer before the charts. -->
+      <div id="insight-headline" class="headline-card"></div>
+      <div id="insight-observations" class="obs-list"></div>
+
+      <section class="insight-section" id="section-intake">
+        <h3 class="section-head">Intake</h3>
+        <div class="range-pills nutrient-pills" id="insight-nutrient" aria-label="Chart nutrient">
+          <button type="button" data-nutrient="kcal" class="active">Kcal</button>
+          <button type="button" data-nutrient="protein">Protein</button>
+          <button type="button" data-nutrient="carbs">Carbs</button>
+          <button type="button" data-nutrient="fat">Fat</button>
+          <button type="button" data-nutrient="fiber">Fiber</button>
+          <button type="button" data-nutrient="sodium">Sodium</button>
+        </div>
+        <div class="chart-toolbar">
+          <span class="seg" id="rollup-seg" role="group" aria-label="Chart grouping">
+            <button type="button" data-rollup="day" class="on">Daily</button>
+            <button type="button" data-rollup="week">Weekly</button>
+          </span>
+          <span class="chart-legend" id="trend-legend"></span>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="trend-canvas"></canvas>
+          <div id="trend-tip" class="chart-tip" hidden></div>
+        </div>
+        <p id="trend-summary" class="muted"></p>
+        <div id="intake-stats" class="stat-grid"></div>
+      </section>
+
+      <section class="insight-section" id="section-energy">
+        <h3 class="section-head">Energy balance</h3>
+        <div id="tdee-card" class="card-block tdee-card"></div>
+        <div id="insight-callouts"></div>
+      </section>
+
+      <section class="insight-section" id="section-weight">
+        <h3 class="section-head">Weight</h3>
+        <div class="chart-toolbar">
+          <span class="chart-legend" id="weight-legend"></span>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="weight-canvas"></canvas>
+          <div id="weight-tip" class="chart-tip" hidden></div>
+        </div>
+        <p id="weight-summary" class="muted"></p>
+        <div id="weight-stats" class="stat-grid"></div>
+      </section>
+
+      <section class="insight-section" id="section-consistency">
+        <h3 class="section-head">Consistency</h3>
+        <div id="insight-heatmap" class="card-block heatmap-card"></div>
+        <div id="insight-scorecard" class="card-block"></div>
+      </section>
+
+      <section class="insight-section" id="section-breakdown">
+        <h3 class="section-head">Breakdown</h3>
+        <div id="macro-split" class="card-block"></div>
+        <div id="meal-split" class="card-block"></div>
+        <div id="dow-pattern" class="card-block"></div>
+        <div class="card-block" id="top-foods-card">
+          <div class="card-head-row">
+            <b>Top foods</b>
+            <span class="range-pills mini-pills" id="topfood-metric" aria-label="Rank foods by">
+              <button type="button" data-metric="kcal" class="active">Kcal</button>
+              <button type="button" data-metric="protein">Protein</button>
+              <button type="button" data-metric="sodium">Sodium</button>
+              <button type="button" data-metric="fiber">Fiber</button>
+            </span>
+          </div>
+          <div id="top-foods"></div>
+        </div>
+      </section>
+
       <div id="day-detail"></div>
     </section>
 
@@ -685,6 +742,7 @@ END</pre>
 <script src="js/share.js"></script>
 <script src="js/ledger.js"></script>
 <script src="js/phases.js"></script>
+<script src="js/analytics.js"></script>
 <script src="js/phase-prompt.js"></script>
 <script src="js/gap-prompt.js"></script>
 <script src="js/gdrive.js"></script>
