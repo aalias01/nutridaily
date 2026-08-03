@@ -175,6 +175,14 @@ const FoodMatch = (() => {
   function computeMacros(per100, grams) {
     const k = grams / 100;
     const r1 = (x) => Math.round(x * 10) / 10;
+    // Potassium alone is nullable. `|| 0` would turn "not recorded" into
+    // "contains none", which silently understates potassium and pushes the
+    // Na:K ratio the wrong way — reporting a worse ratio than reality. Null
+    // propagates so coverage can be measured instead of guessed.
+    const kk = per100 && per100.k;
+    const potassium = (kk == null || kk === "" || !Number.isFinite(Number(kk)))
+      ? null
+      : Math.round(Number(kk) * k);
     return {
       kcal: Math.round((per100.kcal || 0) * k),
       p: r1((per100.p || 0) * k),
@@ -182,6 +190,7 @@ const FoodMatch = (() => {
       f: r1((per100.f || 0) * k),
       fb: r1((per100.fb || 0) * k),
       na: Math.round((per100.na || 0) * k),
+      k: potassium,
     };
   }
 

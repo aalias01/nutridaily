@@ -910,3 +910,18 @@ body.has-info-banner #toast { bottom: calc(var(--tab-h) + 96px); }
 .rate-current { padding-left: 10px; }
 .weight-trend-line { margin: -2px 0 8px; padding-left: 2px; }
 .weight-trend-line[hidden] { display: none; }
+
+/* Potassium + Na:K ratio */
+.fill.k { background: #5b8fa8; }
+.nak-line { margin-top: 6px; font-weight: 600; }
+.nak-line[hidden] { display: none; }
+.nak-line.ok { color: var(--accent-ink); }
+.nak-line.over { color: var(--warn); }
+.nak-big { font-size: 30px; font-weight: 700; letter-spacing: -0.8px; margin: 6px 0 2px; }
+.nak-big.over { color: var(--warn); }
+.nak-big.hit { color: var(--accent-ink); }
+.nak-unit { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+.nak-lever { margin: 8px 0; padding: 8px 11px; border-radius: 10px;
+  background: color-mix(in srgb, var(--info) 10%, transparent); line-height: 1.45; }
+.nak-caution { border-left: 3px solid var(--warn); padding-left: 10px; margin-top: 10px; line-height: 1.5; }
+.nak-caution b { color: var(--ink); }

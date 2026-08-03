@@ -34,9 +34,21 @@ For always-connected Drive auth locally, prefer `npx vercel dev` (see Deploy bel
 
 ## What gets tracked
 
-Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium. Daily goals and rings. Body weight shows a smoothed trend and weekly rate next to the entry field, so a heavy morning doesn't read as a heavy week. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
+Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium, potassium. Daily goals and rings. Body weight shows a smoothed trend and weekly rate next to the entry field, so a heavy morning doesn't read as a heavy week. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
 
-Targets have shapes, and the app is consistent about them: **protein and fiber are floors** (a minimum — going above is never flagged), **sodium is a ceiling** (lower is better), **calories, carbs and fat are ranges**. Today flags the moment you pass a number, and says whether you are slightly over or past the tolerance band — the amber zone is exactly what Insights scores as on target.
+### Sodium and potassium
+
+The kidney handles these two as a coupled system — potassium intake raises how much sodium you excrete — so the **molar Na:K ratio** predicts blood pressure better than either number alone. Unlike most diet metrics, that has direct randomised evidence behind it: a five-year trial of potassium-enriched salt in ~21,000 people found fewer strokes, fewer cardiovascular events, and lower mortality.
+
+The target is a molar ratio at or below **1.0**. Watch the units — mass and molar ratios differ by a factor of 1.70 because potassium's atomic mass is 70% higher, and mixing them up is the standard error here. The app stores milligrams and shows molar. WHO's 2,000 mg sodium / 3,510 mg potassium works out to 0.97.
+
+**Potassium is nullable, and that matters.** A food with no potassium recorded stays blank rather than defaulting to zero, because "contains none" and "not measured" are different claims. Missing potassium doesn't bias the ratio randomly — it always biases it *upward*, since the sodium gets counted and the potassium that came with it doesn't. So the ratio is only shown when at least 80% of a day's calories come from foods with a known value; below that the app says what's missing instead of printing a number guaranteed to look worse than reality.
+
+The card also names which lever to pull, and deliberately not by picking whichever milligram gap is smaller — adding a food is easier to sustain than stripping salt out of meals you already eat. If sodium is already inside its own limit, the gap is on the potassium side regardless of which number looks bigger.
+
+> Food potassium is safe with normal kidney function. Concentrated potassium from salt substitutes or supplements is not, for anyone with reduced kidney function or taking ACE inhibitors, ARBs, or potassium-sparing diuretics. Talk to a doctor before going that route.
+
+Targets have shapes, and the app is consistent about them: **protein and fiber are floors** (a minimum — going above is never flagged), **sodium, and the Na:K ratio, are ceilings** (lower is better), **calories, carbs and fat are ranges**. Potassium is a floor too, but it is not scored separately — it is already inside the ratio, and scoring both would count the same behaviour twice. Today flags the moment you pass a number, and says whether you are slightly over or past the tolerance band — the amber zone is exactly what Insights scores as on target.
 
 ## Insights
 

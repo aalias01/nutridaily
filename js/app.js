@@ -1951,6 +1951,7 @@ const App = (() => {
     UI.$("#set-fat").value = g.fat;
     UI.$("#set-fiber").value = g.fiber;
     if (UI.$("#set-sodium")) UI.$("#set-sodium").value = g.sodium != null ? g.sodium : DEFAULT_GOALS.sodium;
+    if (UI.$("#set-potassium")) UI.$("#set-potassium").value = g.potassium != null ? g.potassium : DEFAULT_GOALS.potassium;
     if (phase) {
       Phases.applyPhaseLabel(phase);
       setKindSeg("#phase-kind-seg", phase.kind, "phase");
@@ -2509,6 +2510,7 @@ const App = (() => {
         fat: Number(UI.$("#set-fat").value) || 0,
         fiber: Number(UI.$("#set-fiber").value) || 0,
         sodium: Number(UI.$("#set-sodium") && UI.$("#set-sodium").value) || 0,
+        potassium: Number(UI.$("#set-potassium") && UI.$("#set-potassium").value) || 0,
       };
       const forceMajor = !!(UI.$("#set-phase-major") && UI.$("#set-phase-major").checked);
       const result = Phases.appendRevision(state.settings, nextGoals, today, "", {
@@ -2694,6 +2696,7 @@ const App = (() => {
         UI.$("#set-fat").value = g.fat;
         UI.$("#set-fiber").value = g.fiber;
         if (UI.$("#set-sodium")) UI.$("#set-sodium").value = g.sodium;
+        if (UI.$("#set-potassium")) UI.$("#set-potassium").value = g.potassium;
         // Only flip kind when the paste actually included Kind: (null means leave user's selection).
         if (parsed.kind) setKindSeg("#phase-kind-seg", parsed.kind, "phase");
         UI.closeSheet("sheet-phase-targets");

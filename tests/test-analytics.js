@@ -2,8 +2,13 @@
  * Covers the derived layer: trend weight, adaptive TDEE, rollups, consistency,
  * scoring, breakdowns. Everything here is pure, so fixtures are hand-checkable.
  */
-const Analytics = require("../js/analytics.js");
 const Phases = require("../js/phases.js");
+// In the browser these are script-tag globals. analytics.js reads `Phases` for
+// potassium coverage and the Na:K ratio, so the global must exist before it is
+// required — otherwise buildDays silently degrades to "no ratio" and tests
+// fail for reasons that have nothing to do with the code under test.
+globalThis.Phases = Phases;
+const Analytics = require("../js/analytics.js");
 
 let pass = 0, fail = 0;
 function ok(cond, name, detail) {
@@ -52,6 +57,17 @@ function makeDays(keys, spec) {
 }
 
 const END = "2026-08-02"; // a Sunday
+
+console.log("\n[0] Environment");
+{
+  ok(typeof globalThis.Phases !== "undefined", "Phases is global, as it is in the browser");
+  ok(Analytics.buildDays({
+    keys: ["2026-08-02"],
+    totalsForDay: () => ({ count: 2, kcal: { mean: 2000 }, p: { mean: 100 }, c: { mean: 200 },
+      f: { mean: 60 }, fb: { mean: 25 }, na: { mean: 2000 }, k: { mean: 4000 }, kCoverage: 1, kItems: 2 }),
+    goalsForDay: () => ({ ...GOALS, potassium: 3400, naK: 1.0 }),
+  })[0].naK != null, "the ratio wiring is live (guards against a silent degrade)");
+}
 
 console.log("\n[1] Date helpers");
 {
@@ -556,7 +572,13 @@ console.log("\n[18] Effort weighting in the score");
   ok(base.score === 100, "all targets met still scores 100");
 
   const W = Analytics.SCORE_WEIGHTS;
-  approx(Object.values(W).reduce((a, b) => a + b, 0), 1, 0.0001, "effort weights sum to 1");
+  // naK and sodium share one 0.10 slot and are never both scored on the same
+  // day, so the effective total counts that slot once.
+  const effective = Object.entries(W)
+    .filter(([k]) => k !== "sodium")
+    .reduce((a, [, v]) => a + v, 0);
+  approx(effective, 1, 0.0001, "effort weights sum to 1 with the sodium slot counted once");
+  ok(W.sodium === W.naK, "the sodium fallback carries the same weight as the ratio");
   ok(W.kcal > W.carbs && W.kcal > W.fat, "energy outweighs the macros it largely determines");
   ok(W.protein >= W.kcal, "protein carries at least as much as calories");
   ok(W.sodium < W.protein && W.sodium < W.fiber, "the sodium guardrail carries less than the floors you work at");
@@ -798,6 +820,181 @@ console.log("\n[24] Editing a food never rewrites history");
   ok(stored.foodVersion === 1, "and the food version it was logged at", `got ${stored.foodVersion}`);
   Ledger2.clearAll();
   Ledger2._resetCacheForTests();
+}
+
+
+console.log("\n[25] Sodium:potassium ratio");
+{
+  // Molar ratio, not mass — the two differ by 1.70 and confusing them is the
+  // standard error in this area.
+  approx(Phases.NAK_MASS_TO_MOLAR, 1.7008, 0.001, "mass->molar factor");
+  approx(Phases.naKRatio(2000, 3510), 0.969, 0.005, "WHO targets land just under 1.0 molar");
+  approx(Phases.naKRatio(3400, 2500), 2.313, 0.01, "typical Western intake is ~2.3");
+  approx(Phases.naKRatio(2300, 2300), Phases.NAK_MASS_TO_MOLAR, 0.001, "equal mass is NOT a 1.0 ratio");
+  ok(Phases.naKRatio(2000, 0) === null, "zero potassium yields null, not Infinity");
+  ok(Phases.naKRatio(2000, null) === null, "unknown potassium yields null");
+
+  // Band direction: a ceiling. Lower is always fine.
+  ok(Phases.BANDS.naK.dir === "ceiling", "the ratio is a ceiling");
+  ok(Phases.classify(0.4, 1.0, Phases.BANDS.naK) === "hit", "a very low ratio is a hit, never 'under'");
+  ok(Phases.classify(2.0, 1.0, Phases.BANDS.naK) === "over", "a high ratio is over");
+  ok(Phases.BANDS.potassium.dir === "floor", "potassium is a floor");
+  ok(Phases.classify(6000, 3400, Phases.BANDS.potassium) === "hit", "high potassium is never flagged");
+}
+
+console.log("\n[26] Potassium coverage gating");
+{
+  const mkTotals = (kcal, na, kMg, coverage, count) => ({
+    count: count == null ? 4 : count,
+    kcal: { mean: kcal }, p: { mean: 100 }, c: { mean: 200 }, f: { mean: 60 },
+    fb: { mean: 25 }, na: { mean: na }, k: { mean: kMg },
+    kCoverage: coverage, kItems: 3,
+  });
+
+  ok(Phases.nakCovered(mkTotals(2000, 2300, 3000, 1.0)) === true, "full coverage is usable");
+  ok(Phases.nakCovered(mkTotals(2000, 2300, 3000, 0.85)) === true, "85% coverage is usable");
+  ok(Phases.nakCovered(mkTotals(2000, 2300, 3000, 0.5)) === false, "half-covered is not");
+  ok(Phases.nakCovered(mkTotals(2000, 2300, 0, 1.0)) === false, "zero potassium is not usable");
+  ok(Phases.nakCovered({ count: 0 }) === false, "an empty day is not usable");
+
+  // The key property: a thinly covered day must not be scored at all, because
+  // missing potassium always biases the ratio upward (worse-looking).
+  const goals = { ...GOALS, potassium: 3400, naK: 1.0 };
+  const thin = Phases.scoreDayTotals(mkTotals(2000, 2300, 900, 0.3), goals);
+  ok(thin.naK.status === "skip", "a thin day skips the ratio rather than reporting a bad one");
+  ok(thin.potassium.status === "skip", "and skips potassium too");
+
+  const full = Phases.scoreDayTotals(mkTotals(2000, 2300, 4200, 1.0), goals);
+  approx(full.naK.actual, Phases.naKRatio(2300, 4200), 0.001, "a covered day reports the ratio");
+  ok(full.naK.status === "hit", "2300 Na with 4200 K is on target", `ratio ${full.naK.actual.toFixed(2)}`);
+  ok(full.potassium.status === "hit", "and potassium clears its floor");
+
+  // Same sodium, low potassium -> over.
+  const lowK = Phases.scoreDayTotals(mkTotals(2000, 2300, 2000, 1.0), goals);
+  ok(lowK.naK.status === "over", "same sodium with low potassium is over", `ratio ${lowK.naK.actual.toFixed(2)}`);
+  ok(lowK.potassium.status === "under", "and potassium is short");
+}
+
+console.log("\n[27] Ratio and sodium never double-count in the score");
+{
+  const keys = keysEndingAt(END, 14);
+  const goals = { ...GOALS, potassium: 3400, naK: 1.0 };
+  const build = (kMg, coverage) => Analytics.buildDays({
+    keys,
+    totalsForDay: () => ({
+      count: 4,
+      kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 },
+      fb: { mean: 30 }, na: { mean: 2000 },
+      k: { mean: kMg }, kCoverage: coverage, kItems: 3,
+    }),
+    goalsForDay: () => goals,
+    weightKgForDay: () => null,
+  });
+
+  const covered = Analytics.nutritionScore(build(3600, 1.0), Phases.scoreDayTotals, { todayKey: END });
+  const keys2 = covered.nutrients.map((n) => n.key);
+  ok(keys2.includes("naK"), "a covered range scores the ratio");
+  ok(!keys2.includes("sodium"), "and does not also score sodium");
+
+  const uncovered = Analytics.nutritionScore(build(0, 0), Phases.scoreDayTotals, { todayKey: END });
+  const keys3 = uncovered.nutrients.map((n) => n.key);
+  ok(keys3.includes("sodium"), "a range with no potassium data falls back to sodium");
+  ok(!keys3.includes("naK"), "and does not score the ratio");
+  ok(!keys3.includes("potassium"), "potassium is never scored separately — it is inside the ratio");
+
+  // Both routes must produce a comparable score, so adding potassium data
+  // does not silently reset a number the user has been watching.
+  ok(Math.abs(covered.score - uncovered.score) <= 5,
+    "scores stay comparable whether or not potassium data exists",
+    `covered ${covered.score} vs fallback ${uncovered.score}`);
+
+  // Weights renormalize to 1 either way.
+  const sum = (r) => r.nutrients.reduce((a, n) => a + n.weight, 0);
+  approx(sum(covered), 1, 0.0001, "covered weights sum to 1");
+  approx(sum(uncovered), 1, 0.0001, "fallback weights sum to 1");
+}
+
+console.log("\n[28] Potassium is nullable end to end");
+{
+  globalThis.FOOD_DB = require("../js/data-foods.js");
+  globalThis.FoodMatch = require("../js/foodmatch.js");
+  const FoodMatch = globalThis.FoodMatch;
+  const Ledger3 = require("../js/ledger.js");
+
+  // computeMacros must propagate null, never coerce it to 0.
+  const known = FoodMatch.computeMacros({ kcal: 100, p: 5, c: 10, f: 2, fb: 1, na: 200, k: 300 }, 200);
+  ok(known.k === 600, "known potassium scales with grams", `got ${known.k}`);
+  const unknown = FoodMatch.computeMacros({ kcal: 100, p: 5, c: 10, f: 2, fb: 1, na: 200 }, 200);
+  ok(unknown.k === null, "absent potassium stays null, not 0", `got ${JSON.stringify(unknown.k)}`);
+  const explicitZero = FoodMatch.computeMacros({ kcal: 900, p: 0, c: 0, f: 100, fb: 0, na: 0, k: 0 }, 100);
+  ok(explicitZero.k === 0, "a genuine zero stays zero (oil really has none)");
+
+  // Ledger coverage: a day of half-known foods must report ~50%.
+  Ledger3.clearAll(); Ledger3._resetCacheForTests();
+  const day = "2026-07-20";
+  Ledger3.addEntry(day, { name: "Known", grams: 100, displayQty: "100 g", sd: 0.1, macros: { kcal: 500, p: 10, c: 50, f: 10, fb: 5, na: 300, k: 400 } });
+  Ledger3.addEntry(day, { name: "Unknown", grams: 100, displayQty: "100 g", sd: 0.1, macros: { kcal: 500, p: 10, c: 50, f: 10, fb: 5, na: 300, k: null } });
+  const t = Ledger3.totalsFor(day);
+  ok(t.k.mean === 400, "potassium sums only the known entries", `got ${t.k.mean}`);
+  approx(t.kCoverage, 0.5, 0.001, "coverage is the calorie share with known potassium");
+  ok(t.kItems === 1, "and counts the known items");
+  ok(Phases.nakCovered(t) === false, "a half-covered day is refused");
+  ok(t.na.mean === 600, "sodium still totals every entry");
+  Ledger3.clearAll(); Ledger3._resetCacheForTests();
+}
+
+console.log("\n[29] Catalog potassium sanity");
+{
+  const DB = require("../js/data-foods.js");
+  ok(DB.every((f) => Number.isFinite(f.per100.k)), "every catalog food has a potassium value");
+  ok(DB.every((f) => f.per100.k >= 0 && f.per100.k <= 2000), "all values are within a physically plausible range");
+
+  const by = (id) => DB.find((f) => f.id === id).per100.k;
+  // Directional checks against well-established relationships. These would
+  // catch a transposed or misplaced value without asserting false precision.
+  ok(by("spinach") > 400, "cooked spinach is potassium-dense");
+  ok(by("potato") > 350 && by("sweet-potato") > 350, "potatoes are potassium-dense");
+  ok(by("banana") > 300, "banana is potassium-dense");
+  ok(by("dates") > 500 && by("raisins") > 600, "dried fruit concentrates potassium");
+  ok(by("white-rice") < 60, "white rice is nearly potassium-free");
+  ok(by("olive-oil") < 10 && by("ghee") < 20, "pure fats carry almost none");
+  ok(by("lentils") > 300 && by("kidney-beans") > 350, "legumes are a strong source");
+  ok(by("almonds") > 600 && by("peanut-butter") > 500, "nuts and nut butters are dense");
+  ok(by("chicken-breast") > 200 && by("salmon") > 300, "meat and fish carry meaningful amounts");
+
+  // The point of the whole feature: rice dilutes the ratio, beans improve it.
+  ok(Phases.naKRatio(by("white-rice") * 0 + 1, by("white-rice")) > 0, "rice ratio computable");
+  const riceK = by("white-rice"), beanK = by("kidney-beans");
+  ok(beanK > riceK * 5, "beans carry many times the potassium of rice per 100 g");
+}
+
+
+console.log("\n[30] Which lever to pull");
+{
+  // Sodium and potassium milligrams are not interchangeable units of effort:
+  // adding a food is easier to sustain than stripping salt out of meals you
+  // already eat. So "whichever number is smaller" is the wrong rule, and the
+  // deciding question is whether sodium is acceptable on its own terms.
+  const naGoal = 2300;
+  const ok2 = (na) => Phases.classify(na, naGoal, Phases.BANDS.sodium) === "hit";
+  ok(ok2(2100), "2100 mg is within the sodium ceiling");
+  ok(!ok2(3400), "3400 mg is not");
+
+  const F = Phases.NAK_MASS_TO_MOLAR;
+  const raiseK = (na, k) => Math.max(0, na * F / 1.0 - k);
+  const cutNa = (na, k) => Math.max(0, na - k * 1.0 / F);
+
+  // The user's own case: sodium fine, potassium short. The raw mg gap is
+  // LARGER on the potassium side (972 vs 571), so a naive smaller-number rule
+  // would wrongly tell them to cut sodium.
+  approx(raiseK(2100, 2600), 972, 5, "potassium gap in the real-world case");
+  approx(cutNa(2100, 2600), 571, 5, "sodium gap looks smaller in raw mg");
+  ok(raiseK(2100, 2600) > cutNa(2100, 2600),
+    "the naive rule would pick the wrong lever here — hence the sodium-first check");
+
+  // Both routes genuinely land on the target.
+  approx(Phases.naKRatio(2100, 2600 + raiseK(2100, 2600)), 1.0, 0.01, "raising potassium reaches 1.0");
+  approx(Phases.naKRatio(2100 - cutNa(2100, 2600), 2600), 1.0, 0.01, "cutting sodium also reaches 1.0");
 }
 
 console.log(`\nanalytics: ${pass} passed, ${fail} failed\n`);

@@ -3,7 +3,34 @@
  * Insights stay stable when targets change.
  */
 const Phases = (() => {
-  const DEFAULT_GOALS = { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300 };
+  const DEFAULT_GOALS = {
+    kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300,
+    // Adequate intake for adult men; most industrialised diets land near 2600.
+    potassium: 3400,
+  };
+
+  /**
+   * Sodium and potassium are handled by the kidney as a coupled system, so the
+   * ratio between them predicts blood pressure better than either number does
+   * alone. The target is a *molar* ratio at or below 1.0 — that is the form
+   * used in the literature, and the WHO targets (2000 mg Na, 3510 mg K) work
+   * out to 0.97.
+   *
+   * Mass and molar ratios differ by a factor of 1.70 because potassium's
+   * atomic mass is 70% higher, and confusing the two is the standard error
+   * here. Everything is stored in mg and converted at the point of use.
+   */
+  const NA_MOLAR_MASS = 22.99;
+  const K_MOLAR_MASS = 39.10;
+  const NAK_MASS_TO_MOLAR = K_MOLAR_MASS / NA_MOLAR_MASS; // ≈ 1.7008
+
+  /** Molar Na:K from milligram inputs. Null when potassium is unknown or zero. */
+  function naKRatio(sodiumMg, potassiumMg) {
+    const na = Number(sodiumMg);
+    const k = Number(potassiumMg);
+    if (!Number.isFinite(na) || !Number.isFinite(k) || k <= 0) return null;
+    return (na / NA_MOLAR_MASS) / (k / K_MOLAR_MASS);
+  }
   /** User-facing kinds (pills). Legacy "custom" still resolves in data. */
   const KINDS = ["cut", "maintain", "bulk", "recomp"];
   const KIND_LABEL = {
@@ -33,9 +60,24 @@ const Phases = (() => {
     carbs: { dir: "range", pct: 0.15 },
     fat: { dir: "range", pct: 0.15 },
     sodium: { dir: "ceiling", pct: 0.05 },
+    potassium: { dir: "floor", pct: 0.10 },
+    // A ratio, not a milligram amount. Target <= 1.0 molar.
+    naK: { dir: "ceiling", pct: 0.10 },
   };
 
-  const GOAL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium"];
+  const GOAL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium", "potassium"];
+
+  /**
+   * Minimum share of a day's calories that must come from foods with a known
+   * potassium value before the ratio is trustworthy.
+   *
+   * Missing potassium does not bias the ratio randomly — it always biases it
+   * upward, because the sodium is counted and the potassium that came with it
+   * is not. A half-covered day would reliably report a worse ratio than
+   * reality, which is the kind of error that makes someone chase a problem
+   * they do not have.
+   */
+  const NAK_MIN_COVERAGE = 0.8;
 
   function uid(prefix) {
     return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
@@ -587,6 +629,7 @@ const Phases = (() => {
   function scoreDayTotals(totals, goals) {
     if (!totals || !totals.count) return null;
     const out = {};
+    const kCovered = nakCovered(totals);
     const map = {
       kcal: totals.kcal.mean,
       protein: totals.p.mean,
@@ -594,20 +637,39 @@ const Phases = (() => {
       fat: totals.f.mean,
       fiber: totals.fb.mean,
       sodium: totals.na.mean,
+      // Only claim a potassium total when most of the day is accounted for.
+      potassium: kCovered && totals.k ? totals.k.mean : undefined,
     };
     for (const k of GOAL_KEYS) {
       const band = BANDS[k];
       const actual = map[k];
       const target = goals[k];
-      const status = classify(actual, target, band);
+      const status = actual === undefined ? "skip" : classify(actual, target, band);
       out[k] = {
         status,
         actual,
         target,
-        delta: actual - target,
+        delta: actual === undefined ? 0 : actual - target,
       };
     }
+
+    const ratio = kCovered && totals.k ? naKRatio(totals.na.mean, totals.k.mean) : null;
+    const ratioTarget = Number(goals.naK) || 1.0;
+    out.naK = {
+      status: ratio == null ? "skip" : classify(ratio, ratioTarget, BANDS.naK),
+      actual: ratio,
+      target: ratioTarget,
+      delta: ratio == null ? 0 : ratio - ratioTarget,
+      coverage: totals.kCoverage != null ? totals.kCoverage : 0,
+    };
     return out;
+  }
+
+  /** True when a day's potassium data covers enough of what was eaten. */
+  function nakCovered(totals) {
+    if (!totals || !totals.count || !totals.k) return false;
+    const cov = totals.kCoverage;
+    return Number.isFinite(cov) && cov >= NAK_MIN_COVERAGE && totals.k.mean > 0;
   }
 
   function scoreRange(keys, totalsForDay, settings, opts) {
@@ -898,6 +960,10 @@ const Phases = (() => {
     mergeProfiles,
     dayBefore,
     classify,
+    naKRatio,
+    nakCovered,
+    NAK_MIN_COVERAGE,
+    NAK_MASS_TO_MOLAR,
     hudState,
     hudBarOver,
     scoreDayTotals,

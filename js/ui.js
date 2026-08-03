@@ -145,6 +145,37 @@ const UI = (() => {
     set("f", totals.f.mean, goals.fat, "fat", "g");
     set("fb", totals.fb.mean, goals.fiber, "fiber", "g");
     set("sodium", totals.na.mean, goals.sodium, "sodium", "mg");
+
+    // Potassium and the Na:K ratio. Both stay quiet when the day's potassium
+    // data is too thin to mean anything, rather than showing a number that is
+    // guaranteed to understate potassium.
+    const covered = typeof Phases !== "undefined" && Phases.nakCovered(totals);
+    const kFill = $("#f-potassium");
+    const kVal = $("#v-potassium");
+    if (kFill && kVal) {
+      if (covered) {
+        set("potassium", totals.k.mean, goals.potassium, "potassium", "mg");
+      } else {
+        kFill.style.width = "0%";
+        kFill.classList.remove("near", "over");
+        kVal.classList.remove("near", "over");
+        kVal.textContent = totals.count ? "— add potassium to your foods" : "—";
+      }
+    }
+    const nakLine = $("#v-nak");
+    if (nakLine) {
+      const ratio = covered ? Phases.naKRatio(totals.na.mean, totals.k.mean) : null;
+      if (ratio == null) {
+        nakLine.hidden = true;
+        nakLine.textContent = "";
+      } else {
+        const target = Number(goals.naK) || 1.0;
+        const status = Phases.classify(ratio, target, Phases.BANDS.naK);
+        nakLine.hidden = false;
+        nakLine.className = `nak-line small ${status === "over" ? "over" : "ok"}`;
+        nakLine.textContent = `Na:K ${ratio.toFixed(2)} (target ≤ ${target.toFixed(1)})`;
+      }
+    }
     const naLine = $("#v-na");
     if (naLine) naLine.textContent = "";
   }
@@ -505,6 +536,8 @@ const UI = (() => {
     $("#rev-c").value = f.per100.c;
     $("#rev-f").value = f.per100.f;
     $("#rev-fb").value = f.per100.fb;
+    // Blank means unknown, which is not the same as 0 and must round-trip.
+    if ($("#rev-k")) $("#rev-k").value = f.per100.k == null ? "" : f.per100.k;
     $("#rev-na").value = f.per100.na;
     $("#rev-batch-g").value = (f.batch && f.batch.grams) || "";
     $("#rev-batch-s").value = (f.batch && f.batch.servings) || "";
@@ -583,6 +616,15 @@ const UI = (() => {
       const n = Number($(id).value);
       return Number.isFinite(n) ? n : 0;
     };
+    /** Blank / missing field → null (unknown), not 0. */
+    const numOrNullField = (id) => {
+      const el = $(id);
+      if (!el) return null;
+      const raw = String(el.value || "").trim();
+      if (!raw) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    };
     const logChip = $("#rev-log-as .uchip.active");
     const logAs = (logChip && logChip.dataset.logAs) || "grams";
     const serving = Number($("#rev-serving").value);
@@ -603,7 +645,14 @@ const UI = (() => {
       name: $("#rev-name").value.trim(),
       aliases: $("#rev-aliases").value.split(",").map((a) => a.trim().toLowerCase()).filter(Boolean),
       cat: $("#rev-cat").value,
-      per100: { kcal: num("#rev-kcal"), p: num("#rev-p"), c: num("#rev-c"), f: num("#rev-f"), fb: num("#rev-fb"), na: num("#rev-na") },
+      per100: {
+        kcal: num("#rev-kcal"), p: num("#rev-p"), c: num("#rev-c"),
+        f: num("#rev-f"), fb: num("#rev-fb"), na: num("#rev-na"),
+        // Blank stays null (unknown). Everything else coerces blank to 0, but
+        // doing that here would claim the food contains no potassium and
+        // silently bias the Na:K ratio upward.
+        k: numOrNullField("#rev-k"),
+      },
       units,
       logAs,
       countLabel: logAs === "piece" ? (countRaw || null) : null,
@@ -1725,6 +1774,83 @@ const UI = (() => {
   }
 
   /**
+   * Sodium and potassium together.
+   *
+   * The kidney handles them as a coupled system, so the molar Na:K ratio
+   * tracks blood pressure better than either number alone — and unlike most
+   * of this tab, that claim rests on a randomised trial (SSaSS, ~21,000
+   * people), not just cohort data.
+   *
+   * The card refuses to show a ratio it cannot stand behind. Missing potassium
+   * biases the ratio in one direction only — upward, because the sodium is
+   * counted and the potassium that came with it is not — so a thinly covered
+   * range would reliably report a worse ratio than reality.
+   */
+  function renderNaKCard(ctx) {
+    const root = $("#nak-card");
+    if (!root || typeof Phases === "undefined") return;
+    const logged = Analytics.loggedRows(ctx.days);
+    if (!logged.length) { root.hidden = true; root.innerHTML = ""; return; }
+
+    const covered = logged.filter((d) => d.kCovered);
+    const coverage = logged.length ? covered.length / logged.length : 0;
+    const avgCoveragePct = Analytics.mean(logged.map((d) => d.kCoverage || 0)) || 0;
+    root.hidden = false;
+
+    if (!covered.length) {
+      root.innerHTML = `
+        <div class="card-head-row"><b>Sodium and potassium</b><span class="conf conf-none">no potassium data</span></div>
+        <p class="muted small">Potassium is not recorded on your foods yet, so the Na:K ratio cannot be computed. Reference foods already carry a value; for your own dishes, re-paste them with a Potassium line or type it into <b>Edit food</b>.</p>
+        <p class="muted small">Only ${Math.round(avgCoveragePct * 100)}% of your logged calories currently come from foods with a potassium value.</p>`;
+      return;
+    }
+
+    const ratios = covered.map((d) => d.naK).filter(Number.isFinite);
+    const avgRatio = Analytics.mean(ratios);
+    const naAvg = Analytics.mean(covered.map((d) => d.sodium));
+    const kAvg = Analytics.mean(covered.map((d) => d.potassium));
+    const kGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).potassium)) || 3400;
+    const target = 1.0;
+    const status = Phases.classify(avgRatio, target, Phases.BANDS.naK);
+
+    // Both levers, and which side the gap is actually on.
+    // molar ratio = (Na/22.99)/(K/39.10), so K at target = Na * (39.10/22.99) / target.
+    const kNeeded = naAvg * Phases.NAK_MASS_TO_MOLAR / target;
+    const naNeeded = kAvg * target / Phases.NAK_MASS_TO_MOLAR;
+    const raiseK = Math.max(0, kNeeded - kAvg);
+    const cutNa = Math.max(0, naAvg - naNeeded);
+
+    // Deliberately not "whichever number is smaller" — comparing milligrams of
+    // sodium against milligrams of potassium treats them as equally hard to
+    // change, and they are not. Adding a food is easier to sustain than
+    // removing salt from food you already eat. So the deciding question is
+    // whether sodium is already acceptable on its own terms: if it is, the gap
+    // is on the potassium side no matter which number looks bigger.
+    const naGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).sodium)) || 2300;
+    const sodiumOk = Phases.classify(naAvg, naGoal, Phases.BANDS.sodium) === "hit";
+    let lever;
+    if (status === "hit") {
+      lever = `Ratio is at target. Holding it matters more than moving either number further.`;
+    } else if (sodiumOk) {
+      lever = `Sodium is already within its ${fmt(naGoal)} mg limit, so the gap is on the potassium side: about ${fmt(raiseK)} mg/day more would reach the target without cutting any sodium.`;
+    } else {
+      lever = `Either would reach the target: about ${fmt(raiseK)} mg/day more potassium, or about ${fmt(cutNa)} mg/day less sodium. Adding tends to stick better than subtracting.`;
+    }
+
+    const confClass = coverage >= 0.8 ? "conf-high" : coverage >= 0.5 ? "conf-medium" : "conf-low";
+    const confLabel = `${covered.length} of ${logged.length} days covered`;
+
+    root.innerHTML = `
+      <div class="card-head-row"><b>Sodium and potassium</b><span class="conf ${confClass}">${esc(confLabel)}</span></div>
+      <div class="nak-big ${esc(status)}">${avgRatio.toFixed(2)}<span class="nak-unit"> molar Na:K · target ≤ ${target.toFixed(1)}</span></div>
+      <p class="muted small">Averaging ${fmt(naAvg)} mg sodium and ${fmt(kAvg)} mg potassium on days with enough data. Potassium target ${fmt(kGoal)} mg.</p>
+      <p class="small nak-lever">${esc(lever)}</p>
+      <p class="muted small">The ratio matters because the kidney handles the two together: potassium intake increases how much sodium you excrete. It predicts blood pressure better than either number alone, and a randomised trial of potassium-enriched salt found fewer strokes and deaths over five years.</p>
+      <p class="muted small nak-caution"><b>Before using a potassium salt substitute:</b> food potassium is safe with normal kidney function, but concentrated potassium can be dangerous with reduced kidney function or with ACE inhibitors, ARBs, or potassium-sparing diuretics. That is a conversation for your doctor, not an app.</p>
+      ${coverage < 0.8 ? `<p class="muted small">Days without enough potassium data are excluded rather than estimated. Add potassium to more of your foods to widen this.</p>` : ""}`;
+  }
+
+  /**
    * This phase against the one before it — the question people actually have
    * when a phase ends. Only shown when a previous phase has enough logged days
    * to say anything; a three-day predecessor would produce confident nonsense.
@@ -1851,6 +1977,7 @@ const UI = (() => {
     renderIntakeStats(ctx);
     renderTdeeCard(ctx);
     renderScorecard(renderCallouts(ctx));
+    renderNaKCard(ctx);
     renderPhaseCompare(ctx);
     renderHeatmap(ctx);
     renderMacroSplit(ctx);

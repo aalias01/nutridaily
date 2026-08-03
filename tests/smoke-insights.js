@@ -404,6 +404,15 @@ async function run(label, days) {
     ok([...applyBtns].every((b) => Number(b.dataset.kcal) > 800), "each apply carries a sane calorie value");
   }
 
+
+  // --- potassium and the Na:K ratio ---------------------------------------
+  // The main fixture has no potassium on its foods, so the ratio must refuse
+  // to compute rather than report a falsely bad number.
+  ok(/no potassium data|not recorded/i.test(text("#nak-card")),
+    "ratio refuses to compute without potassium data");
+  ok(!/molar Na:K/.test(text("#nak-card")), "and shows no ratio figure");
+  ok(!/NaN|Infinity/.test(text("#nak-card")), "no NaN or Infinity leaks from a zero denominator");
+
   // Range pills.
   for (const d of ["30", "90", "14"]) {
     window.document.querySelector(`#insight-range [data-days="${d}"]`).click();

@@ -12,8 +12,8 @@ const NutriParse = (() => {
     "Aliases: <other names I might search for, comma separated>\n" +
     "Category: <one of: dish, meat, protein, grain, legume, veg, fruit, dairy, fat, nuts, bev, snack>\n" +
     "Batch: <finished weight in grams> g total, <number> servings\n" +
-    "Totals: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
-    "Per 100 g: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
+    "Totals: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg> | Potassium <mg>\n" +
+    "Per 100 g: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg> | Potassium <mg>\n" +
     "Piece: <grams per ONE countable item, or omit>\n" +
     "Log as: <piece | grams>\n" +
     "Count as: <singular noun I would say, e.g. chapati, egg — omit if Log as: grams>\n" +
@@ -45,7 +45,8 @@ const NutriParse = (() => {
     "  (e.g. label \"serving\" that is not one piece).\n" +
     "- Count as is the word I type in the diary (\"2 chapatis\" → Count as: chapati).\n" +
     "- Use USDA-style values. Account for oil absorbed and water lost in cooking.\n" +
-    "- Sodium in milligrams. Everything else in grams.\n" +
+    "- Sodium and potassium in milligrams. Everything else in grams.\n" +
+    "- If you are not reasonably confident about potassium, write Potassium unknown rather than guessing a number.\n" +
     "- No commentary before or after the code block.\n\n" +
     "My dish:\n";
 
@@ -84,7 +85,7 @@ const NutriParse = (() => {
       `Name: ${f.name || ""}\n` +
       (Array.isArray(f.aliases) && f.aliases.length ? `Aliases: ${f.aliases.join(", ")}\n` : "") +
       `Category: ${f.cat || "dish"}\n` +
-      `Per 100 g: ${Math.round(p.kcal || 0)} kcal | P ${p.p ?? 0} | C ${p.c ?? 0} | F ${p.f ?? 0} | Fiber ${p.fb ?? 0} | Sodium ${p.na ?? 0}\n` +
+      `Per 100 g: ${Math.round(p.kcal || 0)} kcal | P ${p.p ?? 0} | C ${p.c ?? 0} | F ${p.f ?? 0} | Fiber ${p.fb ?? 0} | Sodium ${p.na ?? 0} | Potassium ${p.k ?? "unknown"}\n` +
       (f.logAs ? `Log as: ${f.logAs}\n` : "") +
       (units.piece ? `Piece: ${units.piece}\n` : "") +
       (unitBits ? `Known units: ${unitBits}\n` : "") +
@@ -206,6 +207,7 @@ const NutriParse = (() => {
       { k: "f", re: /(?:^|[\s|;,])(?:f|fat)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i },
       { k: "fb", re: /(?:^|[\s|;,])(?:fb|fiber|fibre)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i },
       { k: "na", re: /(?:^|[\s|;,])(?:na|sodium)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i },
+      { k: "k", re: /(?:^|[\s|;,])(?:k|potassium)\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i },
     ];
     for (const { k, re } of patterns) {
       if (out[k] !== undefined) continue;
@@ -260,6 +262,8 @@ const NutriParse = (() => {
       f: round1((m.f || 0) * factor),
       fb: round1((m.fb || 0) * factor),
       na: Math.round((m.na || 0) * factor),
+      // Scaling an unknown must stay unknown, not become 0.
+      k: m.k == null ? null : Math.round(m.k * factor),
     };
   }
 
@@ -362,6 +366,8 @@ const NutriParse = (() => {
         f: per100Parsed.macros.f || 0,
         fb: per100Parsed.macros.fb || 0,
         na: per100Parsed.macros.na || 0,
+        // Nullable: absent means unrecorded, not zero.
+        k: per100Parsed.present.k ? per100Parsed.macros.k : null,
       };
     }
 
@@ -377,6 +383,7 @@ const NutriParse = (() => {
         f: totalsParsed.macros.f || 0,
         fb: totalsParsed.macros.fb || 0,
         na: totalsParsed.macros.na || 0,
+        k: totalsParsed.present.k ? totalsParsed.macros.k : null,
       }, factor);
       per100 = {
         kcal: fromTotals.kcal,
@@ -385,6 +392,9 @@ const NutriParse = (() => {
         f: totalsParsed.present.f ? fromTotals.f : (per100Parsed.present.f ? per100Parsed.macros.f : 0),
         fb: totalsParsed.present.fb ? fromTotals.fb : (per100Parsed.present.fb ? per100Parsed.macros.fb : 0),
         na: totalsParsed.present.na ? fromTotals.na : (per100Parsed.present.na ? per100Parsed.macros.na : 0),
+        k: totalsParsed.present.k
+          ? fromTotals.k
+          : (per100Parsed.present.k ? per100Parsed.macros.k : null),
       };
       derivedFromTotals = true;
       const mixed = ["p", "c", "f", "fb", "na"].filter((k) => !totalsParsed.present[k] && per100Parsed.present[k]);
@@ -397,7 +407,7 @@ const NutriParse = (() => {
 
     if (!per100) {
       rejects.push("Need macros: provide Per 100 g, or Totals plus Batch weight.");
-      per100 = { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: 0 };
+      per100 = { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: 0, k: null };
     }
 
     const requiredPresent = (k) => !!(totalsParsed.present[k] || per100Parsed.present[k]);
@@ -411,6 +421,13 @@ const NutriParse = (() => {
     if (!per100Parsed.present.na && !totalsParsed.present.na) {
       warnings.push("Sodium missing — defaulting to 0 (you can edit).");
       per100.na = per100.na || 0;
+    }
+    // Potassium stays null when absent. Defaulting it to 0 the way the other
+    // fields do would make an unrecorded food look potassium-free, which drags
+    // the Na:K ratio upward and would report a worse ratio than reality.
+    if (!per100Parsed.present.k && !totalsParsed.present.k) {
+      per100.k = null;
+      warnings.push("Potassium not given — left blank, not zero. The Na:K ratio skips foods without it.");
     }
 
     if (chatgptPer100 && derivedFromTotals) {
@@ -434,6 +451,14 @@ const NutriParse = (() => {
     for (const [k, label] of [["kcal", "kcal"], ["p", "protein"], ["c", "carbs"], ["f", "fat"], ["fb", "fiber"], ["na", "sodium"]]) {
       const v = per100[k];
       if (!Number.isFinite(v) || v < 0) rejects.push(`${label} must be a non-negative number.`);
+    }
+    if (per100.k != null) {
+      if (!Number.isFinite(per100.k) || per100.k < 0) {
+        rejects.push("potassium must be a non-negative number, or left out.");
+      } else if (per100.k > 3000) {
+        // Nothing edible reaches 3 g of potassium per 100 g; that is a unit slip.
+        rejects.push("potassium per 100 g looks impossibly high (over 3000 mg) — check the units.");
+      }
     }
     if (per100.kcal > 920) rejects.push("kcal per 100 g exceeds the physical max (~920).");
     if (per100.p + per100.c + per100.f > 105) rejects.push("Protein + carbs + fat exceed 100 g of food.");

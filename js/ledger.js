@@ -159,6 +159,31 @@ const Ledger = (() => {
       }
       out[k] = { mean: Math.round(mean * 10) / 10, sd: Math.round(Math.sqrt(varSum) * 10) / 10 };
     }
+
+    // Potassium is summed only over entries that actually have a value, and
+    // the share of the day's calories those entries represent is reported
+    // alongside it. A total of "2,100 mg" means nothing without knowing
+    // whether it covers the whole day or a third of it — and the Na:K ratio
+    // is unusable without that, since missing potassium always biases the
+    // ratio upward (worse-looking) rather than randomly.
+    let kMean = 0, kVar = 0, kItems = 0, kcalKnown = 0, kcalAll = 0;
+    for (const e of entries) {
+      const kcal = (e.macros && e.macros.kcal) || 0;
+      kcalAll += kcal;
+      const v = e.macros ? e.macros.k : null;
+      if (v == null || !Number.isFinite(Number(v))) continue;
+      const n = Number(v);
+      kMean += n;
+      const s = n * (e.sd || 0.1);
+      kVar += s * s;
+      kItems += 1;
+      kcalKnown += kcal;
+    }
+    out.k = { mean: Math.round(kMean * 10) / 10, sd: Math.round(Math.sqrt(kVar) * 10) / 10 };
+    out.kItems = kItems;
+    out.kCoverage = entries.length === 0
+      ? 0
+      : (kcalAll > 0 ? kcalKnown / kcalAll : kItems / entries.length);
     return out;
   }
 

@@ -78,7 +78,9 @@
       <div class="macro hud-nut" data-hud-nutrient="fat" tabindex="0" title="Tap to see where fat came from"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
       <div class="macro hud-nut" data-hud-nutrient="fiber" tabindex="0" title="Tap to see where fiber came from"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
       <div class="macro hud-nut" data-hud-nutrient="sodium" tabindex="0" title="Tap to see where sodium came from"><div class="m-top"><span>Sodium max</span><span class="m-val" id="v-sodium"></span></div><div class="bar"><div class="fill na" id="f-sodium"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="potassium" tabindex="0" title="Tap to see where potassium came from"><div class="m-top"><span>Potassium</span><span class="m-val" id="v-potassium"></span></div><div class="bar"><div class="fill k" id="f-potassium"></div></div></div>
     </div>
+    <div class="nak-line small" id="v-nak" hidden></div>
     <div class="sodium-line muted small" id="v-na"></div>
   </section>
 
@@ -139,6 +141,7 @@
           <button type="button" data-nutrient="fat">Fat</button>
           <button type="button" data-nutrient="fiber">Fiber</button>
           <button type="button" data-nutrient="sodium">Sodium</button>
+          <button type="button" data-nutrient="potassium">Potassium</button>
         </div>
         <div class="chart-toolbar">
           <span class="seg" id="rollup-seg" role="group" aria-label="Chart grouping">
@@ -176,6 +179,8 @@
 
       <div id="phase-compare" class="card-block" hidden></div>
 
+      <div id="nak-card" class="card-block nak-card" hidden></div>
+
       <section class="insight-section" id="section-consistency">
         <h3 class="section-head">Consistency</h3>
         <div id="insight-heatmap" class="card-block heatmap-card"></div>
@@ -197,6 +202,7 @@
               <button type="button" data-metric="fat">Fat</button>
               <button type="button" data-metric="fiber">Fiber</button>
               <button type="button" data-metric="sodium">Sodium</button>
+              <button type="button" data-metric="potassium">Potassium</button>
             </span>
           </div>
           <div id="top-foods"></div>
@@ -259,6 +265,7 @@
             <div><label class="small muted" for="set-fat">Fat g</label><input id="set-fat" type="number" min="0" step="5"></div>
             <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
             <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
+            <div><label class="small muted" for="set-potassium">Potassium mg</label><input id="set-potassium" type="number" min="0" step="100"></div>
           </div>
           <label class="check-row"><input id="set-phase-major" type="checkbox"> Force major version (vN.0)</label>
           <div class="phase-actions">
@@ -570,6 +577,7 @@
         <div><span class="small muted">Fat g ±</span><input id="dg-fat" type="number" step="5" placeholder="0"></div>
         <div><span class="small muted">Fiber g ±</span><input id="dg-fiber" type="number" step="1" placeholder="0"></div>
         <div><span class="small muted">Sodium mg ±</span><input id="dg-sodium" type="number" step="50" placeholder="0"></div>
+        <div><span class="small muted">Potassium mg ±</span><input id="dg-potassium" type="number" step="100" placeholder="0"></div>
       </div>
       <div class="row end">
         <button id="dg-clear" class="btn ghost" type="button">Clear bump</button>
@@ -657,6 +665,7 @@ END</pre>
           <div><label class="small muted" for="rev-f">Fat</label><input id="rev-f" type="text" inputmode="decimal"></div>
           <div><label class="small muted" for="rev-fb">Fiber</label><input id="rev-fb" type="text" inputmode="decimal"></div>
           <div><label class="small muted" for="rev-na">Sodium mg</label><input id="rev-na" type="text" inputmode="decimal"></div>
+          <div><label class="small muted" for="rev-k">Potassium mg</label><input id="rev-k" type="text" inputmode="decimal" placeholder="blank = unknown"></div>
         </div>
         <label>Batch grams<input id="rev-batch-g" type="text" inputmode="decimal"></label>
         <label>Batch servings <span class="muted small">(recipe math only)</span><input id="rev-batch-s" type="text" inputmode="decimal"></label>

@@ -21,15 +21,17 @@ const Analytics = (() => {
   const DOW_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MEALS = ["breakfast", "lunch", "dinner", "snack"];
   /** Nutrient keys as they appear on a built day row. */
-  const NUTRIENTS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium"];
+  const NUTRIENTS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium", "potassium"];
   /** Map nutrient key → Ledger totals key. */
   const TOTALS_KEY = {
     kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na",
+    potassium: "k",
   };
-  const UNIT = { kcal: "", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg" };
+  const UNIT = { kcal: "", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg", potassium: " mg", naK: "" };
   const LABEL = {
     kcal: "Calories", protein: "Protein", carbs: "Carbs",
-    fat: "Fat", fiber: "Fiber", sodium: "Sodium",
+    fat: "Fat", fiber: "Fiber", sodium: "Sodium", potassium: "Potassium",
+    naK: "Na:K ratio",
   };
 
   // ---------------------------------------------------------------- dates
@@ -108,6 +110,15 @@ const Analytics = (() => {
         const bucket = t && t[TOTALS_KEY[k]];
         row[k] = logged && bucket ? bucket.mean : null;
       }
+      // Potassium is only meaningful alongside how much of the day it covers.
+      row.kCoverage = logged && t && Number.isFinite(t.kCoverage) ? t.kCoverage : 0;
+      row.kItems = (t && t.kItems) || 0;
+      const covered = typeof Phases !== "undefined" ? Phases.nakCovered(t) : false;
+      row.kCovered = !!covered;
+      if (!covered) row.potassium = null;
+      row.naK = covered && typeof Phases !== "undefined"
+        ? Phases.naKRatio(row.sodium, row.potassium)
+        : null;
       return row;
     });
   }
@@ -466,10 +477,20 @@ const Analytics = (() => {
     kcal: 0.30,     // energy adherence — the primary lever
     protein: 0.30,  // floor, most often missed, most outcome-relevant at fixed kcal
     fiber: 0.20,    // floor, and a genuinely separate behaviour: food quality
-    sodium: 0.10,   // ceiling guardrail — real, but usually cleared without effort
+    // One 0.10 slot for sodium handling, filled by whichever measure the day's
+    // data supports. The Na:K ratio is the better predictor and already
+    // contains both numbers, so scoring sodium *and* potassium *and* the ratio
+    // would count the same behaviour three times — the mistake this weighting
+    // exists to avoid. On days without enough potassium data the ratio cannot
+    // be computed, and plain sodium takes the slot instead.
+    naK: 0.10,
+    sodium: 0.10,   // fallback only — never scored on the same day as naK
     carbs: 0.05,    // largely implied once calories and protein land
     fat: 0.05,
   };
+
+  /** Nutrients the score walks, including the ratio pseudo-nutrient. */
+  const SCORED_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "naK", "sodium"];
 
   /**
    * One headline number, 0–100, so the tab opens with an answer rather than a
@@ -491,11 +512,15 @@ const Analytics = (() => {
 
     if (typeof scoreDay === "function") {
       const tally = {};
-      for (const k of NUTRIENTS) tally[k] = { hit: 0, n: 0 };
+      for (const k of SCORED_KEYS) tally[k] = { hit: 0, n: 0 };
       for (const d of loggedRows(days)) {
         const s = scoreDay(toTotalsLike(d), d.goals || {});
         if (!s) continue;
-        for (const k of NUTRIENTS) {
+        // Exactly one of naK / sodium is scored per day: the ratio when the
+        // day's potassium data supports it, plain sodium when it does not.
+        const ratioScored = !!(s.naK && s.naK.status !== "skip");
+        for (const k of SCORED_KEYS) {
+          if (k === "sodium" && ratioScored) continue;
           const cell = s[k];
           if (!cell || cell.status === "skip") continue;
           tally[k].n += 1;
@@ -503,7 +528,7 @@ const Analytics = (() => {
         }
       }
       let acc = 0, wsum = 0;
-      for (const k of NUTRIENTS) {
+      for (const k of SCORED_KEYS) {
         const t = tally[k];
         if (!t.n) continue; // no goal set for this nutrient in this range
         const w = SCORE_WEIGHTS[k] || 0;
@@ -569,6 +594,9 @@ const Analytics = (() => {
       f: { mean: row.fat || 0 },
       fb: { mean: row.fiber || 0 },
       na: { mean: row.sodium || 0 },
+      k: { mean: row.potassium == null ? 0 : row.potassium },
+      kCoverage: row.kCoverage || 0,
+      kItems: row.kItems || 0,
     };
   }
 
