@@ -3096,31 +3096,6 @@ const App = (() => {
         shareFoodById(id);
       } else if (action === "edit-food") {
         openEditFood(findFood(id));
-      } else if (action === "update-food") {
-        openRefineFood(findFood(id) || state.pickFood);
-      } else if (action === "copy-update-prompt") {
-        const f = findFood(id);
-        if (!f) return;
-        const text = NutriParse.foodUpdatePrompt(f);
-        navigator.clipboard.writeText(text).then(() => UI.toast("Update prompt copied")).catch(() => {
-          UI.closeSheet("sheet-detail");
-          openPaste({ updateId: id, intent: "library" });
-          UI.showPromptFallback(text);
-          UI.toast("Select the prompt below, then copy");
-        });
-      } else if (action === "share-update-prompt") {
-        const f = findFood(id);
-        if (!f) return;
-        const text = NutriParse.foodUpdatePrompt(f);
-        sharePromptText(text, {
-          okToast: "Update prompt copied",
-          onClipboardFail: (t) => {
-            UI.closeSheet("sheet-detail");
-            openPaste({ updateId: id, intent: "library" });
-            UI.showPromptFallback(t);
-            UI.toast("Select the prompt below, then copy");
-          },
-        });
       } else if (action === "delete-food") {
         if (!confirm("Delete this food from your library? Past logs stay as they are.")) return;
         const idx = state.personalFoods.findIndex((f) => f.id === id);

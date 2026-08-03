@@ -635,11 +635,9 @@ const UI = (() => {
     const logBtn = mode === "log"
       ? `<button type="button" class="btn full" data-action="log-this" data-id="${esc(food.id)}">Log this</button>`
       : `<button type="button" class="btn ghost full" data-action="log-this" data-id="${esc(food.id)}">Log this</button>`;
-    const libraryPrimary = mode === "library"
-      ? `<button type="button" class="btn full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>
-        <button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>`
-      : `<button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>
-        <button type="button" class="btn ghost full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>`;
+    const editBtn = mode === "library"
+      ? `<button type="button" class="btn full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>`
+      : `<button type="button" class="btn ghost full" data-action="edit-food" data-id="${esc(food.id)}">Edit food</button>`;
     const logHint = food.logAs === "piece" && pieceG
       ? `<div class="muted small" style="margin-top:6px">Logs by count: 1 ${esc(noun)} = ${Math.round(pieceG)} g${mPiece ? ` · ${fmt(mPiece.kcal)} kcal` : ""}</div>`
       : `<div class="muted small" style="margin-top:6px">Logs by weight (grams)</div>`;
@@ -655,13 +653,10 @@ const UI = (() => {
       ${batch}
       ${ings ? `<div class="card-block"><b>Ingredients</b><ul class="ing-list">${ings}</ul>${food.recipe.prep ? `<p class="small">${esc(food.recipe.prep)}</p>` : ""}</div>` : ""}
       <div class="col-actions">
-        ${mode === "log" ? logBtn : ""}
-        ${libraryPrimary}
-        ${mode === "library" ? logBtn : ""}
+        ${mode === "log" ? logBtn : editBtn}
+        ${mode === "log" ? editBtn : logBtn}
+        <button type="button" class="btn ghost full" data-action="share-food" data-id="${esc(food.id)}">Share food</button>
         ${countRepair}
-        <button type="button" class="btn ghost full" data-action="update-food" data-id="${esc(food.id)}">${prov.kind === "ref" ? "Refine with AI paste" : "Update from AI paste"}</button>
-        <button type="button" class="btn ghost full" data-action="copy-update-prompt" data-id="${esc(food.id)}">${prov.kind === "ref" ? "Copy refine prompt" : "Copy update prompt"}</button>
-        ${typeof navigator.share === "function" ? `<button type="button" class="btn ghost full" data-action="share-update-prompt" data-id="${esc(food.id)}">Share to AI</button>` : ""}
         <button type="button" class="btn ghost full danger" data-action="delete-food" data-id="${esc(food.id)}">Delete</button>
       </div>`;
   }
