@@ -399,11 +399,22 @@ const App = (() => {
       input.value = "";
       weightFieldEditing = false;
       applyWeightFieldMode();
+      refreshWeightTrendLine();
       return;
     }
     const shown = kgToDisplay(kg);
     input.value = bodyWeightUnit() === "kg" ? String(shown) : shown.toFixed(1);
     applyWeightFieldMode();
+    refreshWeightTrendLine();
+  }
+
+  /** Trend weight next to the scale entry, so a water swing is not read as a week. */
+  function refreshWeightTrendLine() {
+    UI.renderWeightTrendLine({
+      settings: state.settings,
+      todayKey: state.viewDay,
+      lookbackDays: 30,
+    });
   }
 
   function saveWeightFromField() {
@@ -2990,6 +3001,36 @@ const App = (() => {
         if (!btn) return;
         state.insightTopFoodMetric = btn.dataset.metric;
         refreshInsights();
+      });
+    }
+    // Apply a TDEE-derived calorie target without retyping it into Settings.
+    const tdeeCard = UI.$("#tdee-card");
+    if (tdeeCard) {
+      tdeeCard.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-action='apply-tdee']");
+        if (!btn) return;
+        const kcal = Number(btn.dataset.kcal);
+        if (!Number.isFinite(kcal)) return;
+        const today = Ledger.todayKey();
+        const current = Phases.goalsForDay(today, state.settings);
+        // Protein holds (it tracks body weight, not energy); carbs and fat
+        // absorb the change so the macros still add up to the calories.
+        const next = Analytics.retargetForKcal(current, kcal);
+        const ok = confirm(
+          `Set targets to ${next.kcal} kcal from today?\n\n` +
+          `Protein stays ${next.protein} g. Carbs ${current.carbs} → ${next.carbs} g, fat ${current.fat} → ${next.fat} g.\n\n` +
+          `This adds a new version to your active phase. Past days keep the targets they were scored against.`
+        );
+        if (!ok) return;
+        const result = Phases.appendRevision(
+          state.settings, next, today,
+          `From energy estimate (${btn.dataset.label || "TDEE"})`
+        );
+        saveSettings();
+        Sync.schedulePush();
+        refreshAll();
+        syncSettingsForm();
+        UI.toast(result && result.label ? `${result.label} · ${next.kcal} kcal` : `Targets set to ${next.kcal} kcal`);
       });
     }
     const heatmap = UI.$("#insight-heatmap");

@@ -593,5 +593,129 @@ console.log("\n[18] Effort weighting in the score");
   ok(Analytics.biggestGap([{ key: "fiber", weight: 0.2, hitRate: 0, n: 2 }]) === null, "gap needs a few days before it speaks");
 }
 
+
+console.log("\n[19] Partial-day detection");
+{
+  const keys = keysEndingAt(END, 14);
+  const full = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000, items: 4 };
+  // Two days holding a single small entry — the shape of a forgotten log.
+  const withStubs = makeDays(keys, (k, i) =>
+    (i === 4 || i === 9 ? { ...full, kcal: 260, items: 1 } : full));
+  const p = Analytics.partialDays(withStubs);
+  ok(p.flagged.length === 2, "flags the two stub days", `got ${p.flagged.length}`);
+  ok(p.flagged.every((d) => d.itemCount === 1), "flagged days carry their item count");
+  ok(p.adjustedAvg > p.avg, "reports what the average would be without them");
+  approx(p.adjustedAvg, 2000, 1, "adjusted average excludes the stubs");
+
+  // A low day with a full set of entries is a light day, not a broken log.
+  const lightButComplete = makeDays(keys, (k, i) =>
+    (i === 4 ? { ...full, kcal: 600, items: 5 } : full));
+  ok(Analytics.partialDays(lightButComplete).flagged.length === 0,
+    "a low day with many items is not flagged");
+
+  // Thresholds are personal, not absolute.
+  const smallEater = makeDays(keys, () => ({ ...full, kcal: 1300 }));
+  ok(Analytics.partialDays(smallEater).flagged.length === 0,
+    "a consistently smaller eater is never flagged");
+
+  ok(Analytics.partialDays(makeDays(keysEndingAt(END, 3), () => full)).flagged.length === 0,
+    "needs a baseline before flagging anything");
+  ok(Analytics.partialDays(makeDays(keys, () => null)).flagged.length === 0, "no logged days, nothing to flag");
+
+  // Flagged days must still be counted everywhere else.
+  const stats = Analytics.summaryStats(withStubs, "kcal");
+  ok(stats.n === 14, "flagged days remain in the underlying stats");
+}
+
+console.log("\n[20] Bump audit");
+{
+  const keys = keysEndingAt(END, 10);
+  const endOf = (day) => { const d = Analytics.dateOf(day); d.setHours(24, 0, 0, 0); return d.getTime(); };
+
+  ok(Analytics.bumpIsRetroactive(keys[0], endOf(keys[0]) + 3600e3) === true, "set after midnight is retroactive");
+  ok(Analytics.bumpIsRetroactive(keys[0], endOf(keys[0]) - 3600e3) === false, "set during the day is planned");
+  ok(Analytics.bumpIsRetroactive(keys[0], null) === false, "an untimestamped bump is not assumed retroactive");
+
+  const bumps = {
+    [keys[2]]: { bumps: { kcal: 500 }, updatedAt: endOf(keys[2]) - 7200e3 },   // planned
+    [keys[5]]: { bumps: { kcal: 800 }, updatedAt: endOf(keys[5]) + 86400e3 },  // after the fact
+    [keys[7]]: { bumps: { kcal: 0 }, updatedAt: endOf(keys[7]) },              // empty, ignored
+  };
+  const days = Analytics.buildDays({
+    keys,
+    totalsForDay: () => ({ count: 3, kcal: { mean: 2500 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } }),
+    goalsForDay: () => GOALS,
+    weightKgForDay: () => null,
+    bumpForDay: (d) => bumps[d] || null,
+  });
+  const audit = Analytics.bumpAudit(days);
+  ok(audit.total === 2, "counts only bumps with a non-zero delta", `got ${audit.total}`);
+  ok(audit.retroactive === 1 && audit.planned === 1, "separates planned from retroactive");
+  ok(audit.kcalTotal === 1300, "sums the calorie deltas");
+  ok(audit.days.every((r) => r.day && typeof r.retroactive === "boolean"), "rows carry day and flag");
+  ok(Analytics.bumpAudit(makeDays(keys, () => null)).total === 0, "no bumps, empty audit");
+
+  const obs = Analytics.observations(days, { todayKey: END });
+  const bumpObs = obs.find((o) => o.id === "bumps");
+  ok(!!bumpObs, "bumps surface as an observation");
+  ok(bumpObs.tone === "watch", "a retroactive bump raises the tone");
+  ok(/after the day ended/.test(bumpObs.text), "and says so plainly");
+}
+
+console.log("\n[21] Range comparison");
+{
+  const mk = (n, kcal, weightFrom, slope) => {
+    const keys = keysEndingAt(END, n);
+    return makeDays(keys, (k, i) => ({
+      kcal, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000,
+      weightKg: weightFrom + i * slope,
+    }));
+  };
+  const cur = Analytics.rangeSummary(mk(21, 2000, 80, -0.05), Phases.scoreDayTotals, { todayKey: END });
+  const prev = Analytics.rangeSummary(mk(21, 2400, 82, -0.01), Phases.scoreDayTotals, {});
+  ok(cur.loggedDays === 21 && cur.coverage === 1, "summary counts logged days");
+  approx(cur.kcalAvg, 2000, 1, "summary average intake");
+  ok(cur.kgPerWeek < prev.kgPerWeek, "summary picks up the faster loss");
+  ok(cur.score != null && cur.targetRate != null, "summary carries the score");
+
+  const rows = Analytics.compareSummaries(cur, prev, { weightUnit: "kg" });
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+  ok(rows.length === 7, "seven comparison rows");
+  ok(byKey.kcal.better === null, "calorie average has no objective direction");
+  ok(byKey.rate.better === null, "weight rate has no objective direction");
+  ok(byKey.coverage.better === null, "equal coverage is not called better");
+  ok(byKey.score.delta != null, "score carries a delta");
+  ok(byKey.rate.format(byKey.rate.current).startsWith("-"), "loss formats with a sign");
+
+  const worse = Analytics.compareSummaries(prev, cur, { weightUnit: "kg" });
+  ok(worse.find((r) => r.key === "score").better === (prev.score > cur.score), "score direction follows the numbers");
+}
+
+console.log("\n[22] Retarget macros for a new calorie goal");
+{
+  const g = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const up = Analytics.retargetForKcal(g, 2500);
+  ok(up.kcal === 2500, "sets the new calorie target");
+  ok(up.protein === 150, "protein holds — it tracks body weight, not energy");
+  ok(up.fiber === 30 && up.sodium === 2300, "fiber and sodium are independent of calories");
+  ok(up.carbs > g.carbs && up.fat > g.fat, "the increase lands on carbs and fat");
+  const sum = up.protein * 4 + up.carbs * 4 + up.fat * 9;
+  ok(Math.abs(sum - up.kcal) <= 30, "macros still add up to the calories", `sum ${sum} vs ${up.kcal}`);
+
+  const down = Analytics.retargetForKcal(g, 1600);
+  ok(down.protein === 150, "protein is protected in a deficit");
+  ok(down.carbs < g.carbs && down.fat < g.fat, "the cut lands on carbs and fat");
+  const sumD = down.protein * 4 + down.carbs * 4 + down.fat * 9;
+  ok(Math.abs(sumD - down.kcal) <= 30, "macros still add up after a cut", `sum ${sumD} vs ${down.kcal}`);
+
+  // Current carb:fat ratio is preserved, not reset to some default.
+  const fatty = Analytics.retargetForKcal({ ...g, carbs: 100, fat: 111 }, 2000);
+  ok(fatty.fat * 9 > fatty.carbs * 4, "a fat-leaning split stays fat-leaning");
+
+  ok(Analytics.retargetForKcal(g, 200).kcal === 800, "clamps absurdly low targets");
+  ok(Analytics.retargetForKcal({ kcal: 2000, protein: 0, carbs: 0, fat: 0 }, 2000).carbs > 0,
+    "handles empty macro targets without dividing by zero");
+}
+
 console.log(`\nanalytics: ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

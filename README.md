@@ -34,7 +34,9 @@ For always-connected Drive auth locally, prefer `npx vercel dev` (see Deploy bel
 
 ## What gets tracked
 
-Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium. Daily goals and rings. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
+Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium. Daily goals and rings. Body weight shows a smoothed trend and weekly rate next to the entry field, so a heavy morning doesn't read as a heavy week. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
+
+Targets have shapes, and the app is consistent about them: **protein and fiber are floors** (a minimum — going above is never flagged), **sodium is a ceiling** (lower is better), **calories, carbs and fat are ranges**. Today flags the moment you pass a number, and says whether you are slightly over or past the tolerance band — the amber zone is exactly what Insights scores as on target.
 
 ## Insights
 
@@ -46,6 +48,10 @@ Everything is derived on device from your own log — no server, no model, no gu
 - **Weight** — raw weigh-ins as dots with a gap-aware EMA trend line through them, rate per week from a regression on the weigh-ins, and a 4-week projection.
 - **Consistency** — a calendar heatmap coloured by how each day landed against target, streaks, weekday-versus-weekend logging rates, and a per-nutrient scorecard with under / on-target / over bars.
 - **Breakdown** — macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by calories, protein, sodium or fiber.
+
+It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), and days where you bumped your target are marked — separating bumps you planned from ones set after the day ended, since a bump moves the target and would otherwise turn an over day into a hit.
+
+Where a previous phase exists, Insights compares it to the current one: score, logging, calorie target, weight rate and target hit rates side by side. Calorie average and weight rate are shown without a verdict, because faster loss is progress in a cut and a problem in a bulk.
 
 Observations under the headline are descriptive only — they report what the numbers say and never grade you on it.
 

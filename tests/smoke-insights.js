@@ -55,6 +55,31 @@ function inject(window, src) {
   window.document.head.appendChild(el);
 }
 
+
+/**
+ * Wait for the app to boot.
+ *
+ * jsdom fires DOMContentLoaded itself once parsing settles, so dispatching one
+ * manually booted the app a second time and bound every listener twice — which
+ * made a single click run its handler twice and would have masked or invented
+ * bugs throughout this suite. Wait for the real event instead, and only force
+ * one if it has already fired before the app scripts were injected.
+ */
+async function bootApp(window) {
+  const booted = () => {
+    const el = window.document.querySelector("#day-label");
+    return !!(el && el.textContent.trim());
+  };
+  for (let i = 0; i < 60; i++) {
+    if (booted()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  // Never fired (document already complete): boot it once, by hand.
+  window.document.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 40));
+  if (!booted()) throw new Error("app did not boot");
+}
+
 // --- seed data ------------------------------------------------------------
 function dayKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -97,6 +122,20 @@ function seed(days) {
   return { events, weights };
 }
 
+
+/** One planned bump and one set after the day ended, for the audit surfaces. */
+function bumpFixture(days) {
+  const today = new Date();
+  const at = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return dayKey(d); };
+  const endOf = (key) => { const d = new Date(key + "T12:00:00"); d.setHours(24, 0, 0, 0); return d.getTime(); };
+  if (days < 12) return {};
+  const planned = at(9), retro = at(5);
+  return {
+    [planned]: { bumps: { kcal: 400 }, updatedAt: endOf(planned) - 7200e3 },
+    [retro]: { bumps: { kcal: 600 }, updatedAt: endOf(retro) + 86400e3 },
+  };
+}
+
 // --- boot -----------------------------------------------------------------
 async function run(label, days) {
   console.log(`\n[${label}] ${days}-day range`);
@@ -129,11 +168,23 @@ async function run(label, days) {
   window.matchMedia = window.matchMedia || (() => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
   window.navigator.serviceWorker = undefined;
 
+  // Count listeners per element id so a double boot is caught, not tolerated.
+  window.__ndListenerCounts = {};
+  const _addEL = window.EventTarget.prototype.addEventListener;
+  window.EventTarget.prototype.addEventListener = function (type, fn, opt) {
+    if (this && this.id) {
+      const key = `#${this.id}:${type}`;
+      window.__ndListenerCounts[key] = (window.__ndListenerCounts[key] || 0) + 1;
+    }
+    return _addEL.call(this, type, fn, opt);
+  };
+
   const { events, weights } = seed(days);
   window.localStorage.setItem("nd_events_v1", JSON.stringify(events));
   window.localStorage.setItem("nd_settings_v1", JSON.stringify({
     goals: { kcal: 2200, protein: 150, carbs: 250, fat: 70, fiber: 30, sodium: 2300 },
     weights, weightUnit: "lb", phases: [], profile: {},
+    dayGoals: bumpFixture(days),
   }));
 
   // Load app scripts in document order.
@@ -141,8 +192,7 @@ async function run(label, days) {
     if (!src || /^https?:/.test(src)) continue;
     inject(window, src);
   }
-  window.document.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 60));
+  await bootApp(window);
 
   const $ = (s) => window.document.querySelector(s);
   const text = (s) => ($(s) ? $(s).textContent.trim() : "");
@@ -154,6 +204,15 @@ async function run(label, days) {
   await new Promise((r) => setTimeout(r, 60));
 
   ok($("#view-insights").classList.contains("active"), "insights view is active");
+
+  // Regression: the app must boot exactly once. A double boot binds every
+  // listener twice, so one click runs its handler twice — which is how the
+  // TDEE "Use" button appeared to apply two revisions in a row.
+  const listenerCounts = window.__ndListenerCounts || {};
+  const doubled = Object.entries(listenerCounts).filter(([, v]) => v > 1);
+  ok(doubled.length === 0, "no element has a duplicate listener (app booted once)",
+    doubled.slice(0, 3).map(([k, v]) => `${k} x${v}`).join(", "));
+
 
   // Every panel must have produced content.
   const panels = [
@@ -273,6 +332,32 @@ async function run(label, days) {
   window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
   await new Promise((r) => setTimeout(r, 30));
 
+
+  // --- new analytics surfaces --------------------------------------------
+  ok(/target bump/i.test(text("#insight-observations")), "bumped days are disclosed");
+  ok(/after the day ended/i.test(text("#insight-observations")), "retroactive bumps are named as such");
+  ok(window.document.querySelectorAll(".hm-bumped").length >= 1, "bumped days are marked on the heatmap");
+
+  // Heatmap must not rely on colour alone.
+  const hmStyles = [...window.document.querySelectorAll(".hm-cell[data-day]")]
+    .map((c) => c.className);
+  ok(hmStyles.some((c) => /hm-(hit|over|under)/.test(c)), "heatmap cells carry status classes");
+  const cssText = fs.readFileSync(path.join(ROOT, "css/style.css"), "utf8");
+  ok(/\.hm-over\s*\{[^}]*repeating-linear-gradient/.test(cssText), "over cells add a stripe pattern, not just colour");
+  ok(/\.hm-under\s*\{[^}]*border:/.test(cssText), "under cells are hollow, not just a lighter colour");
+
+  // Every heatmap cell must be readable without seeing it.
+  const labelled = [...window.document.querySelectorAll(".hm-cell[data-day]")]
+    .every((c) => (c.getAttribute("aria-label") || "").length > 8);
+  ok(labelled, "every heatmap cell has a descriptive aria-label");
+
+  // TDEE apply buttons.
+  const applyBtns = window.document.querySelectorAll("[data-action='apply-tdee']");
+  if ($(".tdee-big")) {
+    ok(applyBtns.length >= 2, "energy card offers one-tap targets", `got ${applyBtns.length}`);
+    ok([...applyBtns].every((b) => Number(b.dataset.kcal) > 800), "each apply carries a sane calorie value");
+  }
+
   // Range pills.
   for (const d of ["30", "90", "14"]) {
     window.document.querySelector(`#insight-range [data-days="${d}"]`).click();
@@ -328,8 +413,7 @@ async function runSparse() {
     if (!src || /^https?:/.test(src)) continue;
     inject(window, src);
   }
-  window.document.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 60));
+  await bootApp(window);
   const tab = [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights");
   tab.click();
   await new Promise((r) => setTimeout(r, 60));
@@ -361,8 +445,7 @@ async function runEmpty() {
     if (!src || /^https?:/.test(src)) continue;
     inject(window, src);
   }
-  window.document.dispatchEvent(new window.Event("DOMContentLoaded", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 60));
+  await bootApp(window);
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
   await new Promise((r) => setTimeout(r, 60));
   const t = window.document.querySelector("#insight-headline").textContent;

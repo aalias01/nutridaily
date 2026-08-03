@@ -784,13 +784,39 @@ body.has-info-banner #toast { bottom: calc(var(--tab-h) + 96px); }
 }
 .hm-void { background: transparent; cursor: default; }
 .hm-empty { background: var(--line); cursor: pointer; }
+/* Status is encoded by shape as well as colour. Green vs orange alone fails
+   for red-green colour blindness (~8% of men), and unlike the bars and the
+   scorecard this grid has no text or position to fall back on:
+     hit    solid fill
+     under  hollow — thick ring, empty centre
+     over   diagonal stripes
+     empty  flat grey */
 .hm-logged { background: color-mix(in srgb, var(--accent) 55%, transparent); }
 .hm-hit { background: var(--accent); }
-.hm-under { background: color-mix(in srgb, var(--accent) 38%, transparent); }
-.hm-over { background: var(--warn); }
+.hm-under {
+  background: transparent;
+  border: 2.5px solid color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.hm-over {
+  background: var(--warn);
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.55) 0 2px,
+    transparent 2px 4px
+  );
+}
+/* A bumped day had its target moved, so its colour is not comparable to the
+   rest. Corner notch marks it without hiding the status underneath. */
+.hm-bumped { position: relative; }
+.hm-bumped::after {
+  content: ""; position: absolute; top: 0; right: 0;
+  border-width: 0 5px 5px 0; border-style: solid;
+  border-color: transparent var(--ink) transparent transparent;
+  opacity: 0.55;
+}
 .hm-cell:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
 .hm-key { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-.hm-key .hm-cell { width: 11px; height: 11px; cursor: default; margin-left: 6px; }
+.hm-key .hm-cell { width: 11px; height: 11px; cursor: default; margin-left: 6px; flex: none; }
 .hm-key .hm-cell:first-child { margin-left: 0; }
 
 /* --- macro / meal split ----------------------------------- */
@@ -857,3 +883,23 @@ body.has-info-banner #toast { bottom: calc(var(--tab-h) + 96px); }
 .band-legend b { color: var(--ink); font-weight: 650; }
 .hs-gap { font-size: 12px; color: var(--muted); line-height: 1.4; margin-top: 2px; }
 .hs-gap b { color: var(--ink); font-weight: 650; }
+
+/* Phase-to-phase comparison */
+.cmp-list { list-style: none; margin: 8px 0 6px; padding: 0; }
+.cmp-list li {
+  display: grid; grid-template-columns: 1fr auto 1.2rem auto; gap: 8px;
+  align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.cmp-list li:last-child { border-bottom: 0; }
+.cmp-k { font-weight: 600; }
+.cmp-cur { font-weight: 650; font-variant-numeric: tabular-nums; }
+.cmp-prev { font-variant-numeric: tabular-nums; }
+.cmp-arrow { text-align: center; font-size: 12px; color: var(--muted); }
+.cmp-up { color: var(--accent); }
+.cmp-down { color: var(--warn); }
+.rate-row { grid-template-columns: 1fr auto auto; }
+.rate-apply { font-size: 12px; font-weight: 650; padding: 0 0 0 10px; }
+.rate-current { padding-left: 10px; }
+.weight-trend-line { margin: -2px 0 8px; padding-left: 2px; }
+.weight-trend-line[hidden] { display: none; }

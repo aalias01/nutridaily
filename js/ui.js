@@ -908,6 +908,7 @@ const UI = (() => {
       goalsForDay,
       weightKgForDay: (day) =>
         (typeof Phases !== "undefined" ? Phases.weightForDay(settings, day) : null),
+      bumpForDay: (day) => (settings.dayGoals && settings.dayGoals[day]) || null,
     });
     const viewingPastPhase = daysBack === "phase" && !!selectedPhase && selectedPhase.endDay != null;
     const scoreDay = typeof Phases !== "undefined" ? Phases.scoreDayTotals : null;
@@ -1235,8 +1236,15 @@ const UI = (() => {
       if (target == null) return "";
       const delta = kcalGoal ? target - kcalGoal : null;
       const sub = delta == null ? "" : `${Analytics.fmtSigned(delta)} vs your target`;
+      // Already where you want to be — no point offering to set it again.
+      const isCurrent = delta != null && Math.abs(delta) < 25;
+      const apply = isCurrent
+        ? `<span class="muted small rate-current">current</span>`
+        : `<button type="button" class="linkbtn rate-apply" data-action="apply-tdee"
+             data-kcal="${Math.round(target)}" data-label="${esc(label)}">Use</button>`;
       return `<div class="rate-row"><span class="rate-k">${esc(label)}</span>
         <span class="rate-v">${fmt(target)} kcal/day</span>
+        ${apply}
         <span class="muted small">${esc(sub)}</span></div>`;
     };
 
@@ -1347,6 +1355,8 @@ const UI = (() => {
     const root = $("#insight-heatmap");
     if (!root) return;
     const cells = Analytics.heatmapCells(ctx.days, ctx.nutrient, ctx.scoreDay);
+    const bumpDays = new Set(Analytics.bumpAudit(ctx.days).days.map((b) => b.day));
+    for (const c of cells) c.bumped = bumpDays.has(c.day);
     const weeks = Analytics.heatmapWeeks(cells);
     if (!weeks.length) { root.innerHTML = ""; return; }
     const cons = ctx.consistency;
@@ -1356,10 +1366,15 @@ const UI = (() => {
     const cols = weeks.map((wk) => {
       const inner = wk.cells.map((c) => {
         if (!c) return `<i class="hm-cell hm-void"></i>`;
+        const bt2 = bandText(ctx.nutrient);
+        const stateWord = c.logged ? (bt2[c.status] || c.status) : "not logged";
         const title = c.logged
-          ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""}`
+          ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.bumped ? " · bumped target" : ""}`
           : `${c.day} · not logged`;
-        return `<button type="button" class="hm-cell hm-${esc(c.status)}" data-action="heatmap-day" data-day="${esc(c.day)}" title="${esc(title)}" aria-label="${esc(title)}"></button>`;
+        // Status is carried by shape as well as colour: green/orange alone
+        // fails for red-green colour blindness, and this grid has no text or
+        // position fallback the way the bars and scorecard do.
+        return `<button type="button" class="hm-cell hm-${esc(c.status)}${c.bumped ? " hm-bumped" : ""}" data-action="heatmap-day" data-day="${esc(c.day)}" title="${esc(title)}" aria-label="${esc(title)}"></button>`;
       }).join("");
       return `<div class="hm-col">${inner}</div>`;
     }).join("");
@@ -1700,6 +1715,69 @@ const UI = (() => {
     ).join("");
   }
 
+  /**
+   * This phase against the one before it — the question people actually have
+   * when a phase ends. Only shown when a previous phase has enough logged days
+   * to say anything; a three-day predecessor would produce confident nonsense.
+   */
+  function renderPhaseCompare(ctx) {
+    const root = $("#phase-compare");
+    if (!root) return;
+    root.hidden = true;
+    root.innerHTML = "";
+    if (typeof Phases === "undefined") return;
+
+    const phases = (ctx.settings.phases || [])
+      .filter((p) => p && !p.archived)
+      .sort((a, b) => String(a.startDay).localeCompare(String(b.startDay)));
+    if (phases.length < 2) return;
+
+    const currentPhase = ctx.daysBack === "phase" && ctx.selectedPhase
+      ? ctx.selectedPhase
+      : Phases.activePhase(ctx.settings.phases) || phases[phases.length - 1];
+    const idx = phases.findIndex((p) => p.id === currentPhase.id);
+    if (idx < 1) return;
+    const prevPhase = phases[idx - 1];
+
+    const buildFor = (phase) => {
+      const keys = Phases.phaseDayKeys(phase, ctx.todayKey);
+      if (!keys.length) return null;
+      return Analytics.buildDays({
+        keys,
+        totalsForDay: (day) => Ledger.totalsFor(day),
+        goalsForDay: (day) => Phases.goalsForDay(day, ctx.settings),
+        weightKgForDay: (day) => Phases.weightForDay(ctx.settings, day),
+        bumpForDay: (day) => (ctx.settings.dayGoals && ctx.settings.dayGoals[day]) || null,
+      });
+    };
+
+    const curDays = buildFor(currentPhase);
+    const prevDays = buildFor(prevPhase);
+    if (!curDays || !prevDays) return;
+
+    const cur = Analytics.rangeSummary(curDays, ctx.scoreDay, { todayKey: ctx.todayKey });
+    const prev = Analytics.rangeSummary(prevDays, ctx.scoreDay, {});
+    // Too little in the predecessor to compare honestly.
+    if (prev.loggedDays < 5 || cur.loggedDays < 5) return;
+
+    const rows = Analytics.compareSummaries(cur, prev, { weightUnit: ctx.weightUnit });
+    root.hidden = false;
+    root.innerHTML = `
+      <div class="card-head-row"><b>vs previous phase</b>
+        <span class="muted small">${esc(prevPhase.name)} → ${esc(currentPhase.name)}</span></div>
+      <p class="muted small">${prev.loggedDays} logged days then, ${cur.loggedDays} now.</p>
+      <ul class="cmp-list">${rows.map((r) => {
+        const arrow = r.better === true ? "up" : r.better === false ? "down" : "flat";
+        return `<li>
+          <span class="cmp-k">${esc(r.label)}</span>
+          <span class="cmp-prev muted small">${esc(r.format(r.previous))}</span>
+          <span class="cmp-arrow cmp-${arrow}" aria-hidden="true">→</span>
+          <span class="cmp-cur">${esc(r.format(r.current))}</span>
+        </li>`;
+      }).join("")}</ul>
+      <p class="muted small">Calorie average and weight rate have no better or worse without knowing the intent — a faster loss is progress in a cut and a problem in a bulk.</p>`;
+  }
+
   // ------------------------------------------------------- phase chrome
 
   function renderPhaseChrome(ctx) {
@@ -1764,6 +1842,7 @@ const UI = (() => {
     renderIntakeStats(ctx);
     renderTdeeCard(ctx);
     renderScorecard(renderCallouts(ctx));
+    renderPhaseCompare(ctx);
     renderHeatmap(ctx);
     renderMacroSplit(ctx);
     renderMealSplit(ctx);
@@ -1917,6 +1996,61 @@ const UI = (() => {
     else if (status === "pending") { el.classList.add("pending"); el.textContent = detail || "syncing…"; }
     else if (status === "warn") { el.classList.add("warn"); el.textContent = detail || "sync issue"; }
     else el.textContent = detail || "local only";
+  }
+
+  /**
+   * Trend weight beside the scale entry on Today.
+   *
+   * The scale moves kilos on water and gut content alone, so the number people
+   * type in is the least informative version of their own weight. Showing the
+   * smoothed trend and the weekly rate at the moment of entry is the cheapest
+   * way to stop a bad morning reading like a bad week — and it is the one place
+   * everyone looks, unlike the Insights tab.
+   *
+   * @param {object} opts { settings, todayKey, unit, lookbackDays }
+   */
+  function renderWeightTrendLine(opts) {
+    const el = $("#weight-trend-line");
+    if (!el) return;
+    const o = opts || {};
+    const settings = o.settings || {};
+    if (typeof Analytics === "undefined" || typeof Phases === "undefined") {
+      el.hidden = true;
+      return;
+    }
+    const unit = settings.weightUnit === "kg" ? "kg" : "lb";
+    const endDay = o.todayKey || Ledger.todayKey();
+    const back = o.lookbackDays || 30;
+    const keys = [];
+    for (let i = back - 1; i >= 0; i--) keys.push(Analytics.addDays(endDay, -i));
+
+    const days = Analytics.buildDays({
+      keys,
+      totalsForDay: () => null,
+      goalsForDay: () => ({}),
+      weightKgForDay: (day) => Phases.weightForDay(settings, day),
+    });
+    const trend = Analytics.trendWeight(days);
+    const anchors = trend.filter((p) => p.raw != null);
+    if (anchors.length < 2) {
+      el.hidden = true;
+      el.textContent = "";
+      return;
+    }
+    const rate = Analytics.weightRate(trend);
+    const trendNow = Analytics.kgToDisplay(anchors[anchors.length - 1].trend, unit);
+    const bits = [`Trend ${trendNow.toFixed(1)} ${unit}`];
+    if (rate) {
+      const perWeek = Analytics.kgToDisplay(rate.kgPerWeek, unit);
+      bits.push(
+        Math.abs(perWeek) < 0.05
+          ? "holding steady"
+          : `${Analytics.fmtSigned(perWeek, 2)} ${unit}/week`
+      );
+    }
+    bits.push(`${anchors.length} weigh-ins, ${back} d`);
+    el.hidden = false;
+    el.textContent = bits.join(" · ");
   }
 
   function showOnboarding(show) {
@@ -2150,7 +2284,7 @@ const UI = (() => {
     syncReviewLogAsUI, renderFoodDetail,
     renderInsights, renderTrends, renderWeightTrend,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX,
-    renderDayDetail, fillMealChips, setSyncPill, showOnboarding, MEALS,
+    renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
     titleCaseName, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
   };

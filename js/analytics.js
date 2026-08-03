@@ -78,8 +78,9 @@ const Analytics = (() => {
    * @param {Function} opts.totalsForDay    day → Ledger totals
    * @param {Function} opts.goalsForDay     day → resolved goals for that day
    * @param {Function} [opts.weightKgForDay] day → body weight in kg (or null)
+   * @param {Function} [opts.bumpForDay] day → { bumps, updatedAt } | null
    * @returns {Array<Object>} rows: { day, dow, weekend, logged, itemCount,
-   *   kcal, protein, carbs, fat, fiber, sodium, goals, weightKg }
+   *   kcal, protein, carbs, fat, fiber, sodium, goals, weightKg, bump }
    */
   function buildDays(opts) {
     const o = opts || {};
@@ -87,6 +88,7 @@ const Analytics = (() => {
     const totalsForDay = o.totalsForDay || (() => null);
     const goalsForDay = o.goalsForDay || (() => ({}));
     const weightKgForDay = o.weightKgForDay || (() => null);
+    const bumpForDay = o.bumpForDay || (() => null);
 
     return keys.map((day) => {
       const t = totalsForDay(day);
@@ -100,6 +102,7 @@ const Analytics = (() => {
         itemCount: (t && t.count) || 0,
         goals: goalsForDay(day) || {},
         weightKg: numOrNull(weightKgForDay(day)),
+        bump: bumpForDay(day) || null,
       };
       for (const k of NUTRIENTS) {
         const bucket = t && t[TOTALS_KEY[k]];
@@ -894,7 +897,193 @@ const Analytics = (() => {
       });
     }
 
+    const partial = partialDays(days);
+    if (partial.flagged.length) {
+      const n = partial.flagged.length;
+      const adj = partial.adjustedAvg != null
+        ? ` Without them the average is ${Math.round(partial.adjustedAvg)} kcal instead of ${Math.round(partial.avg)}.`
+        : "";
+      out.push({
+        id: "partial-days",
+        tone: "info",
+        text: `${n} day${n === 1 ? "" : "s"} logged under ${Math.round(partial.threshold)} kcal with one or two items — possibly unfinished logs rather than light days. They are still counted.${adj}`,
+      });
+    }
+
+    const bumps = bumpAudit(days);
+    if (bumps.total) {
+      const retro = bumps.retroactive
+        ? ` ${bumps.retroactive} ${bumps.retroactive === 1 ? "was" : "were"} set after the day ended.`
+        : "";
+      out.push({
+        id: "bumps",
+        tone: bumps.retroactive ? "watch" : "info",
+        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used a target bump, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted target.${retro}`,
+      });
+    }
+
     return out;
+  }
+
+  // -------------------------------------------------------- data honesty
+
+  /**
+   * Days that look like a forgotten log rather than a day of eating.
+   *
+   * A day holding one 250 kcal entry drags every average down and quietly
+   * distorts the TDEE estimate, which assumes logged intake is complete. But a
+   * genuine fast looks identical in the data, so this only ever *flags*: the
+   * days stay in every calculation, and the counterfactual average is offered
+   * beside the real one rather than replacing it. Silently discarding someone's
+   * data because it looks odd is worse than showing an average they can judge.
+   *
+   * Thresholds are relative to the person's own median, not an absolute
+   * calorie floor, so a 1,400 kcal eater is not permanently flagged.
+   */
+  function partialDays(days, opts) {
+    const o = opts || {};
+    const ratio = o.ratio || 0.4;
+    const maxItems = o.maxItems || 2;
+    const logged = loggedRows(days);
+    const empty = { flagged: [], median: null, avg: null, adjustedAvg: null, threshold: null };
+    if (logged.length < 5) return empty; // no baseline worth trusting yet
+
+    const med = median(logged.map((d) => d.kcal));
+    if (!med) return empty;
+    const threshold = med * ratio;
+    const flagged = logged.filter((d) =>
+      Number.isFinite(d.kcal) && d.kcal < threshold && d.itemCount <= maxItems
+    );
+    const rest = logged.filter((d) => !flagged.includes(d));
+    return {
+      flagged: flagged.map((d) => ({ day: d.day, kcal: d.kcal, itemCount: d.itemCount })),
+      median: med,
+      threshold,
+      avg: mean(logged.map((d) => d.kcal)),
+      adjustedAvg: rest.length ? mean(rest.map((d) => d.kcal)) : null,
+    };
+  }
+
+  /** True when a day's bump was recorded after that day had already ended. */
+  function bumpIsRetroactive(dayKey, updatedAt) {
+    if (!updatedAt) return false;
+    const end = dateOf(dayKey);
+    end.setHours(24, 0, 0, 0);
+    return updatedAt > end.getTime();
+  }
+
+  /**
+   * Which days had their targets bumped, and which of those were bumped after
+   * the fact.
+   *
+   * Bumping is legitimate — a planned refeed or a wedding genuinely has a
+   * different target, and scoring it against the plan you set beats pretending
+   * every day is identical. But because a bump moves the target, it converts an
+   * "over" day into a "hit", so an unmarked bump makes adherence self-marking.
+   * Recording them, and separating planned from retroactive, keeps the feature
+   * useful without letting it quietly launder a miss.
+   */
+  function bumpAudit(days) {
+    const rows = [];
+    let retroactive = 0;
+    let kcalTotal = 0;
+    for (const d of days || []) {
+      const b = d.bump;
+      if (!b || !b.bumps) continue;
+      const entries = Object.entries(b.bumps).filter(([, v]) => Number(v));
+      if (!entries.length) continue;
+      const retro = bumpIsRetroactive(d.day, b.updatedAt);
+      if (retro) retroactive += 1;
+      kcalTotal += Number(b.bumps.kcal) || 0;
+      rows.push({ day: d.day, bumps: b.bumps, retroactive: retro, logged: d.logged });
+    }
+    return { total: rows.length, retroactive, planned: rows.length - retroactive, kcalTotal, days: rows };
+  }
+
+  // ----------------------------------------------------------- comparison
+
+  /**
+   * Everything worth comparing about a stretch of days, in one object, so two
+   * phases can be put side by side without recomputing each metric twice.
+   */
+  function rangeSummary(days, scoreDay, opts) {
+    const logged = loggedRows(days);
+    const trend = trendWeight(days, opts);
+    const rate = weightRate(trend);
+    const score = nutritionScore(days, scoreDay, opts);
+    return {
+      days: days.length,
+      loggedDays: logged.length,
+      coverage: days.length ? logged.length / days.length : 0,
+      kcalAvg: mean(logged.map((d) => d.kcal)),
+      kcalGoal: mean(days.map((d) => (d.goals || {}).kcal)),
+      proteinAvg: mean(logged.map((d) => d.protein)),
+      fiberAvg: mean(logged.map((d) => d.fiber)),
+      sodiumAvg: mean(logged.map((d) => d.sodium)),
+      kgPerWeek: rate ? rate.kgPerWeek : null,
+      weighIns: rate ? rate.n : 0,
+      score: score.score,
+      targetRate: score.parts.targets,
+      proteinRate: (score.nutrients.find((n) => n.key === "protein") || {}).hitRate ?? null,
+    };
+  }
+
+  /**
+   * Side-by-side rows for two range summaries. `better` is deliberately null
+   * for anything without an objective direction — a bigger calorie average is
+   * not better or worse without knowing whether you were cutting or bulking.
+   */
+  function compareSummaries(current, previous, opts) {
+    const o = opts || {};
+    const unit = o.weightUnit === "kg" ? "kg" : "lb";
+    const toDisp = (kg) => (kg == null ? null : kgToDisplay(kg, unit));
+    const row = (key, label, a, b, fmtFn, higherBetter) => ({
+      key, label,
+      current: a, previous: b,
+      delta: a != null && b != null ? a - b : null,
+      format: fmtFn,
+      better: higherBetter == null || a == null || b == null || a === b
+        ? null
+        : (higherBetter ? a > b : a < b),
+    });
+    return [
+      row("score", "Score", current.score, previous.score, (v) => (v == null ? "—" : String(v)), true),
+      row("coverage", "Days logged", current.coverage, previous.coverage, (v) => (v == null ? "—" : `${Math.round(v * 100)}%`), true),
+      row("kcal", "Avg calories", current.kcalAvg, previous.kcalAvg, (v) => (v == null ? "—" : String(Math.round(v))), null),
+      row("kcalGoal", "Calorie target", current.kcalGoal, previous.kcalGoal, (v) => (v == null ? "—" : String(Math.round(v))), null),
+      row("rate", `Weight rate (${unit}/wk)`, toDisp(current.kgPerWeek), toDisp(previous.kgPerWeek), (v) => (v == null ? "—" : fmtSigned(v, 2)), null),
+      row("protein", "Protein met", current.proteinRate, previous.proteinRate, (v) => (v == null ? "—" : `${Math.round(v * 100)}%`), true),
+      row("targets", "Targets met", current.targetRate, previous.targetRate, (v) => (v == null ? "—" : `${Math.round(v * 100)}%`), true),
+    ];
+  }
+
+  // ------------------------------------------------------------- goal math
+
+  /**
+   * Rebuild macro targets around a new calorie number.
+   *
+   * Protein is set by body weight, not by energy intake, so it holds — that is
+   * the whole point of protecting it in a deficit. Fiber and sodium are
+   * independent of calories, so they hold too. The change lands on carbs and
+   * fat, split in whatever ratio they already sit at, so the macros still add
+   * up to the calories instead of silently contradicting them.
+   */
+  function retargetForKcal(goals, newKcal) {
+    const g = { ...(goals || {}) };
+    const kcal = Math.max(800, Math.round(Number(newKcal) / 10) * 10);
+    const proteinKcal = (Number(g.protein) || 0) * 4;
+    const remaining = Math.max(0, kcal - proteinKcal);
+    const curCarbKcal = (Number(g.carbs) || 0) * 4;
+    const curFatKcal = (Number(g.fat) || 0) * 9;
+    const curTotal = curCarbKcal + curFatKcal;
+    const carbShare = curTotal > 0 ? curCarbKcal / curTotal : 0.55;
+    const round5 = (n) => Math.max(0, Math.round(n / 5) * 5);
+    return {
+      ...g,
+      kcal,
+      carbs: round5((remaining * carbShare) / 4),
+      fat: round5((remaining * (1 - carbShare)) / 9),
+    };
   }
 
   // ------------------------------------------------------------ formatting
@@ -924,6 +1113,8 @@ const Analytics = (() => {
     consistency, nutritionScore, gradeFor, biggestGap, SCORE_WEIGHTS,
     weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods,
     proteinPerKg, heatmapCells, heatmapWeeks, extremes, momentum, observations,
+    partialDays, bumpAudit, bumpIsRetroactive,
+    rangeSummary, compareSummaries, retargetForKcal,
     fmtNum, fmtSigned, kgToDisplay,
   };
 })();

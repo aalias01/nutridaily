@@ -15,6 +15,16 @@ const Ledger = (() => {
   })();
 
   let _cache = null;
+  /**
+   * day → events, built lazily from _cache.
+   *
+   * Without it, every eventsFor() scanned the whole log, so a day read cost
+   * O(all events). Insights reads each day several times over a range, which
+   * made a render cost O(range × history) — a year of data turned one tab
+   * switch into tens of milliseconds, two years into hundreds. Reads now cost
+   * only what the range actually contains.
+   */
+  let _byDay = null;
 
   function _load() {
     if (_cache) return _cache;
@@ -28,7 +38,33 @@ const Ledger = (() => {
     } catch (e) { _cache = []; }
     return _cache;
   }
+
+  function _index() {
+    if (_byDay) return _byDay;
+    const map = new Map();
+    for (const ev of _load()) {
+      let list = map.get(ev.day);
+      if (!list) { list = []; map.set(ev.day, list); }
+      list.push(ev);
+    }
+    _byDay = map;
+    return _byDay;
+  }
+
+  /** Append to the log and keep the index in step (cheaper than rebuilding). */
+  function _append(ev) {
+    _load().push(ev);
+    if (_byDay) {
+      let list = _byDay.get(ev.day);
+      if (!list) { list = []; _byDay.set(ev.day, list); }
+      list.push(ev);
+    }
+    _save();
+    return ev;
+  }
+
   function _save() { store.setItem(KEY, JSON.stringify(_cache)); }
+  function _invalidate() { _byDay = null; }
 
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -43,25 +79,27 @@ const Ledger = (() => {
   function addEntry(day, entry) {
     const entryId = entry && entry.id ? entry.id : uid();
     const { id: _ignore, addedTs: _a, history: _h, ...rest } = entry || {};
-    const ev = { id: uid(), ts: Date.now(), day, type: "add", entry: { ...rest, id: entryId } };
-    _load().push(ev); _save();
-    return ev;
+    return _append({ id: uid(), ts: Date.now(), day, type: "add", entry: { ...rest, id: entryId } });
   }
 
   /** patch: full replacement fields (recomputed upstream): grams, displayQty, macros, sd, name?, meal? */
   function amendEntry(day, targetEntryId, patch, label) {
-    const ev = { id: uid(), ts: Date.now(), day, type: "amend", target: targetEntryId, patch, label: label || "" };
-    _load().push(ev); _save();
-    return ev;
+    return _append({ id: uid(), ts: Date.now(), day, type: "amend", target: targetEntryId, patch, label: label || "" });
   }
 
   function removeEntry(day, targetEntryId, label) {
-    const ev = { id: uid(), ts: Date.now(), day, type: "remove", target: targetEntryId, label: label || "" };
-    _load().push(ev); _save();
-    return ev;
+    return _append({ id: uid(), ts: Date.now(), day, type: "remove", target: targetEntryId, label: label || "" });
   }
 
-  function eventsFor(day) { return _load().filter((e) => e.day === day); }
+  function eventsFor(day) {
+    const list = _index().get(day);
+    return list ? list.slice() : [];
+  }
+
+  /** Day keys that hold at least one event, ascending. */
+  function loggedDayKeys() {
+    return [..._index().keys()].sort();
+  }
 
   /** Compare entry vs amend patch → user-facing before/after pairs. */
   function _diffEntry(prev, patch) {
@@ -126,7 +164,7 @@ const Ledger = (() => {
 
   /** Last n day-keys that have events (excluding `day` optionally), newest first. */
   function recentDays(n, beforeDay) {
-    const days = [...new Set(_load().map((e) => e.day))].sort().reverse();
+    const days = loggedDayKeys().reverse();
     return days.filter((d) => !beforeDay || d < beforeDay).slice(0, n);
   }
 
@@ -166,9 +204,7 @@ const Ledger = (() => {
     const endKey = todayKey(end);
 
     const samples = []; // { grams, ts }
-    const days = [...new Set(_load().map((e) => e.day))]
-      .filter((d) => d >= startKey && d <= endKey)
-      .sort();
+    const days = loggedDayKeys().filter((d) => d >= startKey && d <= endKey);
     for (const day of days) {
       for (const e of entriesFor(day)) {
         if (e.foodId !== id) continue;
@@ -205,11 +241,11 @@ const Ledger = (() => {
   }
 
   function allEvents() { return [..._load()]; }
-  function replaceAll(events) { _cache = Array.isArray(events) ? events : []; _save(); }
-  function clearAll() { _cache = []; store.removeItem(KEY); }
-  function _resetCacheForTests() { _cache = null; }
+  function replaceAll(events) { _cache = Array.isArray(events) ? events : []; _invalidate(); _save(); }
+  function clearAll() { _cache = []; _invalidate(); store.removeItem(KEY); }
+  function _resetCacheForTests() { _cache = null; _invalidate(); }
 
-  return { todayKey, addEntry, amendEntry, removeEntry, entriesFor, totalsFor, totalsOf, recentDays, recentSummary, portionStats, findEntry, allEvents, replaceAll, clearAll, _resetCacheForTests, uid };
+  return { todayKey, addEntry, amendEntry, removeEntry, entriesFor, totalsFor, totalsOf, recentDays, recentSummary, portionStats, findEntry, allEvents, loggedDayKeys, replaceAll, clearAll, _resetCacheForTests, uid };
 })();
 
 if (typeof module !== "undefined") module.exports = Ledger;
