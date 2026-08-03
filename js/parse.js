@@ -38,7 +38,9 @@ const NutriParse = (() => {
     "  * Log as: grams — when someone weighs a scoop/bowl every time (dal, rice, curry, salad).\n" +
     "    Omit Piece, or leave it blank.\n" +
     "- For a pack of identical items (e.g. 10 chapatis, 567 g pack): Batch is the pack weight and\n" +
-    "  count; Piece is pack grams ÷ count (one chapati). Log as: piece.\n" +
+    "  write the count as `N servings` (e.g. Batch: 567 g total, 10 servings). Piece is pack grams ÷ count.\n" +
+    "  Log as: piece.\n" +
+    "- Plain numbers only. No thousands separators (write 1153 not 1,153).\n" +
     "- Prefer Piece over Serving for countable foods. Use Serving only if it means something else\n" +
     "  (e.g. label \"serving\" that is not one piece).\n" +
     "- Count as is the word I type in the diary (\"2 chapatis\" → Count as: chapati).\n" +
@@ -97,6 +99,12 @@ const NutriParse = (() => {
     s = s.replace(/\u00a0/g, " ");
     s = s.replace(/[\u2013\u2014\u2212]/g, "-");
     s = s.replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
+    // Only rewrite estimate markers on Batch lines — tilde on macros must stay strip-only
+    // so `P ~18` still parses as protein 18.
+    s = s.replace(/^(Batch:\s*)([^\n]*)$/gim, (_, key, rest) => {
+      const marked = rest.replace(/([≈~])\s*(?=\d)/g, "approx ");
+      return key + marked.replace(/[≈~]/g, "");
+    });
     s = s.replace(/[≈~]/g, "");
     s = s.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, "");
     s = s.replace(/(\d),(\d{3})\b/g, "$1$2");
@@ -111,17 +119,28 @@ const NutriParse = (() => {
     while ((m = re.exec(src))) {
       const start = m.index + m[0].length;
       const rest = src.slice(start);
-      const endMatch = rest.match(/\n\s*END\s*(?:\n|$)/i);
-      let body, truncated = false;
-      if (endMatch) {
-        body = rest.slice(0, endMatch.index);
-      } else {
-        body = rest;
+      const nextSent = rest.search(/NUTRI\s*v?1\b/i);
+      const endMatch = rest.match(/\n\s*END\s*[.!?]?(?:\n|$)/i);
+      let endAt = rest.length;
+      let truncated = true;
+      let advanceTo = start + rest.length;
+      if (endMatch && (nextSent < 0 || endMatch.index <= nextSent)) {
+        endAt = endMatch.index;
+        truncated = false;
+        advanceTo = start + endMatch.index + endMatch[0].length;
+      } else if (nextSent >= 0) {
+        endAt = nextSent;
         truncated = true;
+        advanceTo = start + nextSent;
       }
-      blocks.push({ body: body.replace(/^\s*\n/, ""), truncated, rawBlock: src.slice(m.index, start + (endMatch ? endMatch.index + endMatch[0].length : rest.length)) });
-      if (endMatch) re.lastIndex = start + endMatch.index + endMatch[0].length;
-      else break;
+      const body = rest.slice(0, endAt);
+      blocks.push({
+        body: body.replace(/^\s*\n/, ""),
+        truncated,
+        rawBlock: src.slice(m.index, advanceTo),
+      });
+      re.lastIndex = advanceTo;
+      if (truncated && nextSent < 0) break;
     }
     return blocks;
   }
@@ -148,7 +167,7 @@ const NutriParse = (() => {
   function parseLogAs(value) {
     const s = String(value || "").trim().toLowerCase();
     if (!s) return null;
-    if (/\b(piece|count|each|unit|chapati|roti|egg|bar|item)\b/.test(s)) return "piece";
+    if (/\b(pieces?|counts?|each|units?|items?|chapati|roti|egg|bar)\b/.test(s)) return "piece";
     if (/\b(g|gram|grams|oz|ounce|weigh|scale|scoop|bowl|serving|servings)\b/.test(s)) return "grams";
     if (s === "piece" || s === "grams") return s;
     return null;
@@ -201,12 +220,15 @@ const NutriParse = (() => {
 
   function parseBatch(line) {
     const s = String(line || "");
-    const estimated = /\(estimated\)|\bapprox\b|\bapproximately\b|~/i.test(s);
+    const estimated = /\(estimated\)|\bapprox\b|\bapproximately\b/i.test(s);
     let grams = null, servings = null;
     const gTotal = s.match(/(-?\d+(?:\.\d+)?)\s*g(?:rams?)?\s*total/i);
     if (gTotal) grams = Number(gTotal[1]);
     const each = s.match(/(-?\d+(?:\.\d+)?)\s*g(?:rams?)?\s*each/i);
-    const servN = s.match(/(-?\d+(?:\.\d+)?)\s*servings?\b/i) || s.match(/\bmakes\s+(-?\d+(?:\.\d+)?)/i);
+    const servN = s.match(/(-?\d+(?:\.\d+)?)\s*(?:servings?|pieces?|items?|count)\b/i)
+      || s.match(/\bmakes\s+(-?\d+(?:\.\d+)?)/i)
+      // Pack counts often look like: "567 g total, 10 chapatis" (not "56.7 g each").
+      || s.match(/,\s*(-?\d+(?:\.\d+)?)\s+(?!g(?:rams?)?\b|oz\b|mg\b|each\b|per\b)[a-z][a-z-]*\b/i);
     if (servN) servings = Number(servN[1]);
     if (each && servings) grams = Number(each[1]) * servings;
     if (grams == null) {
@@ -275,7 +297,8 @@ const NutriParse = (() => {
       }
       if (mode === "prep" || mode === "notes") {
         const k = keyOf(line);
-        if (!k) {
+        // Stay in notes/prep for unknown "Key: value" continuation lines (e.g. "Oil used: 2 tbsp").
+        if (!k || k.unknown) {
           (mode === "prep" ? prepParts : notesParts).push(line.trim());
           continue;
         }
@@ -331,27 +354,43 @@ const NutriParse = (() => {
     const per100Parsed = fields.per100 ? parseMacros(fields.per100) : { macros: {}, present: {} };
 
     let chatgptPer100 = null;
-    if (per100Parsed.present.kcal) chatgptPer100 = {
-      kcal: per100Parsed.macros.kcal || 0,
-      p: per100Parsed.macros.p || 0,
-      c: per100Parsed.macros.c || 0,
-      f: per100Parsed.macros.f || 0,
-      fb: per100Parsed.macros.fb || 0,
-      na: per100Parsed.macros.na || 0,
-    };
+    if (per100Parsed.present.kcal || per100Parsed.present.p || per100Parsed.present.c || per100Parsed.present.f) {
+      chatgptPer100 = {
+        kcal: per100Parsed.macros.kcal || 0,
+        p: per100Parsed.macros.p || 0,
+        c: per100Parsed.macros.c || 0,
+        f: per100Parsed.macros.f || 0,
+        fb: per100Parsed.macros.fb || 0,
+        na: per100Parsed.macros.na || 0,
+      };
+    }
 
     let per100 = null;
     let derivedFromTotals = false;
-    if (totalsParsed.present.kcal && batch.grams && batch.grams >= 10) {
-      per100 = scaleMacros({
+    const factor = (batch.grams && batch.grams >= 10) ? (100 / batch.grams) : null;
+    if (totalsParsed.present.kcal && factor != null) {
+      // Per-key merge: use totals-derived when that key was present; else keep Per 100 g.
+      const fromTotals = scaleMacros({
         kcal: totalsParsed.macros.kcal || 0,
         p: totalsParsed.macros.p || 0,
         c: totalsParsed.macros.c || 0,
         f: totalsParsed.macros.f || 0,
         fb: totalsParsed.macros.fb || 0,
         na: totalsParsed.macros.na || 0,
-      }, 100 / batch.grams);
+      }, factor);
+      per100 = {
+        kcal: fromTotals.kcal,
+        p: totalsParsed.present.p ? fromTotals.p : (per100Parsed.present.p ? per100Parsed.macros.p : 0),
+        c: totalsParsed.present.c ? fromTotals.c : (per100Parsed.present.c ? per100Parsed.macros.c : 0),
+        f: totalsParsed.present.f ? fromTotals.f : (per100Parsed.present.f ? per100Parsed.macros.f : 0),
+        fb: totalsParsed.present.fb ? fromTotals.fb : (per100Parsed.present.fb ? per100Parsed.macros.fb : 0),
+        na: totalsParsed.present.na ? fromTotals.na : (per100Parsed.present.na ? per100Parsed.macros.na : 0),
+      };
       derivedFromTotals = true;
+      const mixed = ["p", "c", "f", "fb", "na"].filter((k) => !totalsParsed.present[k] && per100Parsed.present[k]);
+      if (mixed.length) {
+        warnings.push(`Totals line incomplete — kept Per 100 g for ${mixed.map((k) => ({ p: "protein", c: "carbs", f: "fat", fb: "fiber", na: "sodium" }[k])).join(", ")}.`);
+      }
     } else if (chatgptPer100) {
       per100 = { ...chatgptPer100 };
     }
@@ -361,9 +400,9 @@ const NutriParse = (() => {
       per100 = { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: 0 };
     }
 
-    const softMissing = [];
-    if (!(totalsParsed.present.fb || per100Parsed.present.fb || (derivedFromTotals && totalsParsed.present.fb))) {
-      if (!per100Parsed.present.fb && !totalsParsed.present.fb) softMissing.push("fiber");
+    const requiredPresent = (k) => !!(totalsParsed.present[k] || per100Parsed.present[k]);
+    for (const [k, label] of [["kcal", "kcal"], ["p", "protein"], ["c", "carbs"], ["f", "fat"]]) {
+      if (!requiredPresent(k)) rejects.push(`${label} missing from the macro line.`);
     }
     if (!per100Parsed.present.fb && !totalsParsed.present.fb) {
       warnings.push("Fiber missing — defaulting to 0 (you can edit).");
@@ -375,11 +414,19 @@ const NutriParse = (() => {
     }
 
     if (chatgptPer100 && derivedFromTotals) {
-      const diff = Math.abs(chatgptPer100.kcal - per100.kcal);
-      const pct = per100.kcal ? (diff / per100.kcal) * 100 : 0;
-      if (pct > 8 && diff > 5) {
+      const disagree = [];
+      for (const [k, label] of [["kcal", "kcal"], ["p", "protein"], ["c", "carbs"], ["f", "fat"]]) {
+        if (!per100Parsed.present[k] || !totalsParsed.present[k]) continue;
+        const a = chatgptPer100[k];
+        const b = per100[k];
+        const diff = Math.abs(a - b);
+        const pct = b ? (diff / Math.abs(b)) * 100 : 0;
+        const thresh = k === "kcal" ? 5 : 1;
+        if (pct > 8 && diff > thresh) disagree.push(`${label} ${a} vs ${b}`);
+      }
+      if (disagree.length) {
         warnings.push(
-          `ChatGPT's per-100 g line (${chatgptPer100.kcal} kcal) doesn't match its own totals (${per100.kcal} kcal). Using the totals-based value.`
+          `Per 100 g doesn't match Totals for ${disagree.join(", ")}. Using totals-based values where present.`
         );
       }
     }
@@ -467,7 +514,6 @@ const NutriParse = (() => {
       rejects,
       unknownLines,
       truncated: block.truncated,
-      softMissing,
       raw: originalPaste || block.rawBlock,
       found: true,
     };

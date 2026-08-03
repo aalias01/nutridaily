@@ -174,5 +174,133 @@ console.log("\n[parse] catalog refine prompt");
   ok(NutriParse.foodUpdatePrompt(withRaw).includes("current saved version"), "uses updatePrompt when raw exists");
 }
 
+console.log("\n[parse] robustness regressions");
+{
+  // Partial Totals must not wipe Per 100 g macros
+  const partialTotals = `NUTRI v1
+Name: Partial totals bowl
+Batch: 400 g total, 2 servings
+Totals: 800 kcal
+Per 100 g: 200 kcal | P 10 | C 15 | F 7.5 | Fiber 1.2 | Sodium 150
+Confidence: medium
+END`;
+  const pt = NutriParse.parse(partialTotals).results[0];
+  ok(pt.canSave, "partial totals can save");
+  approx(pt.food.per100.p, 10, 0.2, "kept protein from Per 100 g when Totals omitted it");
+  ok((pt.warnings || []).some((w) => /incomplete|Per 100 g/i.test(w)), "warns about incomplete Totals merge");
+
+  // Missing required macro is not savable
+  const noProtein = `NUTRI v1
+Name: No protein
+Per 100 g: 250 kcal | C 30 | F 10 | Fiber 2 | Sodium 100
+END`;
+  const np = NutriParse.parse(noProtein).results[0];
+  ok(!np.canSave, "rejects missing protein");
+  ok((np.rejects || []).some((r) => /protein missing/i.test(r)), "reject names missing protein");
+
+  // Prompt echo: prefer last complete savable block
+  const echo = NutriParse.PROMPT + `
+NUTRI v1
+Name: Real dish
+Batch: 200 g total, 1 servings
+Totals: 260 kcal | P 5.4 | C 56 | F 0.6 | Fiber 0.8 | Sodium 2
+Per 100 g: 130 kcal | P 2.7 | C 28 | F 0.3 | Fiber 0.4 | Sodium 1
+Confidence: high
+END`;
+  const er = NutriParse.parse(echo);
+  ok(er.results.length >= 2, "prompt echo yields multiple blocks");
+  const lastSave = [...er.results].reverse().find((r) => r.canSave);
+  ok(lastSave && lastSave.food.name === "Real dish", "last savable block is the reply");
+
+  // Draft without END must not merge into next block
+  const draftLeak = `NUTRI v1
+Name: Draft chapati
+Piece: 57
+Log as: piece
+
+NUTRI v1
+Name: Chapati corrected
+Batch: 567 g total, 10 servings
+Totals: 1600 kcal | P 40 | C 250 | F 50 | Fiber 20 | Sodium 2000
+Per 100 g: 282 kcal | P 7.1 | C 44.1 | F 8.8 | Fiber 3.5 | Sodium 353
+Log as: grams
+Confidence: high
+END`;
+  const dl = NutriParse.parse(draftLeak);
+  ok(dl.results.length === 2, "draft without END is a separate truncated block");
+  const corrected = dl.results[1];
+  ok(corrected.food.name === "Chapati corrected", "second block is corrected name");
+  ok(corrected.food.logAs === "grams", "corrected logAs is grams");
+  ok(!corrected.food.units.piece, "Piece from draft does not leak into corrected block");
+
+  // ~ batch weight is estimated
+  const tilde = `NUTRI v1
+Name: Estimated stew
+Batch: ~760 g total, 4 servings
+Totals: 1153 kcal | P 139.2 | C 15.6 | F 56.4 | Fiber 1.2 | Sodium 2555
+Per 100 g: 151.7 kcal | P 18.3 | C 2.1 | F 7.4 | Fiber 0.2 | Sodium 336
+Confidence: high
+END`;
+  const td = NutriParse.parse(tilde).results[0];
+  ok(td.food.batch && td.food.batch.weighed === false, "~ batch marks weighed false");
+  ok(td.food.sd >= 0.1, "estimated batch does not get high weighed sd");
+
+  // Tilde on macros must still parse (not become "approx 139")
+  const tildeMacros = `NUTRI v1
+Name: Approx macros
+Batch: 400 g total, 2 servings
+Totals: ~800 kcal | P ~40 | C ~60 | F ~20 | Fiber ~4 | Sodium ~200
+Per 100 g: ~200 kcal | P ~10 | C ~15 | F ~5 | Fiber ~1 | Sodium ~50
+Confidence: medium
+END`;
+  const tm = NutriParse.parse(tildeMacros).results[0];
+  ok(tm.canSave, "tilde-marked macros still savable");
+  approx(tm.food.per100.p, 10, 0.2, "P ~40 survives preprocess");
+
+  // "N g each" must not become servings via pack-count fallback
+  const eachLine = `NUTRI v1
+Name: Each line pack
+Batch: 567 g total, 56.7 g each
+Totals: 1600 kcal | P 40 | C 250 | F 50 | Fiber 20 | Sodium 2000
+Log as: piece
+Confidence: high
+END`;
+  const el = NutriParse.parse(eachLine).results[0];
+  ok(el.food.batch && el.food.batch.grams === 567, "g each does not inflate batch grams");
+  ok(el.food.units.piece == null || el.food.units.piece !== 5, "g each does not invent tiny piece size");
+
+  // Log as: pieces (plural)
+  const pieces = `NUTRI v1
+Name: Store egg
+Category: protein
+Batch: 500 g total, 10 servings
+Totals: 740 kcal | P 62.5 | C 5 | F 50 | Fiber 0 | Sodium 710
+Log as: pieces
+Confidence: medium
+END`;
+  const pc = NutriParse.parse(pieces).results[0];
+  ok(pc.food.logAs === "piece", "Log as: pieces → piece");
+  ok(pc.food.units.piece === 50, "piece inferred for plural log as");
+
+  // Pack count noun
+  const pack = `NUTRI v1
+Name: Pack chapati
+Batch: 567 g total, 10 chapatis
+Totals: 1600 kcal | P 40 | C 250 | F 50 | Fiber 20 | Sodium 2000
+Log as: piece
+Confidence: high
+END`;
+  const pk = NutriParse.parse(pack).results[0];
+  ok(pk.food.units.piece === 57, "pack count noun yields piece grams", `got ${pk.food.units.piece}`);
+
+  // END. trailing punctuation
+  const endDot = `NUTRI v1
+Name: Dot end
+Per 100 g: 100 kcal | P 5 | C 10 | F 3 | Fiber 1 | Sodium 50
+END.`;
+  const ed = NutriParse.parse(endDot).results[0];
+  ok(ed.canSave && !ed.truncated, "END. is accepted as terminator");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

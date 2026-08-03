@@ -118,7 +118,13 @@ const GapPrompt = (() => {
 
     const remBits = [];
     for (const k of ["kcal", "protein", "carbs", "fat"]) {
+      const g = Number(goals[k]) || 0;
+      const a = Number(means[k]) || 0;
       const unit = k === "kcal" ? "" : " g";
+      if (!(g > 0)) {
+        remBits.push(`${k} ${fmtNum(a)}${unit} logged (no target set)`);
+        continue;
+      }
       const sign = remaining[k] > 0 ? "+" : "";
       remBits.push(`${k} ${sign}${fmtNum(remaining[k])}${unit} (${BAND_HINT[k]})`);
     }
@@ -176,12 +182,14 @@ const GapPrompt = (() => {
       `- ${fmtNum(means.kcal)} kcal | P ${fmtNum(means.protein, 1)} | C ${fmtNum(means.carbs, 1)}` +
       ` | F ${fmtNum(means.fat, 1)} | Fiber ${fmtNum(means.fiber, 1)} | Sodium ${fmtNum(means.sodium)}\n\n` +
       "Daily targets:\n" +
-      `- ${fmtNum(goals.kcal)} kcal | P ${fmtNum(goals.protein)} | C ${fmtNum(goals.carbs)}` +
-      ` | F ${fmtNum(goals.fat)}` +
-      ` | Fiber ${fmtNum(goals.fiber)} g (report only)` +
-      ` | Sodium ${fmtNum(goals.sodium)} mg (ceiling — lower is better)\n\n` +
+      (Number(goals.kcal) > 0 || Number(goals.protein) > 0
+        ? `- ${fmtNum(goals.kcal)} kcal | P ${fmtNum(goals.protein)} | C ${fmtNum(goals.carbs)}` +
+          ` | F ${fmtNum(goals.fat)}` +
+          ` | Fiber ${fmtNum(goals.fiber)} g (report only)` +
+          ` | Sodium ${fmtNum(goals.sodium)} mg (ceiling — lower is better)\n\n`
+        : "- (no kcal/protein targets set — propose sensible portions from history only; say so in Note)\n\n") +
       `Gap / status: ${remLine}\n` +
-      "(For kcal/protein/carbs/fat: positive = still to add, negative = already over.)\n\n" +
+      "(For kcal/protein/carbs/fat: positive = still to add, negative = already over. Ignore gap math when no target is set.)\n\n" +
       "Candidate foods I plan to eat (ONLY assign quantities to these exact names):\n" +
       candBlock +
       "\n" +
@@ -205,7 +213,8 @@ const GapPrompt = (() => {
       "- If an option misses the protein floor or breaks the sodium ceiling, set Reachable: no and explain in Note.\n" +
       "  Still give honest quantities for that strategy. Do not collapse to a single option when tradeoffs exist.\n" +
       "- Do NOT invent Item lines for foods not listed above. Use each candidate's exact Name.\n" +
-      "- Qty must include a unit: e.g. `120 g` or `2 piece` (not a bare number).\n" +
+      "- Qty MUST include a unit: `120 g` or `2 piece` (never a bare number). No thousands separators (write 1200 not 1,200).\n" +
+      "- For countable candidates (logAs piece), prefer `N piece` over grams.\n" +
       "- Option 1 MUST have an Item line for EVERY candidate I selected (all names listed above). Never omit on Option 1.\n" +
       "  If the full set cannot hit targets cleanly, still include every food, set Reachable appropriately, and explain in Note.\n" +
       "  I will refine in chat (or deselect in the app) if I want fewer foods — do not silently drop foods from Option 1.\n" +
@@ -216,7 +225,7 @@ const GapPrompt = (() => {
       (refineNames.length
         ? `- Candidates that especially benefit from a NUTRI refine: ${refineNames.join("; ")}.\n`
         : "") +
-      "- Plain numbers only. One GAP v1 block with three Option sections (plus optional NUTRI blocks).\n\n" +
+      "- Plain numbers only (no commas in numbers). One GAP v1 block with three Option sections (plus optional NUTRI blocks).\n\n" +
       "Reply exactly in this format:\n\n" +
       "GAP v1\n" +
       `Day: ${day || "<YYYY-MM-DD>"}\n` +
@@ -224,7 +233,7 @@ const GapPrompt = (() => {
       "Reachable: yes\n" +
       "Note: <tradeoff in one or two sentences>\n" +
       "Item: <exact candidate name> | <n> g | <meal>\n" +
-      "Item: <exact candidate name> | <n> g | <meal>\n" +
+      "Item: <exact candidate name> | <n> piece | <meal>\n" +
       "Projected: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
       "Option: 2 | Protect protein\n" +
       "(same fields; may omit some candidates)\n" +
@@ -238,6 +247,7 @@ const GapPrompt = (() => {
     let s = String(text || "");
     s = s.replace(/\u00a0/g, " ");
     s = s.replace(/[\u2013\u2014\u2212]/g, "-");
+    s = s.replace(/(\d),(\d{3})\b/g, "$1$2");
     s = s.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, "");
     return s;
   }
@@ -252,10 +262,13 @@ const GapPrompt = (() => {
     while ((m = re.exec(src))) {
       const start = m.index + m[0].length;
       const rest = src.slice(start);
-      const endMatch = rest.match(/\n\s*END\s*(?:\n|$)/i);
+      const endMatch = rest.match(/\n\s*END\s*[.!?]?(?:\n|$)/i);
       const body = (endMatch ? rest.slice(0, endMatch.index) : rest).replace(/^\s*\n/, "");
       lastAny = body;
-      if (endMatch) lastComplete = body;
+      if (endMatch) {
+        lastComplete = body;
+        re.lastIndex = start + endMatch.index + endMatch[0].length;
+      }
     }
     return lastComplete != null ? lastComplete : lastAny;
   }
@@ -299,25 +312,30 @@ const GapPrompt = (() => {
     if (range) {
       const a = Number(range[1]);
       const b = Number(range[2]);
+      const unitPresent = !!range[3];
       let unit = (range[3] || "g").toLowerCase();
       if (unit === "grams" || unit === "gram") unit = "g";
       if (unit === "pieces") unit = "piece";
       const qty = Math.round(((a + b) / 2) * 10) / 10;
-      return { qty, unit, gramsHint: unit === "g" ? qty : null, ranged: true, rangeText: s };
+      const gramsHint = unit === "g" ? qty : (unit === "oz" ? Math.round(qty * 28.3495 * 10) / 10 : null);
+      return { qty, unit, gramsHint, ranged: true, rangeText: s, unitPresent, unknownUnit: unitPresent && !(unit === "g" || unit === "oz" || unit === "piece" || unit === "serving") };
     }
     const m = s.match(/^(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/);
     if (!m) {
       const n = parseNum(s);
-      return Number.isFinite(n) ? { qty: n, unit: "g", gramsHint: n, ranged: false, unknownUnit: false } : null;
+      return Number.isFinite(n)
+        ? { qty: n, unit: "g", gramsHint: n, ranged: false, unknownUnit: false, unitPresent: false }
+        : null;
     }
     const qty = Number(m[1]);
+    const unitPresent = !!m[2];
     let unit = (m[2] || "g").toLowerCase();
     if (unit === "grams" || unit === "gram") unit = "g";
     if (unit === "pieces") unit = "piece";
     if (unit === "servings") unit = "serving";
     const known = unit === "g" || unit === "oz" || unit === "piece" || unit === "serving";
-    const gramsHint = unit === "g" ? qty : null;
-    return { qty, unit, gramsHint, ranged: false, unknownUnit: !known };
+    const gramsHint = unit === "g" ? qty : (unit === "oz" ? Math.round(qty * 28.3495 * 10) / 10 : null);
+    return { qty, unit, gramsHint, ranged: false, unknownUnit: unitPresent && !known, unitPresent };
   }
 
   function matchCandidate(name, candidates, scorer) {
@@ -341,9 +359,18 @@ const GapPrompt = (() => {
     return { cand: best.c, score: best.s, exact: false, ambiguous: false };
   }
 
+  /**
+   * Whitelist yes; anything unrecognized → not reachable (pessimistic).
+   * @returns {{ reachable: boolean, unknown: boolean }}
+   */
   function parseReachable(val) {
-    const v = String(val || "").trim().toLowerCase();
-    return !/^(no|false|0|partial)\b/.test(v);
+    const v = String(val || "").trim().replace(/^\*+|\*+$/g, "").replace(/^`+|`+$/g, "").trim().toLowerCase();
+    if (/^(yes|y|true|1)\b/.test(v)) return { reachable: true, unknown: false };
+    if (/^(no|n|false|0|partial|partially|unlikely|maybe|not)\b/.test(v)) {
+      return { reachable: false, unknown: false };
+    }
+    if (!v) return { reachable: false, unknown: true };
+    return { reachable: false, unknown: true };
   }
 
   function parseItemLine(line, candidates, scorer, hasCandidateList, warnings) {
@@ -368,7 +395,11 @@ const GapPrompt = (() => {
     if (qtyParsed.unknownUnit) {
       warnings.push(`Unrecognized unit "${qtyParsed.unit}" for ${name}; confirm amount when logging`);
     }
-    const meal = normalizeMeal(parts[2] || "snack");
+    const mealRaw = parts[2] || "snack";
+    const meal = normalizeMeal(mealRaw);
+    if (String(mealRaw).trim() && meal === "snack" && !/^snacks?$/i.test(String(mealRaw).trim())) {
+      warnings.push(`Unrecognized meal "${mealRaw}" for ${name}; treated as snack`);
+    }
     const match = matchCandidate(name, candidates, scorer);
     if (hasCandidateList) {
       if (match.ambiguous) {
@@ -385,9 +416,18 @@ const GapPrompt = (() => {
     }
     const cand = match.cand;
     let grams = qtyParsed.gramsHint;
-    const unit = qtyParsed.unit;
+    let unit = qtyParsed.unit;
     const qty = qtyParsed.qty;
-    if (grams == null && unit === "piece" && cand && cand.pieceGrams) {
+    if (!qtyParsed.unitPresent) {
+      const pieceLike = cand && (cand.logAs === "piece" || (cand.pieceGrams != null && Number(cand.pieceGrams) > 0));
+      if (pieceLike && qty > 0 && qty <= 12) {
+        unit = "piece";
+        grams = cand.pieceGrams != null ? Math.round(qty * cand.pieceGrams * 10) / 10 : null;
+        warnings.push(`Assumed ${qty} piece for ${name} (qty had no unit)`);
+      } else {
+        warnings.push(`No unit on qty for ${name}; treated as grams`);
+      }
+    } else if (grams == null && unit === "piece" && cand && cand.pieceGrams) {
       grams = Math.round(qty * cand.pieceGrams * 10) / 10;
     } else if (grams == null && unit === "g") {
       grams = qty;
@@ -425,6 +465,8 @@ const GapPrompt = (() => {
     let day = "";
     const warnings = [];
     const hasCandidateList = Array.isArray(candidates);
+    // Pre-scan so a preamble Note before Option: 1 does not spawn a phantom legacy plan.
+    const hasOptionHeader = lines.some((l) => /^Option:\s*\d+/i.test(l));
     const options = [];
     let cur = null;
 
@@ -446,7 +488,9 @@ const GapPrompt = (() => {
       cur = null;
     }
 
+    /** Legacy single-plan blocks have no Option headers. */
     function ensureLegacyCur() {
+      if (hasOptionHeader) return;
       if (cur) return;
       cur = {
         index: 1,
@@ -463,12 +507,15 @@ const GapPrompt = (() => {
       const dayM = line.match(/^Day:\s*(.+)$/i);
       if (dayM && !cur) { day = dayM[1].trim(); continue; }
 
-      const optM = line.match(/^Option:\s*(\d+)\s*(?:\|\s*(.+))?$/i);
+      // Accept "Option: 1 | Label", "Option: 1 - Label", "Option: 1 — Label", "Option: 1 (Label)"
+      const optM = line.match(/^Option:\s*(\d+)\s*(?:[|:\-–—(]\s*(.+?)\)?\s*)?$/i);
       if (optM) {
         pushCur();
+        let label = (optM[2] || "").trim().replace(/^\|+/, "").trim();
+        if (!label) label = `Option ${optM[1]}`;
         cur = {
           index: Number(optM[1]),
-          label: (optM[2] || `Option ${optM[1]}`).trim(),
+          label,
           reachable: true,
           note: "",
           items: [],
@@ -480,23 +527,31 @@ const GapPrompt = (() => {
       const reachM = line.match(/^Reachable:\s*(.+)$/i);
       if (reachM) {
         ensureLegacyCur();
-        cur.reachable = parseReachable(reachM[1]);
+        if (!cur) continue;
+        const r = parseReachable(reachM[1]);
+        cur.reachable = r.reachable;
+        if (r.unknown) {
+          warnings.push(`Option ${cur.index}: unrecognized Reachable "${reachM[1].trim()}" — treating as no`);
+        }
         continue;
       }
       const noteM = line.match(/^Note:\s*(.*)$/i);
       if (noteM) {
         ensureLegacyCur();
+        if (!cur) continue;
         cur.note = noteM[1].trim();
         continue;
       }
       const projM = line.match(/^Projected:\s*(.*)$/i);
       if (projM) {
         ensureLegacyCur();
+        if (!cur) continue;
         cur.projected = parseProjected(projM[1]);
         continue;
       }
       if (/^Item:/i.test(line.replace(/^\*+\s*/, "").replace(/^[-•]\s*/, ""))) {
         ensureLegacyCur();
+        if (!cur) continue;
         const item = parseItemLine(line, candidates, scorer, hasCandidateList, warnings);
         if (item) cur.items.push(item);
       }
@@ -505,6 +560,19 @@ const GapPrompt = (() => {
 
     if (!options.length) {
       return { ok: false, error: "GAP block found but no valid options/items matched your selected foods." };
+    }
+
+    if (hasCandidateList && candidates.length) {
+      const opt1 = options.find((o) => o.index === 1);
+      if (opt1) {
+        const used = new Set((opt1.items || []).map((it) => String(it.name || "").trim().toLowerCase()));
+        const missing = candidates
+          .filter((c) => !used.has(String(c.name || "").trim().toLowerCase()))
+          .map((c) => c.name);
+        if (missing.length) {
+          warnings.push(`Option 1 skipped: ${missing.join(", ")}`);
+        }
+      }
     }
 
     const first = options[0];

@@ -491,6 +491,84 @@ END`;
   ok(parsed.options.length === 3, "three options parsed");
   ok(parsed.options[1].goals.kcal === 2200 && parsed.options[1].label === "Balanced", "option 2 macros and label");
   ok(!PhasePrompt.parsePhaseBlock("hello").ok, "rejects non-PHASE text");
+
+  const commaBlock = `PHASE v1
+Kind: maintain
+Option: 1 | Conservative
+Kcal: 2,100
+Protein: 160
+Carbs: 180
+Fat: 65
+Fiber: 30
+Sodium: 2,300
+Reason: ok
+Sources: ISSN
+END`;
+  const commaParsed = PhasePrompt.parsePhaseBlock(commaBlock);
+  ok(commaParsed.ok && commaParsed.options[0].goals.kcal === 2100, "comma thousands in Kcal parse to 2100");
+  ok(commaParsed.options[0].goals.sodium === 2300, "comma thousands in Sodium parse to 2300");
+
+  const echo = PhasePrompt.buildTargetPrompt({
+    kind: "cut",
+    age: 36,
+    weightKg: 80,
+    profile: { sex: "male", heightCm: 175, activity: "moderate" },
+  }) + "\n\n" + block;
+  const echoParsed = PhasePrompt.parsePhaseBlock(echo);
+  ok(echoParsed.ok && echoParsed.options.length === 3 && echoParsed.kind === "recomp", "prompt echo prefers last complete PHASE reply");
+
+  const noKind = `PHASE v1
+Option: 1 | Balanced
+Kcal: 2200
+Protein: 160
+Carbs: 200
+Fat: 70
+Fiber: 30
+Sodium: 2300
+Reason: ok
+Sources: ISSN
+END`;
+  const nk = PhasePrompt.parsePhaseBlock(noKind);
+  ok(nk.ok && nk.kind == null, "missing Kind: leaves kind null");
+
+  const dropOpt = `PHASE v1
+Kind: cut
+Option: 1 | Broken
+Kcal: 2100
+Protein: n/a
+Carbs: 180
+Fat: 65
+Fiber: 30
+Sodium: 2300
+Reason: bad
+Sources: x
+Option: 2 | Good
+Kcal: 2200
+Protein: 170
+Carbs: 200
+Fat: 70
+Fiber: 30
+Sodium: 2300
+Reason: ok
+Sources: ISSN
+END`;
+  const dropped = PhasePrompt.parsePhaseBlock(dropOpt);
+  ok(dropped.ok && dropped.options.length === 1 && dropped.options[0].label === "Good", "keeps complete options only");
+  ok((dropped.warnings || []).some((w) => /Dropped Option 1/i.test(w) && /protein/i.test(w)), "warns about dropped incomplete option");
+
+  const outOfRange = `PHASE v1
+Kind: cut
+Option: 1 | Wild
+Kcal: 200
+Protein: 900
+Carbs: 50
+Fat: 20
+Fiber: 10
+Sodium: 2300
+Reason: no
+Sources: x
+END`;
+  ok(!PhasePrompt.parsePhaseBlock(outOfRange).ok, "rejects out-of-range PHASE goals");
 }
 
 console.log("\n[11] GAP AI close-the-gap prompt parse");
@@ -688,6 +766,95 @@ END`;
   approx(proj.protein, 115.8, 0.11, "projectTotals adds pending protein");
   ok(GapPrompt.projectTotals(loggedMeans, []).sodium === 900, "projectTotals with no pending items = logged totals");
   ok(GapPrompt.macroMeans({}).kcal === 0, "macroMeans defaults missing keys to 0");
+
+  const commaGap = `GAP v1
+Day: 2026-08-02
+Reachable: yes
+Note: ok
+Item: rice (cooked) | 1,000 g | dinner
+Projected: 2,100 kcal | P 60 | C 120 | F 20 | Fiber 8 | Sodium 400
+END`;
+  const cg = GapPrompt.parseGapBlock(commaGap, candidates, scorer);
+  ok(cg.ok && cg.items[0].grams === 1000, "comma thousands in Item qty → 1000 g");
+  ok(cg.projected && cg.projected.kcal === 2100, "comma thousands in Projected kcal → 2100");
+
+  const reachMaybe = `GAP v1
+Day: 2026-08-02
+Reachable: maybe
+Note: unsure
+Item: rice (cooked) | 120 g | dinner
+END`;
+  ok(GapPrompt.parseGapBlock(reachMaybe, candidates, scorer).reachable === false, "Reachable: maybe → not reachable");
+
+  const reachBold = `GAP v1
+Day: 2026-08-02
+Reachable: **yes**
+Note: ok
+Item: rice (cooked) | 120 g | dinner
+END`;
+  ok(GapPrompt.parseGapBlock(reachBold, candidates, scorer).reachable === true, "Reachable: **yes** strips markdown");
+
+  const dashOpt = `GAP v1
+Day: 2026-08-02
+Option: 1 - All selected
+Reachable: yes
+Note: ok
+Item: rice (cooked) | 120 g | dinner
+Item: chicken breast (cooked) | 150 g | dinner
+END`;
+  const dashParsed = GapPrompt.parseGapBlock(dashOpt, candidates, scorer);
+  ok(dashParsed.ok && dashParsed.options[0].label === "All selected", "Option: 1 - Label parses");
+
+  const preamble = `GAP v1
+Day: 2026-08-02
+Note: Here are three options.
+Option: 1 | All selected
+Reachable: yes
+Note: real
+Item: rice (cooked) | 120 g | dinner
+Item: chicken breast (cooked) | 150 g | dinner
+Projected: 800 kcal | P 50 | C 90 | F 15 | Fiber 4 | Sodium 200
+END`;
+  const pre = GapPrompt.parseGapBlock(preamble, candidates, scorer);
+  ok(pre.ok && pre.options.length === 1 && pre.options[0].label === "All selected", "preamble Note does not create phantom option");
+  ok(!(pre.warnings || []).some((w) => /\(Plan\)/.test(w)), "no phantom Plan option warning");
+
+  const skipOpt1 = `GAP v1
+Day: 2026-08-02
+Option: 1 | All selected
+Reachable: yes
+Note: incomplete
+Item: rice (cooked) | 120 g | dinner
+Projected: 130 kcal | P 3 | C 28 | F 0 | Fiber 0 | Sodium 1
+END`;
+  const sk = GapPrompt.parseGapBlock(skipOpt1, candidates, scorer);
+  ok((sk.warnings || []).some((w) => /Option 1 skipped:.*chicken/i.test(w)), "Option 1 missing candidate warns");
+
+  const eggCand = [{
+    id: "pf-egg",
+    name: "boiled egg",
+    per100: { kcal: 155, p: 13, c: 1.1, f: 11, fb: 0, na: 124 },
+    portion: { n: 3, median: 50, p25: 50, p75: 50, last: 50 },
+    pieceGrams: 50,
+    logAs: "piece",
+  }];
+  const barePiece = `GAP v1
+Day: 2026-08-02
+Reachable: yes
+Note: ok
+Item: boiled egg | 2 | breakfast
+END`;
+  const bp = GapPrompt.parseGapBlock(barePiece, eggCand, scorer);
+  ok(bp.ok && bp.items[0].unit === "piece" && bp.items[0].grams === 100, "bare qty on piece food → 2 piece");
+  ok((bp.warnings || []).some((w) => /Assumed 2 piece/i.test(w)), "warns when assuming piece unit");
+
+  const zeroGoalsPrompt = GapPrompt.buildGapPrompt({
+    day: "2026-08-02",
+    means: { kcal: 500, protein: 20, carbs: 40, fat: 10, fiber: 5, sodium: 400 },
+    goals: {},
+    candidates,
+  });
+  ok(/no target set/i.test(zeroGoalsPrompt), "gap prompt avoids fake overshoot when no targets");
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

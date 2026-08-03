@@ -786,6 +786,17 @@ const App = (() => {
 
   function renderGapChooseStep() {
     const parsed = state.gapParsed;
+    const warnEl = UI.$("#gap-choose-warnings");
+    if (warnEl) {
+      const warns = (parsed && parsed.warnings) || [];
+      if (warns.length) {
+        warnEl.hidden = false;
+        warnEl.textContent = warns.slice(0, 4).join(" · ");
+      } else {
+        warnEl.hidden = true;
+        warnEl.textContent = "";
+      }
+    }
     const banner = UI.$("#gap-choose-nutri");
     if (banner) {
       const pending = state.gapNutriPending;
@@ -1120,16 +1131,29 @@ const App = (() => {
       UI.toast(parsed.error || "Could not parse GAP block");
       return;
     }
+    // Projected must cover the whole day; if kcal is below what's already logged, drop it.
+    const means = GapPrompt.totalsMeans(Ledger.totalsFor(state.viewDay));
+    const loggedKcal = Number(means.kcal) || 0;
+    for (const opt of parsed.options || []) {
+      const pk = opt.projected && Number(opt.projected.kcal);
+      if (Number.isFinite(pk) && loggedKcal > 0 && pk + 1 < loggedKcal) {
+        parsed.warnings.push(
+          `Option ${opt.index}: Projected kcal looks like new items only — using live math instead`
+        );
+        opt.projected = null;
+      }
+    }
     const nutri = NutriParse.parse(text);
     state.gapNutriPending = (nutri && nutri.found)
       ? (nutri.results || []).filter((r) => r && r.ok && r.canSave)
       : null;
     state.gapParsed = parsed;
     if (parsed.warnings && parsed.warnings.length) {
-      UI.toast(parsed.warnings[0]);
+      UI.toast(parsed.warnings.slice(0, 2).join(" · "));
     }
     const opts = parsed.options || [];
-    if (opts.length === 1) {
+    // Auto-apply only a clean single option; warnings or truncated sets go through the chooser.
+    if (opts.length === 1 && !(parsed.warnings && parsed.warnings.length)) {
       applyGapOption(opts[0], parsed);
       return;
     }
@@ -1675,10 +1699,14 @@ const App = (() => {
       UI.toast(parsed.error);
       return;
     }
+    // Prefer the last savable block (prompt templates / drafts often precede the reply).
+    const savable = (parsed.results || []).filter((r) => r && r.canSave);
+    const result = savable.length
+      ? savable[savable.length - 1]
+      : parsed.results[parsed.results.length - 1];
     if (parsed.results.length > 1) {
-      UI.toast(`Found ${parsed.results.length} foods — importing the first. Paste one dish at a time.`);
+      UI.toast(`Found ${parsed.results.length} blocks — using the last complete one.`);
     }
-    const result = parsed.results[0];
     result.food.raw = text.slice(0, 12000);
     state.reviewParsed = result;
     state.editFoodDirect = false;
@@ -2600,7 +2628,11 @@ const App = (() => {
           return;
         }
         renderAiPhaseOptions(parsed);
-        UI.toast(`${parsed.options.length} options ready`);
+        if (parsed.warnings && parsed.warnings.length) {
+          UI.toast(`${parsed.options.length} options · ${parsed.warnings[0]}`);
+        } else {
+          UI.toast(`${parsed.options.length} options ready`);
+        }
       });
     }
     if (UI.$("#ai-phase-options")) {
@@ -2617,6 +2649,7 @@ const App = (() => {
         UI.$("#set-fat").value = g.fat;
         UI.$("#set-fiber").value = g.fiber;
         if (UI.$("#set-sodium")) UI.$("#set-sodium").value = g.sodium;
+        // Only flip kind when the paste actually included Kind: (null means leave user's selection).
         if (parsed.kind) setKindSeg("#phase-kind-seg", parsed.kind, "phase");
         UI.closeSheet("sheet-phase-targets");
         UI.toast(`Applied ${opt.label}. Tap Save phase to keep it.`);

@@ -3,6 +3,15 @@
  */
 const PhasePrompt = (() => {
   const GOAL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium"];
+  const REQUIRED_KEYS = ["kcal", "protein", "carbs", "fat"];
+  const BOUNDS = {
+    kcal: [800, 6000],
+    protein: [0, 400],
+    carbs: [0, 800],
+    fat: [0, 800],
+    fiber: [0, 150],
+    sodium: [0, 10000],
+  };
 
   const KIND_BRIEF = {
     cut: "fat-loss / calorie deficit while protecting protein and training",
@@ -26,7 +35,7 @@ const PhasePrompt = (() => {
   }
 
   /**
-   * @param {{ kind: string, age: number, profile: object, weightKg: number, notes?: string }} ctx
+   * @param {{ kind: string, age: number, profile: object, weightKg: number, weightUnit?: string, notes?: string }} ctx
    */
   function buildTargetPrompt(ctx) {
     const kind = (typeof Phases !== "undefined" ? Phases.normalizeKind(ctx.kind) : ctx.kind) || "maintain";
@@ -62,7 +71,7 @@ const PhasePrompt = (() => {
       `- Propose exactly 3 daily target options tailored to ${label}.\n` +
       "- Label them Conservative, Balanced, and Aggressive (relative to that goal).\n" +
       "- For each option give: kcal, protein g, carbs g, fat g, fiber g, sodium mg.\n" +
-      "- Plain integers only. No ranges inside the number fields.\n" +
+      "- Plain integers only. No thousands separators (write 2100 not 2,100). No ranges inside the number fields.\n" +
       "- Include a short Reason (why these numbers for this person and goal).\n" +
       "- Include Sources: named equations/guidelines (e.g. Mifflin-St Jeor, ISSN protein guidance).\n" +
       "  Do not invent fake URLs. Prefer well-known position stands and standard equations.\n" +
@@ -91,19 +100,27 @@ const PhasePrompt = (() => {
     let s = String(text || "");
     s = s.replace(/\u00a0/g, " ");
     s = s.replace(/[\u2013\u2014\u2212]/g, "-");
+    s = s.replace(/(\d),(\d{3})\b/g, "$1$2");
     s = s.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, "");
     return s;
   }
 
-  function extractBody(text) {
+  /** Prefer the last complete PHASE v1 … END body (chat pastes often include the prompt template). */
+  function extractBodies(text) {
     const src = preprocess(text);
-    const m = src.match(/PHASE\s*v?1\b/i);
-    if (!m) return null;
-    const start = m.index + m[0].length;
-    const rest = src.slice(start);
-    const endMatch = rest.match(/\n\s*END\s*(?:\n|$)/i);
-    const body = endMatch ? rest.slice(0, endMatch.index) : rest;
-    return body.replace(/^\s*\n/, "");
+    const re = /PHASE\s*v?1\b/gi;
+    const bodies = [];
+    let m;
+    while ((m = re.exec(src))) {
+      const start = m.index + m[0].length;
+      const rest = src.slice(start);
+      const endMatch = rest.match(/\n\s*END\s*[.!?]?(?:\n|$)/i);
+      const body = (endMatch ? rest.slice(0, endMatch.index) : rest).replace(/^\s*\n/, "");
+      bodies.push({ body, complete: !!endMatch });
+      if (endMatch) re.lastIndex = start + endMatch.index + endMatch[0].length;
+      else break;
+    }
+    return bodies;
   }
 
   function parseNum(line) {
@@ -111,26 +128,44 @@ const PhasePrompt = (() => {
     return m ? Number(m[0]) : NaN;
   }
 
-  function parsePhaseBlock(text) {
-    const body = extractBody(text);
-    if (!body) {
-      return { ok: false, error: "No PHASE v1 block found. Ask the AI to use the PHASE v1 … END format." };
-    }
+  function parseOneBody(body) {
     const lines = body.split(/\n/).map((l) => l.trim()).filter(Boolean);
-    let kind = "maintain";
+    let kind = null;
     const options = [];
+    const warnings = [];
     let cur = null;
 
     function pushCur() {
       if (!cur) return;
+      const missing = REQUIRED_KEYS.filter((k) => !Number.isFinite(Number(cur[k])));
+      if (missing.length) {
+        warnings.push(`Dropped Option ${cur.index} (${cur.label || "?"}): missing ${missing.join(", ")}`);
+        cur = null;
+        return;
+      }
+      if (!Number.isFinite(Number(cur.fiber))) {
+        cur.fiber = 0;
+        warnings.push(`Option ${cur.index}: Fiber missing — defaulted to 0`);
+      }
+      if (!Number.isFinite(Number(cur.sodium))) {
+        cur.sodium = 0;
+        warnings.push(`Option ${cur.index}: Sodium missing — defaulted to 0`);
+      }
       const goals = {};
       for (const k of GOAL_KEYS) {
-        const n = Number(cur[k]);
-        if (!Number.isFinite(n)) {
-          cur._bad = true;
+        let n = Math.round(Number(cur[k]));
+        if (!Number.isFinite(n) || n < 0) {
+          warnings.push(`Dropped Option ${cur.index} (${cur.label || "?"}): ${k} invalid`);
+          cur = null;
           return;
         }
-        goals[k] = Math.round(n);
+        const [lo, hi] = BOUNDS[k] || [0, Infinity];
+        if (n < lo || n > hi) {
+          warnings.push(`Dropped Option ${cur.index} (${cur.label || "?"}): ${k}=${n} outside ${lo}–${hi}`);
+          cur = null;
+          return;
+        }
+        goals[k] = n;
       }
       options.push({
         index: cur.index,
@@ -139,6 +174,7 @@ const PhasePrompt = (() => {
         reason: cur.reason || "",
         sources: cur.sources || "",
       });
+      cur = null;
     }
 
     for (const line of lines) {
@@ -154,7 +190,7 @@ const PhasePrompt = (() => {
         continue;
       }
       const kindM = line.match(/^Kind:\s*(.+)$/i);
-      if (kindM && !cur) {
+      if (kindM) {
         const raw = kindM[1].trim().toLowerCase();
         kind = typeof Phases !== "undefined" ? Phases.normalizeKind(raw) : raw;
         continue;
@@ -170,12 +206,32 @@ const PhasePrompt = (() => {
       else cur[key] = parseNum(val);
     }
     pushCur();
+    return { kind, options, warnings };
+  }
 
-    const good = options.filter((o) => o && o.goals);
-    if (good.length < 1) {
-      return { ok: false, error: "PHASE block found but no complete options (need kcal and macros)." };
+  function parsePhaseBlock(text) {
+    const bodies = extractBodies(text);
+    if (!bodies.length) {
+      return { ok: false, error: "No PHASE v1 block found. Ask the AI to use the PHASE v1 … END format." };
     }
-    return { ok: true, kind, options: good };
+    // Prefer last complete body that yields ≥1 option (prompt template often precedes the reply).
+    let best = null;
+    for (let i = bodies.length - 1; i >= 0; i--) {
+      const parsed = parseOneBody(bodies[i].body);
+      if (parsed.options.length >= 1) {
+        best = parsed;
+        break;
+      }
+      if (!best) best = parsed;
+    }
+    if (!best || best.options.length < 1) {
+      return {
+        ok: false,
+        error: "PHASE block found but no complete options (need kcal and macros).",
+        warnings: best ? best.warnings : [],
+      };
+    }
+    return { ok: true, kind: best.kind, options: best.options, warnings: best.warnings };
   }
 
   return { buildTargetPrompt, parsePhaseBlock, KIND_BRIEF };
