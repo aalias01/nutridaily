@@ -1180,7 +1180,7 @@ const App = (() => {
       }
     }
 
-    // Selected always pinned at top (even if they don't match the current query)
+    // Selected always pinned at bottom (even if they don't match the current query)
     const selectedRows = [];
     const seen = new Set();
     for (const [key, food] of Object.entries(state.gapSelected)) {
@@ -1219,7 +1219,7 @@ const App = (() => {
       seen.add(key);
     }
 
-    const rows = selectedRows.concat(otherRows);
+    const rows = otherRows.concat(selectedRows);
     UI.renderGapSelectList(
       rows.map((r) => ({ key: r.key, name: r.name, sub: r.sub, selected: r.selected })),
       { queryActive: !!needle }

@@ -2791,15 +2791,15 @@ const UI = (() => {
     const selected = rows.filter((r) => r.selected);
     const rest = rows.filter((r) => !r.selected);
     let html = "";
-    if (selected.length) {
-      html += `<div class="meal-label">Selected (${selected.length})</div>`;
-      html += selected.map(rowHtml).join("");
-    }
     if (rest.length) {
       if (selected.length) html += `<div class="meal-label">Foods</div>`;
       html += rest.map(rowHtml).join("");
     } else if (selected.length && queryActive) {
       html += `<div class="empty small">No foods match. Try a different search.</div>`;
+    }
+    if (selected.length) {
+      html += `<div class="meal-label">Selected (${selected.length})</div>`;
+      html += selected.map(rowHtml).join("");
     }
     root.innerHTML = html;
   }
