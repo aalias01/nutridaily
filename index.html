@@ -504,12 +504,31 @@
         LLM guidance is reference only, not medical advice. Quantities come from a paste you bring back from your own chat.
       </p>
 
-      <div id="gap-step-select">
+      <div id="gap-step-intro" hidden>
+        <p class="disclaimer">
+          LLM guidance is reference only, not medical advice. Quantities come from a paste you bring back from your own chat.
+        </p>
         <p class="muted small">Pick foods you still plan to eat. We’ll copy a prompt with today’s log, targets, remaining macros, and your usual portion ranges.</p>
         <p class="muted small">New dish? Add it under Foods → AI paste first, then pick it here.</p>
+        <div class="col-actions">
+          <button id="btn-gap-intro-ok" class="btn full" type="button">Continue</button>
+          <button id="btn-gap-intro-cancel" class="btn ghost full" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <div id="gap-step-select" hidden>
         <p class="muted small" id="gap-remaining-blurb"></p>
         <input id="gap-food-search" type="search" placeholder="Search foods" aria-label="Search foods for gap plan">
-        <div id="gap-select-list" class="sheet-list gap-select-list"></div>
+        <div class="gap-select-buckets">
+          <div class="gap-select-bucket">
+            <div class="meal-label">Foods</div>
+            <div id="gap-foods-list" class="sheet-list gap-select-bucket-list"></div>
+          </div>
+          <div class="gap-select-bucket">
+            <div class="meal-label" id="gap-selected-label">Selected (0)</div>
+            <div id="gap-selected-list" class="sheet-list gap-select-bucket-list"></div>
+          </div>
+        </div>
         <div class="col-actions">
           <button id="btn-gap-to-prompt" class="btn full" type="button" disabled>Continue with selected</button>
           <button id="btn-gap-select-cancel" class="btn ghost full" type="button">Cancel</button>

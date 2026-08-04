@@ -2773,13 +2773,14 @@ const UI = (() => {
    * opts.queryActive: true when a search string is present (show empty results under selected).
    */
   function renderGapSelectList(rows, opts) {
-    const root = $("#gap-select-list");
-    if (!root) return;
+    const foodsRoot = $("#gap-foods-list");
+    const selectedRoot = $("#gap-selected-list");
+    const selectedLabel = $("#gap-selected-label");
+    if (!foodsRoot || !selectedRoot) return;
     const queryActive = !!(opts && opts.queryActive);
-    if (!rows || !rows.length) {
-      root.innerHTML = `<div class="empty small">No foods match. Add foods to My Foods or search the catalog.</div>`;
-      return;
-    }
+    const list = rows || [];
+    const selected = list.filter((r) => r.selected);
+    const rest = list.filter((r) => !r.selected);
     const rowHtml = (r) => `
       <button type="button" class="gap-select-row${r.selected ? " selected" : ""}" data-action="gap-toggle" data-key="${esc(r.key)}">
         <input type="checkbox" tabindex="-1" ${r.selected ? "checked" : ""} aria-hidden="true">
@@ -2788,20 +2789,17 @@ const UI = (() => {
           <div class="r-qty">${esc(r.sub || "")}</div>
         </div>
       </button>`;
-    const selected = rows.filter((r) => r.selected);
-    const rest = rows.filter((r) => !r.selected);
-    let html = "";
     if (rest.length) {
-      if (selected.length) html += `<div class="meal-label">Foods</div>`;
-      html += rest.map(rowHtml).join("");
-    } else if (selected.length && queryActive) {
-      html += `<div class="empty small">No foods match. Try a different search.</div>`;
+      foodsRoot.innerHTML = rest.map(rowHtml).join("");
+    } else if (queryActive) {
+      foodsRoot.innerHTML = `<div class="empty small">No foods match. Try a different search.</div>`;
+    } else {
+      foodsRoot.innerHTML = `<div class="empty small">No foods match. Add foods to My Foods or search the catalog.</div>`;
     }
-    if (selected.length) {
-      html += `<div class="meal-label">Selected (${selected.length})</div>`;
-      html += selected.map(rowHtml).join("");
-    }
-    root.innerHTML = html;
+    if (selectedLabel) selectedLabel.textContent = `Selected (${selected.length})`;
+    selectedRoot.innerHTML = selected.length
+      ? selected.map(rowHtml).join("")
+      : `<div class="empty small">None yet</div>`;
   }
 
   /**
@@ -2832,10 +2830,12 @@ const UI = (() => {
   }
 
   function showGapStep(step) {
+    const intro = $("#gap-step-intro");
     const select = $("#gap-step-select");
     const prompt = $("#gap-step-prompt");
     const choose = $("#gap-step-choose");
     const plan = $("#gap-step-plan");
+    if (intro) intro.hidden = step !== "intro";
     if (select) select.hidden = step !== "select";
     if (prompt) prompt.hidden = step !== "prompt";
     if (choose) choose.hidden = step !== "choose";
@@ -2851,7 +2851,8 @@ const UI = (() => {
             : "Close the gap";
     }
     const disclaimer = $("#gap-disclaimer");
-    if (disclaimer) disclaimer.hidden = step === "plan";
+    // Intro carries its own copy; select/plan stay compact without the banner.
+    if (disclaimer) disclaimer.hidden = step === "intro" || step === "select" || step === "plan";
   }
 
   /**

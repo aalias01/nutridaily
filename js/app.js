@@ -1238,7 +1238,7 @@ const App = (() => {
     else delete state.gapSelected[key];
     const search = UI.$("#gap-food-search");
     if (selecting) {
-      // Clear search so selected stay visible at the top; remember query for undo
+      // Clear search after a pick; remember query so undo can restore the hit list
       if (search && search.value) {
         refreshGapSelectList._lastQuery = search.value;
         search.value = "";
@@ -1249,8 +1249,30 @@ const App = (() => {
     }
     persistGapDraft("select");
     refreshGapSelectList();
-    const list = UI.$("#gap-select-list");
-    if (list && selecting) list.scrollTop = 0;
+    if (selecting) {
+      const selectedList = UI.$("#gap-selected-list");
+      if (selectedList) {
+        const row = UI.$$("#gap-selected-list [data-action='gap-toggle']")
+          .find((el) => el.dataset.key === key);
+        if (row && typeof row.scrollIntoView === "function") {
+          row.scrollIntoView({ block: "nearest" });
+        } else {
+          selectedList.scrollTop = selectedList.scrollHeight;
+        }
+      }
+    }
+  }
+
+  const GAP_INTRO_SEEN_KEY = "nutridaily.gapIntroSeen";
+
+  function gapIntroSeen() {
+    try { return sessionStorage.getItem(GAP_INTRO_SEEN_KEY) === "1"; }
+    catch (_) { return true; }
+  }
+
+  function markGapIntroSeen() {
+    try { sessionStorage.setItem(GAP_INTRO_SEEN_KEY, "1"); }
+    catch (_) { /* private mode / blocked storage — skip next intros if mark fails */ }
   }
 
   function showGapSheetStep(step) {
@@ -1362,7 +1384,7 @@ const App = (() => {
       if (!restoreGapDraft() && plan) restoreGapSelectionFromPlan(plan, false);
     }
     UI.openSheet("sheet-gap", { noAutofocus: true });
-    showGapSheetStep("select");
+    showGapSheetStep(gapIntroSeen() ? "select" : "intro");
   }
 
   function copyGapPrompt() {
@@ -3754,6 +3776,15 @@ const App = (() => {
         showGapSheetStep("prompt");
       });
     }
+    if (UI.$("#btn-gap-intro-ok")) {
+      UI.$("#btn-gap-intro-ok").addEventListener("click", () => {
+        markGapIntroSeen();
+        showGapSheetStep("select");
+      });
+    }
+    if (UI.$("#btn-gap-intro-cancel")) {
+      UI.$("#btn-gap-intro-cancel").addEventListener("click", () => UI.closeSheet("sheet-gap"));
+    }
     if (UI.$("#btn-gap-select-cancel")) {
       UI.$("#btn-gap-select-cancel").addEventListener("click", () => UI.closeSheet("sheet-gap"));
     }
@@ -3800,8 +3831,9 @@ const App = (() => {
     if (UI.$("#gap-food-search")) {
       UI.$("#gap-food-search").addEventListener("input", () => refreshGapSelectList());
     }
-    if (UI.$("#gap-select-list")) {
-      UI.$("#gap-select-list").addEventListener("click", (e) => {
+    const gapBuckets = UI.$(".gap-select-buckets");
+    if (gapBuckets) {
+      gapBuckets.addEventListener("click", (e) => {
         const btn = e.target.closest("[data-action='gap-toggle']");
         if (!btn) return;
         toggleGapSelect(btn.dataset.key);
