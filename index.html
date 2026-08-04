@@ -670,8 +670,11 @@ END</pre>
         <label>Ingredients (one per line)<textarea id="rev-ingredients" rows="4"></textarea></label>
         <label>Prep<textarea id="rev-prep" rows="2"></textarea></label>
         <label>Notes<textarea id="rev-notes" rows="2"></textarea></label>
-        <details id="rev-ai-refine" class="example-details" hidden>
-          <summary class="muted small">Improve with AI</summary>
+        <details id="rev-ai-refine" class="rev-ai-refine" hidden>
+          <summary>
+            <span class="rev-ai-refine-title">Improve with AI</span>
+            <span class="rev-ai-refine-sub muted">Optional · copy prompt, paste reply</span>
+          </summary>
           <p class="muted small">Copy this food as a prompt, chat with ChatGPT / Claude / any LLM, then paste the <code>NUTRI v1 … END</code> reply back to refill these fields. Nothing is saved until you tap Save food.</p>
           <button id="btn-rev-copy-refine" class="btn ghost full" type="button">Copy refine prompt</button>
           <button id="btn-rev-share-refine" class="btn ghost full" type="button" hidden>Share to AI</button>

@@ -595,6 +595,64 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
   margin-bottom: 6px;
 }
 .rev-optional-measures label { display: block; margin-top: 8px; }
+
+/* Edit-food AI refine: button-shaped disclose control (not muted plain text). */
+.rev-ai-refine {
+  margin: 14px 0 10px;
+}
+.rev-ai-refine[hidden] { display: none !important; }
+.rev-ai-refine > summary {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+  position: relative;
+  padding-right: 36px;
+}
+.rev-ai-refine > summary::-webkit-details-marker,
+.rev-ai-refine > summary::marker { display: none; content: ""; }
+.rev-ai-refine-title {
+  font-weight: 650;
+  font-size: 14px;
+  color: var(--ink);
+}
+.rev-ai-refine-sub {
+  font-size: 12px;
+  font-weight: 500;
+}
+.rev-ai-refine > summary::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-65%) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.rev-ai-refine[open] > summary {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  margin-bottom: 10px;
+}
+.rev-ai-refine[open] > summary::after {
+  transform: translateY(-20%) rotate(225deg);
+}
+.rev-ai-refine > summary:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.rev-ai-refine .btn.full { margin-top: 6px; }
+.rev-ai-refine textarea { margin-top: 10px; }
 #phase-history-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .phase-hist-row {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
