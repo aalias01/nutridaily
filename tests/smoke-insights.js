@@ -2353,9 +2353,11 @@ async function runImportSecurity() {
   const totals = Ledger.totalsFor(today);
   ok(quick.macros.na === null && quick.macros.k === null, "quick kcal stores sodium and potassium as unknown");
   ok(totals.naCoverage === 0 && totals.kCoverage === 0, "quick kcal does not claim electrolyte coverage");
-  ok(/known subtotal.*incomplete/i.test($("#v-sodium").textContent) &&
-      /known subtotal.*incomplete/i.test($("#v-potassium").textContent),
-    "Today labels incomplete sodium and potassium as known subtotals without goal comparisons");
+  ok(/^0 mg\*$/.test($("#v-sodium").textContent.trim()) &&
+      /^0 mg\*$/.test($("#v-potassium").textContent.trim()),
+    "Today labels incomplete sodium and potassium with a short marked value, not an inline sentence");
+  ok(!$("#v-na").hidden && /Sodium 0% and potassium 0% covered by foods with a known amount\./.test($("#v-na").textContent),
+    "the incomplete-coverage explanation moves to a shared footnote instead of wrapping inline");
   $("[data-hud-nutrient='sodium']").click();
   ok(/known subtotal.*not compared with the full limit/i.test($("#today-day-detail").textContent),
     "day detail does not compare incomplete sodium with the full goal");

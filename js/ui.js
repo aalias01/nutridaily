@@ -252,18 +252,26 @@ const UI = (() => {
     set("c", totals.c.mean, goals.carbs, "carbs", "g");
     set("f", totals.f.mean, goals.fat, "fat", "g");
     set("fb", totals.fb.mean, goals.fiber, "fiber", "g");
+    // The full "known subtotal · N% covered · incomplete" sentence used to
+    // live inline in the value column, where it wrapped onto 2-3 lines and
+    // threw off the whole card's row heights. It now collapses to a short
+    // marked value ("0 mg*") with the explanation moved to a single shared
+    // footnote line at the bottom of the card (see naLine below) — same
+    // information, no layout breakage.
     const incompleteMineral = (id, total, coverage) => {
       const fill = $(`#f-${id}`), val = $(`#v-${id}`);
-      if (!fill || !val) return;
+      if (!fill || !val) return null;
       fill.style.width = "0%";
       fill.classList.remove("near", "over");
       val.classList.remove("near", "over");
-      const pct = Number.isFinite(coverage) ? ` · ${Math.round(coverage * 100)}% covered` : "";
-      val.textContent = totals.count ? `${fmt(total)} mg known subtotal${pct} · incomplete` : "—";
+      if (!totals.count) { val.textContent = "—"; return null; }
+      val.textContent = `${fmt(total)} mg*`;
+      return Number.isFinite(coverage) ? Math.round(coverage * 100) : null;
     };
     const sodiumCovered = typeof Phases !== "undefined" && Phases.sodiumCovered(totals);
+    let naFootPct = null;
     if (sodiumCovered) set("sodium", totals.na.mean, goals.sodium, "sodium", "mg");
-    else incompleteMineral("sodium", totals.na.mean, totals.naCoverage);
+    else naFootPct = incompleteMineral("sodium", totals.na.mean, totals.naCoverage);
 
     // Absolute sodium and potassium each use their own coverage. The ratio is
     // stricter: only paired Na+K entries contribute to it.
@@ -271,11 +279,12 @@ const UI = (() => {
     const jointCovered = typeof Phases !== "undefined" && Phases.nakCovered(totals);
     const kFill = $("#f-potassium");
     const kVal = $("#v-potassium");
+    let kFootPct = null;
     if (kFill && kVal) {
       if (potassiumCovered) {
         set("potassium", totals.k.mean, goals.potassium, "potassium", "mg");
       } else {
-        incompleteMineral("potassium", totals.k.mean, totals.kCoverage);
+        kFootPct = incompleteMineral("potassium", totals.k.mean, totals.kCoverage);
       }
     }
     const nakLine = $("#v-nak");
@@ -294,7 +303,18 @@ const UI = (() => {
       }
     }
     const naLine = $("#v-na");
-    if (naLine) naLine.textContent = "";
+    if (naLine) {
+      const parts = [];
+      if (naFootPct != null) parts.push(`Sodium ${naFootPct}%`);
+      if (kFootPct != null) parts.push(`${parts.length ? "potassium" : "Potassium"} ${kFootPct}%`);
+      if (parts.length) {
+        naLine.hidden = false;
+        naLine.textContent = `* ${parts.join(" and ")} covered by foods with a known amount.`;
+      } else {
+        naLine.hidden = true;
+        naLine.textContent = "";
+      }
+    }
   }
 
   const MEALS = ["breakfast", "lunch", "dinner", "snack"];

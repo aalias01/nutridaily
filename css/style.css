@@ -1,5 +1,9 @@
 /* NutriDaily — classic food diary. Theme via data-theme (default light). */
 :root {
+  /* Tells the browser which palette to draw native, unstyled controls in
+     (date-picker popup, spinner buttons, default textarea chrome) so they
+     don't render with a light UA background inside a dark page. */
+  color-scheme: light;
   --bg: #f6f5f1;
   --card: #ffffff;
   --ink: #23282d;
@@ -19,6 +23,7 @@
   --tab-h: 64px;
 }
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #16181b;
   --card: #1f2226;
   --ink: #e8e6e1;
@@ -32,6 +37,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: #16181b;
     --card: #1f2226;
     --ink: #e8e6e1;
@@ -129,7 +135,7 @@ header { display: flex; justify-content: space-between; align-items: flex-start;
 .fill.na { background: #8a7a5c; }
 .fill.near { background: var(--near); }
 .fill.over { background: var(--warn); }
-.sodium-line { width: 100%; margin-top: -4px; display: none; }
+.hud-footnote { width: 100%; margin-top: 4px; line-height: 1.4; }
 
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 10px 0 12px; }
 .view { display: none; flex-direction: column; flex: 1; min-height: 0; position: relative; }
@@ -216,7 +222,9 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .settings-panel .set-label:first-of-type { margin-top: 4px; }
 .settings-panel input[type="text"],
 .settings-panel input[type="number"],
-.settings-panel select {
+.settings-panel input[type="date"],
+.settings-panel select,
+.settings-panel textarea {
   width: 100%; padding: 9px 11px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--card); color: var(--ink); font-size: 16px;
 }
@@ -300,7 +308,7 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
   background: var(--bg); color: var(--ink); font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .sheet-card label { display: block; font-weight: 650; font-size: 13px; margin: 12px 0 5px; }
-.sheet-card input[type="text"], .sheet-card select {
+.sheet-card input[type="text"], .sheet-card input[type="date"], .sheet-card select {
   width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--bg); color: var(--ink); font-size: 16px;
 }
