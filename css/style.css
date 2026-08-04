@@ -281,6 +281,21 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .sheet.open .sheet-card { transform: translateY(0); }
 .sheet-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 4px auto 12px; }
 .sheet-list { max-height: 50dvh; overflow-y: auto; margin-bottom: 10px; }
+/* Fixed sheet height so typing/search result count doesn't resize #sheet-add. */
+#sheet-add .sheet-card {
+  display: flex;
+  flex-direction: column;
+  height: 85dvh;
+  max-height: 85dvh;
+  overflow: hidden;
+}
+#sheet-add .sheet-card > *:not(#pick-list) { flex: 0 0 auto; }
+#sheet-add #pick-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overscroll-behavior: contain;
+}
 .pick-section { margin-bottom: 12px; }
 .pick-hint { margin: 4px 2px 10px; line-height: 1.4; }
 
