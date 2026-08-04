@@ -31,19 +31,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
 <link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-<script>
-  // Apply theme before paint (default light, like Daycells)
-  (function () {
-    try {
-      var s = JSON.parse(localStorage.getItem("nd_settings_v1") || "{}");
-      var t = s.theme || "light";
-      if (t === "auto") document.documentElement.removeAttribute("data-theme");
-      else document.documentElement.setAttribute("data-theme", t);
-    } catch (e) {
-      document.documentElement.setAttribute("data-theme", "light");
-    }
-  })();
-</script>
+<script src="js/boot.js"></script>
 </head>
 <body>
 <div class="shell">
@@ -55,7 +43,7 @@
         <button id="btn-day-prev" class="iconbtn" type="button" aria-label="Previous day">‹</button>
         <div class="day-meta">
           <button type="button" class="day day-btn" id="day-label" title="Jump to today"></button>
-          <button type="button" class="linkbtn day-goals-link" id="btn-day-goals" title="Add a one-day bump on top of phase targets">Day bump</button>
+          <button type="button" class="linkbtn day-goals-link" id="btn-day-goals" title="Plan a calorie adjustment before logging your first food">Energy adjustment</button>
         </div>
         <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
       </div>
@@ -66,19 +54,19 @@
   </header>
 
   <section id="hud" aria-label="Day totals">
-    <div class="kcal-block hud-nut" data-hud-nutrient="kcal" tabindex="0" title="Tap to see where calories came from">
+    <div class="kcal-block hud-nut" data-hud-nutrient="kcal" tabindex="0" role="button" aria-label="Show calorie contributors" title="Tap to see where calories came from">
       <div><span id="v-kcal-big">0</span><span class="kcal-unit"> kcal</span></div>
       <div class="range" id="kcal-range">—</div>
       <div class="bar big"><div class="fill" id="f-kcal"></div></div>
       <div class="m-val small" id="v-kcal"></div>
     </div>
     <div class="macros">
-      <div class="macro hud-nut" data-hud-nutrient="protein" tabindex="0" title="Tap to see where protein came from"><div class="m-top"><span>Protein</span><span class="m-val" id="v-p"></span></div><div class="bar"><div class="fill p" id="f-p"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="carbs" tabindex="0" title="Tap to see where carbs came from"><div class="m-top"><span>Carbs</span><span class="m-val" id="v-c"></span></div><div class="bar"><div class="fill c" id="f-c"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="fat" tabindex="0" title="Tap to see where fat came from"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="fiber" tabindex="0" title="Tap to see where fiber came from"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="sodium" tabindex="0" title="Tap to see where sodium came from"><div class="m-top"><span>Sodium max</span><span class="m-val" id="v-sodium"></span></div><div class="bar"><div class="fill na" id="f-sodium"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="potassium" tabindex="0" title="Tap to see where potassium came from"><div class="m-top"><span>Potassium</span><span class="m-val" id="v-potassium"></span></div><div class="bar"><div class="fill k" id="f-potassium"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="protein" tabindex="0" role="button" aria-label="Show protein contributors" title="Tap to see where protein came from"><div class="m-top"><span>Protein</span><span class="m-val" id="v-p"></span></div><div class="bar"><div class="fill p" id="f-p"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="carbs" tabindex="0" role="button" aria-label="Show carb contributors" title="Tap to see where carbs came from"><div class="m-top"><span>Carbs</span><span class="m-val" id="v-c"></span></div><div class="bar"><div class="fill c" id="f-c"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="fat" tabindex="0" role="button" aria-label="Show fat contributors" title="Tap to see where fat came from"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="fiber" tabindex="0" role="button" aria-label="Show fiber contributors" title="Tap to see where fiber came from"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="sodium" tabindex="0" role="button" aria-label="Show sodium contributors" title="Tap to see where sodium came from"><div class="m-top"><span>Sodium max</span><span class="m-val" id="v-sodium"></span></div><div class="bar"><div class="fill na" id="f-sodium"></div></div></div>
+      <div class="macro hud-nut" data-hud-nutrient="potassium" tabindex="0" role="button" aria-label="Show potassium contributors" title="Tap to see where potassium came from"><div class="m-top"><span>Potassium</span><span class="m-val" id="v-potassium"></span></div><div class="bar"><div class="fill k" id="f-potassium"></div></div></div>
     </div>
     <div class="nak-line small" id="v-nak" hidden></div>
     <div class="sodium-line muted small" id="v-na"></div>
@@ -151,9 +139,10 @@
           <span class="chart-legend" id="trend-legend"></span>
         </div>
         <div class="canvas-wrap">
-          <canvas id="trend-canvas"></canvas>
+          <canvas id="trend-canvas" role="img" aria-label="Intake chart. Exact values and keyboard-accessible days are available below."></canvas>
           <div id="trend-tip" class="chart-tip" hidden></div>
         </div>
+        <div id="trend-data" class="chart-data-region"></div>
         <p id="trend-summary" class="muted"></p>
         <div id="intake-stats" class="stat-grid"></div>
       </section>
@@ -170,9 +159,10 @@
           <span class="chart-legend" id="weight-legend"></span>
         </div>
         <div class="canvas-wrap">
-          <canvas id="weight-canvas"></canvas>
+          <canvas id="weight-canvas" role="img" aria-label="Weight chart. Exact values and keyboard-accessible weigh-in days are available below."></canvas>
           <div id="weight-tip" class="chart-tip" hidden></div>
         </div>
+        <div id="weight-data" class="chart-data-region"></div>
         <p id="weight-summary" class="muted"></p>
         <div id="weight-stats" class="stat-grid"></div>
       </section>
@@ -209,7 +199,7 @@
         </div>
       </section>
 
-      <div id="day-detail"></div>
+      <div id="day-detail" aria-live="polite"></div>
     </section>
 
     <section id="view-settings" class="view">
@@ -251,6 +241,7 @@
             <strong id="phase-current-label">Maintain v1.0</strong>
             <button id="btn-phase-history" class="linkbtn" type="button">Target history</button>
           </div>
+          <p id="target-review-warning" class="banner warn" hidden></p>
           <p class="muted small" id="phase-save-hint">Pick Cut, Maintain, Bulk, or Recomp. Saving changed numbers bumps the version from today.</p>
           <div class="phase-kind-seg seg" id="phase-kind-seg" role="group" aria-label="Phase kind">
             <button type="button" data-phase-kind="cut">Cut</button>
@@ -259,7 +250,7 @@
             <button type="button" data-phase-kind="recomp">Recomp</button>
           </div>
           <div class="goals-grid">
-            <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="800" step="50"></div>
+            <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="1200" max="6000" step="50"></div>
             <div><label class="small muted" for="set-protein">Protein g</label><input id="set-protein" type="number" min="0" step="5"></div>
             <div><label class="small muted" for="set-carbs">Carbs g</label><input id="set-carbs" type="number" min="0" step="5"></div>
             <div><label class="small muted" for="set-fat">Fat g</label><input id="set-fat" type="number" min="0" step="5"></div>
@@ -277,7 +268,7 @@
 
         <label class="set-label">Body profile</label>
         <div class="card-block profile-card">
-          <p class="muted small">Used for AI target recommendations. Age is calculated from date of birth. Stored on this device (and Drive if you sync). Only included when you copy an AI targets prompt.</p>
+          <p class="muted small">Used for AI target recommendations for adults. Automated targets are unavailable under 18; use a pediatric clinician or registered dietitian. Age is calculated from date of birth. Stored on this device (and Drive if you sync). Only included when you copy an AI targets prompt.</p>
           <div class="profile-grid">
             <div>
               <label class="small muted" for="set-dob">Date of birth</label>
@@ -334,7 +325,7 @@
           <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
           <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
         </div>
-        <p class="muted small" style="margin-top:10px"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, day bumps, weight, and goals.</p>
+        <p class="muted small" style="margin-top:10px"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, energy adjustments, weight, and goals.</p>
         <div class="row">
           <button id="btn-clear" class="btn ghost danger" type="button">Clear logs</button>
           <button id="btn-factory-reset" class="btn ghost danger" type="button">Start fresh</button>
@@ -368,7 +359,7 @@
   </nav>
 
   <!-- Add food picker sheet -->
-  <div id="sheet-add" class="sheet" hidden>
+  <div id="sheet-add" class="sheet" hidden aria-label="Add food">
     <div class="sheet-backdrop" data-close="sheet-add"></div>
     <div class="sheet-card">
       <div class="sheet-grab"></div>
@@ -414,12 +405,13 @@
       </div>
       <label class="check-row"><input id="np-copy" type="checkbox" checked> Copy targets from current phase</label>
       <div class="goals-grid" id="np-goals">
-        <div><span class="small muted">Calories</span><input id="np-kcal" type="number" min="800" step="50"></div>
-        <div><span class="small muted">Protein g</span><input id="np-protein" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Carbs g</span><input id="np-carbs" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Fat g</span><input id="np-fat" type="number" min="0" step="5"></div>
-        <div><span class="small muted">Fiber g</span><input id="np-fiber" type="number" min="0" step="1"></div>
-        <div><span class="small muted">Sodium mg</span><input id="np-sodium" type="number" min="0" step="50"></div>
+        <div><label class="small muted" for="np-kcal">Calories</label><input id="np-kcal" type="number" min="1200" max="6000" step="50"></div>
+        <div><label class="small muted" for="np-protein">Protein g</label><input id="np-protein" type="number" min="0" step="5"></div>
+        <div><label class="small muted" for="np-carbs">Carbs g</label><input id="np-carbs" type="number" min="0" step="5"></div>
+        <div><label class="small muted" for="np-fat">Fat g</label><input id="np-fat" type="number" min="0" step="5"></div>
+        <div><label class="small muted" for="np-fiber">Fiber g</label><input id="np-fiber" type="number" min="0" step="1"></div>
+        <div><label class="small muted" for="np-sodium">Sodium mg</label><input id="np-sodium" type="number" min="0" step="50"></div>
+        <div><label class="small muted" for="np-potassium">Potassium mg</label><input id="np-potassium" type="number" min="0" step="100"></div>
       </div>
       <div class="row end">
         <button id="np-cancel" class="btn ghost" type="button">Cancel</button>
@@ -434,7 +426,7 @@
     <div class="sheet-card">
       <div class="sheet-grab"></div>
       <h3>Target history</h3>
-      <p class="muted small">Each save that changes numbers (or kind) is listed here. Delete leftovers you do not need. Past days still use the version that was active then.</p>
+      <p class="muted small">Each save that changes numbers (or kind) is listed here. Only unused versions can be deleted; a version that governed any logged day is kept so past scoring cannot change.</p>
       <div id="phase-revision-list" class="phase-revision-list"></div>
       <div class="row end">
         <button id="rev-close" class="btn ghost" type="button">Close</button>
@@ -449,7 +441,7 @@
       <div class="sheet-grab"></div>
       <h3>AI target recommendations</h3>
       <p class="disclaimer" id="ai-targets-disclaimer">
-        LLM guidance is reference only, not medical advice. Consult a qualified health professional before changing your diet or training, especially if you have a medical condition, take medication, are pregnant, or are under 18.
+        LLM guidance is reference only, not medical advice. Automated targets are unavailable under 18. Consult a clinician or registered dietitian before changing your diet or training if you are pregnant, have kidney/renal disease or another medical condition, or take medication.
       </p>
       <p class="muted small">Uses your selected phase kind (<span id="ai-kind-label">Maintain</span>) plus Body profile and weight. Fill missing fields below or in Settings.</p>
       <p class="muted small" id="ai-missing-hint"></p>
@@ -537,7 +529,7 @@
       </div>
 
       <div id="gap-step-choose" hidden>
-        <p class="muted small">Pick a plan option. Each trades off differently (protein floor vs lowest sodium). Fiber is reported only; sodium lower is better. Reachable means protein met and sodium under the ceiling.</p>
+        <p class="muted small">Pick a plan option. End-of-day totals and safety checks below are recalculated from your selected foods, not trusted from the AI reply. Anything incomplete or outside the checked constraints requires confirmation.</p>
         <div id="gap-choose-warnings" class="banner warn" hidden></div>
         <div id="gap-option-list" class="phase-option-list"></div>
         <div class="col-actions">
@@ -562,26 +554,20 @@
     </div>
   </div>
 
-  <!-- Day bump (signed deltas on phase targets) -->
+  <!-- Planned calorie adjustment (frozen absolute target for today) -->
   <div id="sheet-day-goals" class="sheet" hidden>
     <div class="sheet-backdrop" data-close="sheet-day-goals"></div>
     <div class="sheet-card">
       <div class="sheet-grab"></div>
-      <h3>Bump for this day</h3>
-      <p class="muted small" id="day-goals-blurb">Adds to your phase targets for this day only. Use + for a surplus day, − for a tighter day. Leave blank for no bump.</p>
-      <p class="muted small" id="day-bump-preview"></p>
-      <div class="goals-grid">
-        <div><span class="small muted">Calories ±</span><input id="dg-kcal" type="number" step="50" placeholder="0"></div>
-        <div><span class="small muted">Protein g ±</span><input id="dg-protein" type="number" step="5" placeholder="0"></div>
-        <div><span class="small muted">Carbs g ±</span><input id="dg-carbs" type="number" step="5" placeholder="0"></div>
-        <div><span class="small muted">Fat g ±</span><input id="dg-fat" type="number" step="5" placeholder="0"></div>
-        <div><span class="small muted">Fiber g ±</span><input id="dg-fiber" type="number" step="1" placeholder="0"></div>
-        <div><span class="small muted">Sodium mg ±</span><input id="dg-sodium" type="number" step="50" placeholder="0"></div>
-        <div><span class="small muted">Potassium mg ±</span><input id="dg-potassium" type="number" step="100" placeholder="0"></div>
+      <h3>Energy adjustment</h3>
+      <p class="muted small" id="day-goals-blurb">Plan a calorie adjustment for today before logging. It locks after your first food so the target cannot be changed to fit the result.</p>
+      <p class="muted small" id="energy-adjustment-preview"></p>
+      <div class="goals-grid energy-adjustment-grid">
+        <div><label class="small muted" for="dg-kcal">Planned target</label><input id="dg-kcal" type="number" min="800" max="6000" step="50" placeholder="2200"></div>
       </div>
       <div class="row end">
-        <button id="dg-clear" class="btn ghost" type="button">Clear bump</button>
-        <button id="dg-save" class="btn" type="button">Save</button>
+        <button id="dg-clear" class="btn ghost" type="button">Clear adjustment</button>
+        <button id="dg-save" class="btn" type="button">Save plan</button>
       </div>
     </div>
   </div>
@@ -706,7 +692,7 @@ END</pre>
   </div>
 
   <!-- Food detail sheet -->
-  <div id="sheet-detail" class="sheet" hidden>
+  <div id="sheet-detail" class="sheet" hidden aria-label="Food details">
     <div class="sheet-backdrop" data-close="sheet-detail"></div>
     <div class="sheet-card tall">
       <div class="sheet-grab"></div>
@@ -732,12 +718,15 @@ END</pre>
   </div>
 
   <!-- Onboarding -->
-  <div id="onboarding" class="onboarding" hidden>
+  <div id="onboarding" class="onboarding" role="dialog" aria-modal="true"
+       aria-labelledby="onboarding-title" aria-describedby="onboarding-description" hidden>
     <div class="onb-card">
-      <h2>Your nutrition tracker</h2>
-      <p>Log common foods (banana, eggs, rice…) from the built-in list. No AI needed for those.</p>
-      <p>Homemade dishes: describe them to an LLM (ChatGPT, Claude, etc.), paste the answer here, then log by grams.</p>
-      <p class="muted small">Tracking works fully without signing in. Google Sign-in is optional and only for syncing to your Drive so a cleared browser or second device can restore your log.</p>
+      <h2 id="onboarding-title">Your nutrition tracker</h2>
+      <div id="onboarding-description">
+        <p>Log common foods (banana, eggs, rice…) from the built-in list. No AI needed for those.</p>
+        <p>Homemade dishes: describe them to an LLM (ChatGPT, Claude, etc.), paste the answer here, then log by grams.</p>
+        <p class="muted small">Tracking works fully without signing in. Google Sign-in is optional and only for syncing to your Drive so a cleared browser or second device can restore your log.</p>
+      </div>
       <button id="btn-onb-start" class="btn full" type="button">Add your first food</button>
       <button id="btn-onb-skip" class="linkbtn" type="button">Skip for now</button>
     </div>
@@ -746,6 +735,15 @@ END</pre>
   <div id="info-banner" class="info-banner" hidden role="status"></div>
 
   <div id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<div id="active-tab-blocker" class="active-tab-blocker" role="alertdialog" aria-modal="true"
+     aria-labelledby="active-tab-title" aria-describedby="active-tab-message" hidden>
+  <div class="active-tab-card">
+    <h1 id="active-tab-title" tabindex="-1">NutriDaily is already open</h1>
+    <p id="active-tab-message">Another tab is using this nutrition log. Use that tab, or close it and reload this page.</p>
+    <button id="active-tab-reload" class="btn full" type="button">Reload after closing it</button>
+  </div>
 </div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -764,10 +762,5 @@ END</pre>
 <script src="js/sync.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/app.js"></script>
-<script>
-  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
-  }
-</script>
 </body>
 </html>

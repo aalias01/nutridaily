@@ -47,6 +47,15 @@ const NutriParse = (() => {
     "- Use USDA-style values. Account for oil absorbed and water lost in cooking.\n" +
     "- Sodium and potassium in milligrams. Everything else in grams.\n" +
     "- If you are not reasonably confident about potassium, write Potassium unknown rather than guessing a number.\n" +
+    "- Before you reply, check your own numbers:\n" +
+    "  * Atwater check: 4×protein + 4×carbs + 9×fat (all in grams) should land within about 10% of the\n" +
+    "    kcal you wrote for the same basis (Totals or Per 100 g). If it does not, recompute — don't report\n" +
+    "    a kcal figure that disagrees with your own macros.\n" +
+    "  * Per 100 g of food this high should make you double-check the units or decimal point: kcal above\n" +
+    "    ~900, protein+carbs+fat above 100 g, or potassium above ~3000 mg (a few real foods — dried herbs,\n" +
+    "    instant coffee, cream of tartar, salt substitutes — genuinely do run that high). If after checking\n" +
+    "    it's still correct, keep it and say so in Notes; only fix it if you actually find a units/decimal\n" +
+    "    error.\n" +
     "- No commentary before or after the code block.\n\n" +
     "My dish:\n";
 
@@ -261,7 +270,10 @@ const NutriParse = (() => {
       c: round1((m.c || 0) * factor),
       f: round1((m.f || 0) * factor),
       fb: round1((m.fb || 0) * factor),
-      na: Math.round((m.na || 0) * factor),
+      // Sodium and potassium are nullable: null means "not recorded", while a
+      // numeric zero means a known zero. Coverage is derived downstream from
+      // that distinction, so scaling must preserve it.
+      na: m.na == null ? null : Math.round(m.na * factor),
       // Scaling an unknown must stay unknown, not become 0.
       k: m.k == null ? null : Math.round(m.k * factor),
     };
@@ -365,7 +377,7 @@ const NutriParse = (() => {
         c: per100Parsed.macros.c || 0,
         f: per100Parsed.macros.f || 0,
         fb: per100Parsed.macros.fb || 0,
-        na: per100Parsed.macros.na || 0,
+        na: per100Parsed.present.na ? per100Parsed.macros.na : null,
         // Nullable: absent means unrecorded, not zero.
         k: per100Parsed.present.k ? per100Parsed.macros.k : null,
       };
@@ -382,7 +394,7 @@ const NutriParse = (() => {
         c: totalsParsed.macros.c || 0,
         f: totalsParsed.macros.f || 0,
         fb: totalsParsed.macros.fb || 0,
-        na: totalsParsed.macros.na || 0,
+        na: totalsParsed.present.na ? totalsParsed.macros.na : null,
         k: totalsParsed.present.k ? totalsParsed.macros.k : null,
       }, factor);
       per100 = {
@@ -391,7 +403,7 @@ const NutriParse = (() => {
         c: totalsParsed.present.c ? fromTotals.c : (per100Parsed.present.c ? per100Parsed.macros.c : 0),
         f: totalsParsed.present.f ? fromTotals.f : (per100Parsed.present.f ? per100Parsed.macros.f : 0),
         fb: totalsParsed.present.fb ? fromTotals.fb : (per100Parsed.present.fb ? per100Parsed.macros.fb : 0),
-        na: totalsParsed.present.na ? fromTotals.na : (per100Parsed.present.na ? per100Parsed.macros.na : 0),
+        na: totalsParsed.present.na ? fromTotals.na : (per100Parsed.present.na ? per100Parsed.macros.na : null),
         k: totalsParsed.present.k
           ? fromTotals.k
           : (per100Parsed.present.k ? per100Parsed.macros.k : null),
@@ -407,7 +419,7 @@ const NutriParse = (() => {
 
     if (!per100) {
       rejects.push("Need macros: provide Per 100 g, or Totals plus Batch weight.");
-      per100 = { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: 0, k: null };
+      per100 = { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: null, k: null };
     }
 
     const requiredPresent = (k) => !!(totalsParsed.present[k] || per100Parsed.present[k]);
@@ -419,8 +431,8 @@ const NutriParse = (() => {
       per100.fb = per100.fb || 0;
     }
     if (!per100Parsed.present.na && !totalsParsed.present.na) {
-      warnings.push("Sodium missing — defaulting to 0 (you can edit).");
-      per100.na = per100.na || 0;
+      per100.na = null;
+      warnings.push("Sodium not given — left blank, not zero. Sodium and Na:K scoring wait for enough known data.");
     }
     // Potassium stays null when absent. Defaulting it to 0 the way the other
     // fields do would make an unrecorded food look potassium-free, which drags
@@ -448,16 +460,29 @@ const NutriParse = (() => {
       }
     }
 
-    for (const [k, label] of [["kcal", "kcal"], ["p", "protein"], ["c", "carbs"], ["f", "fat"], ["fb", "fiber"], ["na", "sodium"]]) {
+    for (const [k, label] of [["kcal", "kcal"], ["p", "protein"], ["c", "carbs"], ["f", "fat"], ["fb", "fiber"]]) {
       const v = per100[k];
       if (!Number.isFinite(v) || v < 0) rejects.push(`${label} must be a non-negative number.`);
+    }
+    if (per100.na != null) {
+      if (!Number.isFinite(per100.na) || per100.na < 0) {
+        rejects.push("sodium must be a non-negative number, or left out.");
+      } else if (per100.na > 40000) {
+        // Beyond the practical ceiling of pure table salt (~39,300 mg Na/100 g); that is a unit slip.
+        rejects.push("sodium per 100 g looks impossibly high (over 40000 mg) — check the units.");
+      }
     }
     if (per100.k != null) {
       if (!Number.isFinite(per100.k) || per100.k < 0) {
         rejects.push("potassium must be a non-negative number, or left out.");
+      } else if (per100.k > 60000) {
+        // Beyond the practical ceiling even for concentrated potassium-chloride salt substitutes
+        // (~52,400 mg K/100 g at the pure-compound extreme); that is a unit slip.
+        rejects.push("potassium per 100 g looks impossibly high (over 60000 mg) — check the units.");
       } else if (per100.k > 3000) {
-        // Nothing edible reaches 3 g of potassium per 100 g; that is a unit slip.
-        rejects.push("potassium per 100 g looks impossibly high (over 3000 mg) — check the units.");
+        // Real foods (dried herbs, instant coffee, cream of tartar, salt substitutes) can
+        // legitimately exceed 3000 mg; warn instead of blocking so the value can still be saved.
+        warnings.push("Potassium per 100 g is above the common range (over 3000 mg) — double-check the units before saving.");
       }
     }
     if (per100.kcal > 920) rejects.push("kcal per 100 g exceeds the physical max (~920).");

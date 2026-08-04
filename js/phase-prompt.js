@@ -2,16 +2,38 @@
  * Deterministic only. LLMs live outside the app.
  */
 const PhasePrompt = (() => {
-  const GOAL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium"];
+  const GOAL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium", "potassium"];
   const REQUIRED_KEYS = ["kcal", "protein", "carbs", "fat"];
-  const BOUNDS = {
-    kcal: [800, 6000],
-    protein: [0, 400],
-    carbs: [0, 800],
-    fat: [0, 800],
-    fiber: [0, 150],
-    sodium: [0, 10000],
-  };
+  const PRESERVE_KEYS = ["fiber", "sodium", "potassium"];
+  const LIMITS = Object.freeze({
+    rawChars: 12000,
+    bodyChars: 12000,
+    lines: 200,
+    lineChars: 2000,
+    options: 10,
+    labelChars: 160,
+    reasonChars: 1000,
+    sourceChars: 1000,
+  });
+  const LOCAL_BOUNDS = Object.freeze({
+    kcal: Object.freeze([1200, 6000]),
+    protein: Object.freeze([0, 400]),
+    carbs: Object.freeze([0, 800]),
+    fat: Object.freeze([0, 800]),
+    fiber: Object.freeze([0, 150]),
+    sodium: Object.freeze([0, 10000]),
+    potassium: Object.freeze([0, 10000]),
+  });
+  const LOCAL_ENERGY_POLICY = Object.freeze({
+    atwaterTolerance: 0.20,
+    maxProteinShare: 0.40,
+    minFatShare: 0.20,
+    maxFatShare: 0.45,
+  });
+  const BOUNDS = typeof Phases !== "undefined" && Phases.PERSISTENT_GOAL_BOUNDS
+    ? Phases.PERSISTENT_GOAL_BOUNDS : LOCAL_BOUNDS;
+  const ENERGY_POLICY = typeof Phases !== "undefined" && Phases.PERSISTENT_ENERGY_POLICY
+    ? Phases.PERSISTENT_ENERGY_POLICY : LOCAL_ENERGY_POLICY;
 
   const KIND_BRIEF = {
     cut: "fat-loss / calorie deficit while protecting protein and training",
@@ -67,11 +89,12 @@ const PhasePrompt = (() => {
       "Task:\n" +
       `- Propose exactly 3 daily target options tailored to ${label}.\n` +
       "- Label them Conservative, Balanced, and Aggressive (relative to that goal).\n" +
-      "- For each option give: kcal, protein g, carbs g, fat g, fiber g, sodium mg.\n" +
+      "- For each option give: kcal, protein g, carbs g, fat g, fiber g, sodium mg, potassium mg.\n" +
       "- Plain integers only. No thousands separators (write 2100 not 2,100). No ranges inside the number fields.\n" +
       "- Include a short Reason (why these numbers for this person and goal).\n" +
       "- Include Sources: named equations/guidelines (e.g. Mifflin-St Jeor, ISSN protein guidance).\n" +
       "  Do not invent fake URLs. Prefer well-known position stands and standard equations.\n" +
+      "- Do not infer pregnancy, kidney/renal status, or medication use from missing notes. If Notes mention any of them, avoid aggressive targets and explicitly recommend clinician/dietitian review.\n" +
       "- Flag briefly if inputs look extreme or unsafe.\n\n" +
       "Reply with ONE fenced code block and nothing else, exactly in this format:\n\n" +
       "PHASE v1\n" +
@@ -83,6 +106,7 @@ const PhasePrompt = (() => {
       "Fat: <n>\n" +
       "Fiber: <n>\n" +
       "Sodium: <n>\n" +
+      "Potassium: <n>\n" +
       "Reason: <one or two sentences>\n" +
       "Sources: <semicolon-separated names>\n" +
       "Option: 2 | Balanced\n" +
@@ -112,25 +136,95 @@ const PhasePrompt = (() => {
       const start = m.index + m[0].length;
       const rest = src.slice(start);
       const endMatch = rest.match(/\n\s*END\s*[.!?]?(?:\n|$)/i);
-      const body = (endMatch ? rest.slice(0, endMatch.index) : rest).replace(/^\s*\n/, "");
-      bodies.push({ body, complete: !!endMatch });
-      if (endMatch) re.lastIndex = start + endMatch.index + endMatch[0].length;
-      else break;
+      // A later protocol block cannot lend its END to a truncated PHASE block.
+      const nextBlock = rest.match(/\n\s*(?:PHASE|GAP|NUTRI)\s*v?\d+\b/i);
+      const complete = !!endMatch && (!nextBlock || endMatch.index < nextBlock.index);
+      const endAt = complete
+        ? endMatch.index
+        : nextBlock ? nextBlock.index : rest.length;
+      const body = rest.slice(0, endAt).replace(/^\s*\n/, "");
+      bodies.push({ body, complete });
+      if (complete) re.lastIndex = start + endMatch.index + endMatch[0].length;
     }
     return bodies;
   }
 
   function parseNum(line) {
-    const m = String(line).match(/-?\d+(\.\d+)?/);
-    return m ? Number(m[0]) : NaN;
+    const raw = String(line).trim();
+    if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(raw)) return NaN;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : NaN;
   }
 
-  function parseOneBody(body) {
-    const lines = body.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  /**
+   * Validate a complete persistent target set. The 4/4/9 check catches
+   * internally contradictory AI or manual targets before they reach storage.
+   */
+  function validateGoals(goals) {
+    if (typeof Phases !== "undefined" && typeof Phases.validatePersistentGoals === "function") {
+      return Phases.validatePersistentGoals(goals);
+    }
+    const values = {};
+    const errors = [];
+    const raw = goals && typeof goals === "object" ? goals : {};
+    for (const key of GOAL_KEYS) {
+      const value = raw[key];
+      const missing = value == null || typeof value === "boolean" ||
+        (typeof value === "string" && !value.trim());
+      let n = NaN;
+      if (!missing) {
+        try { n = Number(value); } catch (_) { n = NaN; }
+      }
+      const bounds = BOUNDS[key];
+      if (!Number.isFinite(n)) {
+        errors.push(key + " must be a finite number");
+        continue;
+      }
+      if (n < bounds[0] || n > bounds[1]) {
+        errors.push(key + " must be between " + bounds[0] + " and " + bounds[1]);
+        continue;
+      }
+      values[key] = n;
+    }
+
+    let macroKcal = null;
+    let proteinShare = null;
+    let fatShare = null;
+    if (["kcal", "protein", "carbs", "fat"].every((key) => Number.isFinite(values[key]))) {
+      macroKcal = 4 * values.protein + 4 * values.carbs + 9 * values.fat;
+      proteinShare = 4 * values.protein / values.kcal;
+      fatShare = 9 * values.fat / values.kcal;
+      if (Math.abs(macroKcal - values.kcal) / values.kcal > ENERGY_POLICY.atwaterTolerance) {
+        errors.push("macro calories must be within 20% of stated calories");
+      }
+      if (proteinShare > ENERGY_POLICY.maxProteinShare) {
+        errors.push("protein cannot exceed 40% of stated calories");
+      }
+      if (fatShare < ENERGY_POLICY.minFatShare || fatShare > ENERGY_POLICY.maxFatShare) {
+        errors.push("fat must provide 20–45% of stated calories");
+      }
+    }
+    return { ok: errors.length === 0, errors, macroKcal, proteinShare, fatShare };
+  }
+
+  function parseOneBody(body, currentGoals) {
+    if (body.length > LIMITS.bodyChars) {
+      return { kind: null, options: [], warnings: [], error: `PHASE body exceeds ${LIMITS.bodyChars} characters.` };
+    }
+    const physicalLines = body.split(/\n/);
+    if (physicalLines.length > LIMITS.lines) {
+      return { kind: null, options: [], warnings: [], error: `PHASE body exceeds ${LIMITS.lines} lines.` };
+    }
+    if (physicalLines.some((line) => line.length > LIMITS.lineChars)) {
+      return { kind: null, options: [], warnings: [], error: `PHASE line exceeds ${LIMITS.lineChars} characters.` };
+    }
+    const lines = physicalLines.map((l) => l.trim()).filter(Boolean);
     let kind = null;
     const options = [];
     const warnings = [];
     let cur = null;
+    let optionCount = 0;
+    let error = null;
 
     function pushCur() {
       if (!cur) return;
@@ -140,13 +234,16 @@ const PhasePrompt = (() => {
         cur = null;
         return;
       }
-      if (!Number.isFinite(Number(cur.fiber))) {
-        cur.fiber = 0;
-        warnings.push(`Option ${cur.index}: Fiber missing — defaulted to 0`);
-      }
-      if (!Number.isFinite(Number(cur.sodium))) {
-        cur.sodium = 0;
-        warnings.push(`Option ${cur.index}: Sodium missing — defaulted to 0`);
+      for (const key of PRESERVE_KEYS) {
+        if (Number.isFinite(Number(cur[key]))) continue;
+        const prior = currentGoals && currentGoals[key];
+        if (prior == null || prior === "" || typeof prior === "boolean" || !Number.isFinite(Number(prior))) {
+          warnings.push(`Dropped Option ${cur.index} (${cur.label || "?"}): missing ${key} and no current target was provided`);
+          cur = null;
+          return;
+        }
+        cur[key] = Number(prior);
+        warnings.push(`Option ${cur.index}: ${key} missing — kept current target ${Math.round(Number(prior))}`);
       }
       const goals = {};
       for (const k of GOAL_KEYS) {
@@ -164,6 +261,12 @@ const PhasePrompt = (() => {
         }
         goals[k] = n;
       }
+      const validation = validateGoals(goals);
+      if (!validation.ok) {
+        warnings.push(`Dropped Option ${cur.index} (${cur.label || "?"}): ${validation.errors[0]}`);
+        cur = null;
+        return;
+      }
       options.push({
         index: cur.index,
         label: cur.label || `Option ${cur.index}`,
@@ -178,9 +281,24 @@ const PhasePrompt = (() => {
       const opt = line.match(/^Option:\s*(\d+)\s*(?:\|\s*(.+))?$/i);
       if (opt) {
         pushCur();
+        optionCount += 1;
+        if (optionCount > LIMITS.options) {
+          error = `PHASE body exceeds ${LIMITS.options} options.`;
+          break;
+        }
+        const index = Number(opt[1]);
+        if (!Number.isSafeInteger(index) || index < 1 || index > LIMITS.options) {
+          error = `PHASE option number must be between 1 and ${LIMITS.options}.`;
+          break;
+        }
+        const label = (opt[2] || "").trim();
+        if (label.length > LIMITS.labelChars) {
+          error = `PHASE option label exceeds ${LIMITS.labelChars} characters.`;
+          break;
+        }
         cur = {
-          index: Number(opt[1]),
-          label: (opt[2] || "").trim(),
+          index,
+          label,
           reason: "",
           sources: "",
         };
@@ -193,28 +311,56 @@ const PhasePrompt = (() => {
         continue;
       }
       if (!cur) continue;
-      const kv = line.match(/^(Kcal|Protein|Carbs|Fat|Fiber|Sodium|Reason|Sources):\s*(.*)$/i);
+      const kv = line.match(/^(Kcal|Protein|Carbs|Fat|Fiber|Sodium|Potassium|Reason|Sources):\s*(.*)$/i);
       if (!kv) continue;
       const key = kv[1].toLowerCase();
       const val = kv[2].trim();
-      if (key === "reason") cur.reason = val;
-      else if (key === "sources") cur.sources = val;
+      if (key === "reason") {
+        if (val.length > LIMITS.reasonChars) {
+          error = `PHASE reason exceeds ${LIMITS.reasonChars} characters.`;
+          break;
+        }
+        cur.reason = val;
+      }
+      else if (key === "sources") {
+        if (val.length > LIMITS.sourceChars) {
+          error = `PHASE sources exceed ${LIMITS.sourceChars} characters.`;
+          break;
+        }
+        cur.sources = val;
+      }
       else if (key === "kcal") cur.kcal = parseNum(val);
       else cur[key] = parseNum(val);
     }
+    if (error) return { kind, options: [], warnings, error };
     pushCur();
     return { kind, options, warnings };
   }
 
-  function parsePhaseBlock(text) {
-    const bodies = extractBodies(text);
+  function parsePhaseBlock(text, currentGoals) {
+    const raw = String(text || "");
+    if (raw.length > LIMITS.rawChars) {
+      return { ok: false, complete: false, error: `PHASE paste exceeds ${LIMITS.rawChars} characters.` };
+    }
+    const bodies = extractBodies(raw);
     if (!bodies.length) {
-      return { ok: false, error: "No PHASE v1 block found. Ask the AI to use the PHASE v1 … END format." };
+      return { ok: false, complete: false, error: "No PHASE v1 block found. Ask the AI to use the PHASE v1 … END format." };
+    }
+    const completeBodies = bodies.filter((entry) => entry.complete);
+    if (!completeBodies.length) {
+      return {
+        ok: false,
+        complete: false,
+        error: "Incomplete PHASE v1 block: a standalone END line is required before recommendations can be used.",
+      };
     }
     // Prefer last complete body that yields ≥1 option (prompt template often precedes the reply).
     let best = null;
-    for (let i = bodies.length - 1; i >= 0; i--) {
-      const parsed = parseOneBody(bodies[i].body);
+    for (let i = completeBodies.length - 1; i >= 0; i--) {
+      const parsed = parseOneBody(completeBodies[i].body, currentGoals);
+      if (parsed.error) {
+        return { ok: false, complete: true, error: parsed.error, warnings: parsed.warnings || [] };
+      }
       if (parsed.options.length >= 1) {
         best = parsed;
         break;
@@ -228,10 +374,13 @@ const PhasePrompt = (() => {
         warnings: best ? best.warnings : [],
       };
     }
-    return { ok: true, kind: best.kind, options: best.options, warnings: best.warnings };
+    return { ok: true, complete: true, kind: best.kind, options: best.options, warnings: best.warnings };
   }
 
-  return { buildTargetPrompt, parsePhaseBlock, KIND_BRIEF };
+  return {
+    buildTargetPrompt, parsePhaseBlock, validateGoals,
+    KIND_BRIEF, LIMITS, BOUNDS, ENERGY_POLICY,
+  };
 })();
 
 if (typeof module !== "undefined") module.exports = PhasePrompt;

@@ -20,12 +20,12 @@ const Foods = (() => {
   /** Build a new personal food from a parsed review draft. */
   function createFromDraft(draft, opts) {
     const now = Date.now();
-    const name = String(draft.name || "").trim().slice(0, 80);
+    const name = String(draft.name || "").trim().slice(0, 160);
     const food = {
       id: (opts && opts.id) || uid(),
       name,
       aliases: Array.isArray(draft.aliases) && draft.aliases.length
-        ? draft.aliases.map((a) => String(a).toLowerCase()).slice(0, 20)
+        ? draft.aliases.map((a) => String(a).toLowerCase().slice(0, 160)).slice(0, 50)
         : [name.toLowerCase()],
       cat: draft.cat || "dish",
       per100: { ...draft.per100 },
@@ -60,12 +60,12 @@ const Foods = (() => {
     hist.unshift(snapshot(existing));
     while (hist.length > HISTORY_CAP) hist.pop();
 
-    const name = String(draft.name || existing.name || "").trim().slice(0, 80);
+    const name = String(draft.name || existing.name || "").trim().slice(0, 160);
     return {
       ...existing,
       name,
       aliases: Array.isArray(draft.aliases) && draft.aliases.length
-        ? draft.aliases.map((a) => String(a).toLowerCase()).slice(0, 20)
+        ? draft.aliases.map((a) => String(a).toLowerCase().slice(0, 160)).slice(0, 50)
         : existing.aliases,
       cat: draft.cat || existing.cat || "dish",
       per100: { ...draft.per100 },
@@ -231,8 +231,68 @@ const Foods = (() => {
 
   function per100Close(a, b) {
     if (!a || !b) return false;
-    const keys = ["kcal", "p", "c", "f", "fb", "na"];
-    return keys.every((k) => Math.abs(Number(a[k] || 0) - Number(b[k] || 0)) < 0.15);
+    const keys = ["kcal", "p", "c", "f", "fb", "na", "k"];
+    return keys.every((k) => {
+      const av = a[k], bv = b[k];
+      if (av == null || bv == null) return av == null && bv == null;
+      return Number.isFinite(Number(av)) && Number.isFinite(Number(bv)) &&
+        Math.abs(Number(av) - Number(bv)) < 0.15;
+    });
+  }
+
+  /**
+   * Refresh reference-catalog copies created before the catalog gained new
+   * nutrient fields. Only an untouched version-1 copy is eligible: edits,
+   * history, AI pastes and tombstones are never rewritten. Missing fields are
+   * allowed when deciding whether the old copy still matches, which is what
+   * lets a pre-potassium copy receive the catalog's potassium value.
+   *
+   * The food id and usage metadata are preserved, so ledger snapshots remain
+   * immutable and existing picker history keeps working. This correction is a
+   * pure function of catalogId + the shipped FOOD_DB, so every device
+   * converges on the exact same per100 values independently and
+   * deterministically. `updatedAt` is intentionally left untouched: bumping
+   * it would make a purely local, self-corrective rewrite look like a real
+   * edit and let it win a last-write-wins sync merge against a genuine,
+   * more recent remote edit that hasn't been pulled yet. Because every
+   * device recomputes the same result on its own, there is nothing to
+   * propagate through sync.
+   *
+   * @returns {{foods:Array, changed:boolean}}
+   */
+  function migrateCatalogCopies(list, catalog) {
+    const db = Array.isArray(catalog)
+      ? catalog
+      : (typeof FOOD_DB !== "undefined" && Array.isArray(FOOD_DB) ? FOOD_DB : []);
+    const byId = new Map(db.filter((f) => f && f.id).map((f) => [f.id, f]));
+    let changed = false;
+    const foods = (Array.isArray(list) ? list : []).map((food) => {
+      const ref = food && food.catalogId ? byId.get(food.catalogId) : null;
+      const history = food && Array.isArray(food.history) ? food.history : [];
+      if (!food || !ref || food.deleted || (food.version || 1) !== 1 || history.length ||
+          (food.raw && String(food.raw).trim())) return food;
+
+      const saved = food.per100 || {};
+      const current = ref.per100 || {};
+      const nutrientKeys = ["kcal", "p", "c", "f", "fb", "na", "k"];
+      const stillReference = nutrientKeys.every((key) => {
+        // A field absent from an older catalog copy is unknown provenance, not
+        // a user edit. A present field must still equal the current reference.
+        if (!(key in saved) || saved[key] == null) return true;
+        if (!(key in current) || current[key] == null) return false;
+        return Math.abs(Number(saved[key]) - Number(current[key])) < 0.15;
+      });
+      if (!stillReference) return food;
+
+      const nextPer100 = { ...current };
+      if (per100Close(saved, nextPer100)) return food;
+      changed = true;
+      return {
+        ...food,
+        per100: nextPer100,
+      };
+    });
+    return { foods, changed };
   }
 
   /**
@@ -270,6 +330,7 @@ const Foods = (() => {
   return {
     uid, createFromDraft, applyUpdate, enableCountLogging, tombstone, touchUse, findByName, active,
     fromCatalog, entryFromQty, inferMeal, sortForPicker, recent, frequent, provenance,
+    migrateCatalogCopies,
   };
 })();
 

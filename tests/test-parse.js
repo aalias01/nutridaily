@@ -311,5 +311,61 @@ END.`;
   ok(ed.canSave && !ed.truncated, "END. is accepted as terminator");
 }
 
+console.log("\n[parse] nullable sodium and nutrient plausibility");
+{
+  const missingNa = `NUTRI v1
+Name: Unsalted unknown
+Per 100 g: 100 kcal | P 5 | C 10 | F 3 | Fiber 1 | Potassium 400
+END`;
+  const parsed = NutriParse.parse(missingNa).results[0];
+  ok(parsed.canSave, "food can save when sodium is genuinely unknown");
+  ok(parsed.food.per100.na === null, "missing sodium remains null rather than becoming zero");
+  ok((parsed.warnings || []).some((w) => /Sodium not given|left blank/i.test(w)), "missing sodium is explained to the user");
+
+  const explicitZero = NutriParse.parse(`NUTRI v1
+Name: Known zero sodium
+Per 100 g: 100 kcal | P 5 | C 10 | F 3 | Fiber 1 | Sodium 0 | Potassium 400
+END`).results[0];
+  ok(explicitZero.food.per100.na === 0, "an explicit sodium zero remains a known zero");
+
+  const unknownEntry = FoodMatch.computeMacros({ kcal: 100, p: 5, c: 10, f: 3, fb: 1, k: 400 }, 100);
+  ok(unknownEntry.na === null, "unknown sodium propagates into ledger entry macros");
+  const zeroEntry = FoodMatch.computeMacros({ kcal: 100, p: 5, c: 10, f: 3, fb: 1, na: 0, k: 400 }, 100);
+  ok(zeroEntry.na === 0, "known zero sodium survives macro computation");
+
+  const warnings = FoodMatch.plausibility({
+    name: "Unit-slip food", cat: "dish", grams: 100,
+    macros: { kcal: 100, na: 6000, k: 4000 },
+  });
+  ok(warnings.some((w) => /sodium exceeds 5000 mg/i.test(w)), "entry plausibility checks sodium units");
+  ok(warnings.some((w) => /potassium exceeds 3000 mg/i.test(w)), "entry plausibility checks potassium units");
+}
+
+console.log("\n[foods] untouched catalog migration");
+{
+  const banana = FOOD_DB.find((f) => f.id === "banana");
+  const oldCopy = Foods.fromCatalog(banana);
+  oldCopy.per100 = { ...oldCopy.per100 };
+  delete oldCopy.per100.k;
+  oldCopy.id = "saved-banana";
+  oldCopy.updatedAt = 1;
+  oldCopy.lastUsedAt = 123;
+  oldCopy.useCount = 7;
+
+  const migrated = Foods.migrateCatalogCopies([oldCopy], FOOD_DB);
+  ok(migrated.changed, "pre-potassium reference copy is migrated");
+  ok(migrated.foods[0].per100.k === banana.per100.k, "migration fills the catalog potassium value");
+  ok(migrated.foods[0].id === "saved-banana" && migrated.foods[0].useCount === 7 && migrated.foods[0].lastUsedAt === 123,
+    "migration preserves identity and usage history");
+
+  const edited = { ...oldCopy, per100: { ...oldCopy.per100, p: oldCopy.per100.p + 5 } };
+  const kept = Foods.migrateCatalogCopies([edited], FOOD_DB);
+  ok(!kept.changed && kept.foods[0] === edited, "a version-1 copy whose values were edited is not overwritten");
+
+  const versioned = { ...oldCopy, version: 2, history: [{ version: 1 }] };
+  const keptVersioned = Foods.migrateCatalogCopies([versioned], FOOD_DB);
+  ok(!keptVersioned.changed && keptVersioned.foods[0] === versioned, "versioned/history-bearing catalog edits are preserved");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

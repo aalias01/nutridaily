@@ -34,21 +34,23 @@ For always-connected Drive auth locally, prefer `npx vercel dev` (see Deploy bel
 
 ## What gets tracked
 
-Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium, potassium. Daily goals and rings. Body weight shows a smoothed trend and weekly rate next to the entry field, so a heavy morning doesn't read as a heavy week. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
+Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium, potassium. Daily goals and rings. Before logging your first food, **Energy adjustment** can set today's absolute calorie target from 800–6,000 kcal (for example, for a long training day). The target and its phase baseline are frozen, and the plan stays locked after the first-ever add event even if that food is deleted. Targets below 1,200 kcal show a clinician-supervision warning. Once today has ever been logged, regular phase-target changes begin tomorrow. Energy adjustments never change protein, sodium, potassium, or other nutrient targets. Body weight shows a smoothed trend and weekly rate next to the entry field, so a heavy morning doesn't read as a heavy week. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
 
 ### Sodium and potassium
 
-The kidney handles these two as a coupled system — potassium intake raises how much sodium you excrete — so the **molar Na:K ratio** predicts blood pressure better than either number alone. Unlike most diet metrics, that has direct randomised evidence behind it: a five-year trial of potassium-enriched salt in ~21,000 people found fewer strokes, fewer cardiovascular events, and lower mortality.
+Sodium and potassium both matter for blood pressure, and their **molar Na:K ratio** is a useful supporting signal. It does not replace either nutrient's independent target. A five-year trial of potassium-enriched salt in ~21,000 older, high-risk participants found fewer strokes, cardiovascular events, and deaths; that trial tested a salt substitute in a specific population, not this app's ratio score.
 
-The target is a molar ratio at or below **1.0**. Watch the units — mass and molar ratios differ by a factor of 1.70 because potassium's atomic mass is 70% higher, and mixing them up is the standard error here. The app stores milligrams and shows molar. WHO's 2,000 mg sodium / 3,510 mg potassium works out to 0.97.
+The supporting ratio target is at or below **1.0**, while sodium still has its own ceiling and potassium its own floor. Watch the units — mass and molar ratios differ by a factor of 1.70 because potassium's atomic mass is 70% higher. The app stores milligrams and shows molar. WHO's 2,000 mg sodium / 3,510 mg potassium works out to 0.97.
 
-**Potassium is nullable, and that matters.** A food with no potassium recorded stays blank rather than defaulting to zero, because "contains none" and "not measured" are different claims. Missing potassium doesn't bias the ratio randomly — it always biases it *upward*, since the sodium gets counted and the potassium that came with it doesn't. So the ratio is only shown when at least 80% of a day's calories come from foods with a known value; below that the app says what's missing instead of printing a number guaranteed to look worse than reality.
+**Sodium and potassium are both nullable, and that matters.** A food with either value unrecorded stays blank rather than defaulting to zero, because "contains none" and "not measured" are different claims. Each absolute nutrient has independent completeness. The ratio uses only entries where both Na and K are known, so separately known subsets are never divided. It is shown only when the same paired entries satisfy the app's conservative **80% coverage heuristic**: at least 80% by both calorie share and item share (the lower share wins, so zero-calorie unknown items still count). This 80% cutoff is an app heuristic for honest display, not a clinical guideline.
 
 The card also names which lever to pull, and deliberately not by picking whichever milligram gap is smaller — adding a food is easier to sustain than stripping salt out of meals you already eat. If sodium is already inside its own limit, the gap is on the potassium side regardless of which number looks bigger.
 
-> Food potassium is safe with normal kidney function. Concentrated potassium from salt substitutes or supplements is not, for anyone with reduced kidney function or taking ACE inhibitors, ARBs, or potassium-sparing diuretics. Talk to a doctor before going that route.
+> Kidney disease and medicines such as ACE inhibitors, ARBs, and potassium-sparing diuretics can raise potassium dangerously. Ask a clinician before deliberately increasing potassium or using supplements or potassium salt substitutes.
 
-Targets have shapes, and the app is consistent about them: **protein and fiber are floors** (a minimum — going above is never flagged), **sodium, and the Na:K ratio, are ceilings** (lower is better), **calories, carbs and fat are ranges**. Potassium is a floor too, but it is not scored separately — it is already inside the ratio, and scoring both would count the same behaviour twice. Today flags the moment you pass a number, and says whether you are slightly over or past the tolerance band — the amber zone is exactly what Insights scores as on target.
+Targets have shapes, and the app is consistent about them: **protein, fiber, and potassium are floors** (minimums), **sodium and the Na:K ratio are ceilings** (lower is better), and **calories, carbs and fat are ranges**. The headline has exactly one 10% mineral-composite slot: with joint paired coverage it requires the sodium ceiling, potassium floor, and ratio together; without joint coverage it scores only when both absolute Na and K are independently complete, and then requires both. Otherwise the mineral slot is skipped and the remaining weights are renormalized. Today flags the moment you pass a number, and says whether you are slightly over or past the tolerance band — the amber zone is exactly what Insights scores as on target.
+
+New installations use a configurable generic adult potassium reference of **3,510 mg** (the WHO adult reference), not an individualized prescription. Existing saved targets are preserved; the app does not infer medical personalization.
 
 ## Insights
 
@@ -59,9 +61,9 @@ Everything is derived on device from your own log — no server, no model, no gu
 - **Energy expenditure** — an adaptive TDEE estimate: average intake minus what your weight trend actually did (7700 kcal/kg). Comes with the intake needed to lose 0.5 / 0.25 kg per week, maintain, or gain. Shown only when there is enough data; otherwise the card says exactly what is missing rather than printing a confident-looking number.
 - **Weight** — raw weigh-ins as dots with a gap-aware EMA trend line through them, rate per week from a regression on the weigh-ins, and a 4-week projection.
 - **Consistency** — a calendar heatmap coloured by how each day landed against target, streaks, weekday-versus-weekend logging rates, and a per-nutrient scorecard with under / on-target / over bars.
-- **Breakdown** — macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by any of the six nutrients — the one that finds your sodium is one soup, or your fat is one spoon of peanut butter.
+- **Breakdown** — macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by any of the seven nutrients — the one that finds your sodium is one soup, or your fat is one spoon of peanut butter.
 
-It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), and days where you bumped your target are marked — separating bumps you planned from ones set after the day ended, since a bump moves the target and would otherwise turn an over day into a hit.
+It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), and calorie heatmaps mark days that used a planned energy adjustment. Because the plan locks after the first logged food, it cannot be added later to turn an over-target result into a hit.
 
 Where a previous phase exists, Insights compares it to the current one: score, logging, calorie target, weight rate and target hit rates side by side. Calorie average and weight rate are shown without a verdict, because faster loss is progress in a cut and a problem in a bulk.
 
@@ -71,17 +73,25 @@ Numbers are estimates from logged data. Nothing here is medical advice; talk to 
 
 ## Your data
 
-Lives in this browser. Optional Google Drive backup (`NutriDaily/nutridaily-data.json`). Export / import JSON in Settings.
+Lives in this browser. Optional Google Drive backup in `NutriDaily/` uses one `nutridaily-shard-v4-<writer-id>.json` file per browser installation. Export / import JSON in Settings.
 
 **Editing a food does not rewrite history.** Every log line stores the macros and food version it was saved with, so correcting or changing a recipe applies from that point on — past days stay as they were logged. That is what you want when a recipe genuinely changed; if you had a number wrong all along and want an old day fixed, edit that entry directly on the day.
 
-On the live Vercel deploy, sign-in uses a small auth API that stores a Google **refresh token** in an httpOnly cookie, so Pixel/iPhone home-screen apps can stay connected across reopen without tapping Reconnect. Meals always keep working locally if Drive ever pauses (revoked access, cleared site data, or Google Testing refresh expiry). A Hide on the reconnect banner lasts for the rest of the calendar day.
+New add, amend, remove, and Undo-restore events also store a per-entry causal sequence and parent event. Replay follows that logical chain rather than device clocks; concurrent amendments merge in a canonical order, removal wins a concurrent amendment, and only a later restore starts a live generation again. Older events without causal metadata remain readable through a deterministic fallback: the originating add is anchored first, then the remaining legacy events are ordered by timestamp, event id, and canonical payload.
+
+On the live Vercel deploy, sign-in uses a small auth API that stores a Google **refresh token** in an httpOnly cookie, so Pixel/iPhone home-screen apps can stay connected across reopen without tapping Reconnect. Drive data itself goes directly between the browser and Google. Each installation writes only its own shard; sync reads every recognized shard and deterministically merges them, so devices never PATCH the same file. The old `nutridaily-data.json` is read as migration input but is never modified. Disconnect clears browser credentials first; if the server-cookie logout cannot finish offline, a durable pending marker blocks silent re-auth and retries the logout after connectivity returns. Meals always keep working locally if Drive ever pauses (revoked access, cleared site data, or Google Testing refresh expiry). A Hide on the reconnect banner lasts for the rest of the calendar day.
+
+Clear/import generations are causal privacy boundaries. New records carry the current reset generation, while edits retain the generation of the identity they change; a later reset removes the whole older identity even if a stale device gives a descendant a newer wall clock. A one-time schema-marked migration upgrades released v4 snapshots that predate per-record generations: rows provably older than that snapshot's own reset stay discarded, while its current rows are stamped locally before any cross-device filtering. Once marked, every record and causal event component must exactly match its document generation or the shard is rejected before merge. Legacy generation-zero data still syncs normally before the first reset. Sync tolerates up to five minutes of ordinary device-clock drift. A reset or record clock farther in the future pauses that writer before filtering, local apply, or any Drive write and asks you to correct the device clock.
+
+The browser stores a random 128-bit writer id locally. NutriDaily requires **Web Locks** and claims one origin-wide exclusive app lock before it reads or changes the nutrition log; a second tab stays on a blocking screen instead of racing the first. Browsers without Web Locks fail closed with update/switch-browser guidance. If the browser restores a page from its back/forward cache, that old page is made inert and reloaded before it can resume. Use a current browser and keep one NutriDaily tab open at a time.
+
+Remote applies, imports, Clear logs, and Start fresh use the same rollback boundary: the app snapshots the live values and exact local storage records, writes the replacement data, and commits the privacy-schema marker and then the reset marker last. A failed local write restores the previous ledger, foods, settings, schema marker, and reset marker and does not publish a Drive update.
 
 ## Google Drive setup (full reference)
 
 About five minutes. Free for personal use. On [nutridaily.vercel.app](https://nutridaily.vercel.app), skip to Sign in if you are already a test user.
 
-Forks and your own deploys: leave committed `js/config.js` empty. Create your own OAuth client (steps below), set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `AUTH_SECRET` on Vercel for always-connected sync, or paste a Client ID under Settings → Advanced for the older popup fallback.
+Forks and your own deploys: leave committed `js/config.js` empty. Create your own OAuth client (steps below). Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `AUTH_SECRET` on Vercel for refresh-cookie sign-in, or paste a Client ID under Settings → Advanced for the Google Identity Services popup fallback. Both modes have safe full Drive read/write sync because writers use independent shards; no data-sync backend or extra OAuth scope is required.
 
 ### Create a Client ID
 
@@ -103,8 +113,8 @@ Forks and your own deploys: leave committed `js/config.js` empty. Create your ow
    - `GOOGLE_CLIENT_SECRET` = Client Secret (server-only; used by `/api/auth/*`)
    - `AUTH_SECRET` = a long random string (e.g. `openssl rand -hex 32`) used to encrypt the refresh cookie
    - Redeploy. Do not commit filled `js/config.js`.
-6. Confirm Drive has folder **NutriDaily** / file **nutridaily-data.json**. On another device: same Google account → **Sign in with Google** once.
-7. **Forks / static-only hosts:** without `GOOGLE_CLIENT_SECRET` + `AUTH_SECRET`, Sign in falls back to the older Google Identity Services popup (session access token only; may ask to Reconnect after PWA reopen). Advanced → override Client ID still helps that fallback path.
+6. Confirm Drive has folder **NutriDaily** and a `nutridaily-shard-v4-….json` file. An existing **nutridaily-data.json** may remain as read-only migration input. On another device: same Google account → **Sign in with Google** once.
+7. **Forks / static-only hosts:** without `GOOGLE_CLIENT_SECRET` + `AUTH_SECRET`, Sign in falls back to the older Google Identity Services popup (session access token only; it may ask you to Reconnect after a PWA reopen). Advanced → override Client ID supports full direct Drive read/write sync on a static host.
 
 ### Data Access (scopes)
 
@@ -118,7 +128,7 @@ To register scopes:
 
 ### Testing vs publish
 
-Stay in **Testing** for household use. One Client ID is enough; each person signs in with their own Gmail and gets their own Drive file. Each browser gets its own refresh cookie after Sign in; testers benefit from always-connected sync the same way you do.
+Stay in **Testing** for household use. One Client ID is enough; each person signs in with their own Gmail and gets shards in their own Drive. Each browser gets its own refresh cookie after Sign in; testers benefit from always-connected sync the same way you do.
 
 **Testing refresh tokens:** while the OAuth app stays in Testing, Google may expire refresh tokens after about **7 days**. Users then tap Sign in / Reconnect once more. Publishing the OAuth app (when you are ready) removes that Testing limit.
 
@@ -139,7 +149,7 @@ Local with auth API (`vercel dev`, recommended):
 npx vercel dev
 ```
 
-Use the localhost origin/redirect URI you registered (often `http://localhost:3000`). Static-only `python3 -m http.server 8080` still works for UI work, but Sign in then uses the GIS fallback (no refresh cookie) unless the BFF is running.
+Use the localhost origin/redirect URI you registered (often `http://localhost:3000`). Static-only `python3 -m http.server 8080` also supports full Drive read/write through the GIS popup fallback, but it has no refresh cookie and may require Reconnect after reopening.
 
 ## Troubleshoot
 
@@ -149,6 +159,7 @@ Use the localhost origin/redirect URI you registered (often `http://localhost:30
 - Google did not return a refresh token: Google Account → [Third-party access](https://myaccount.google.com/connections) → remove NutriDaily, then Sign in again (consent must include Drive).
 - **"Google Drive permission was not granted"**: Sign in again and check the Google Drive permission on the consent screen.
 - Drive sync paused after reopen: with BFF env set, reopen should refresh quietly. If it still pauses (Testing ~7-day refresh expiry, cleared site data, or revoked access), meals still save locally; tap **Reconnect**.
+- Too many or malformed Drive shards: NutriDaily fails closed without applying or overwriting anything. Export the local copy, then inspect the `NutriDaily` folder before removing any file.
 - Stale UI after deploy: bump `sw.js` CACHE or hard-refresh (reopen the home-screen app if installed).
 
 ## Tests

@@ -2,7 +2,10 @@
 const UI = (() => {
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => [...document.querySelectorAll(sel)];
-  const fmt = (n) => Math.round(n).toLocaleString("en-US");
+  const fmt = (n) => {
+    const value = Number(n);
+    return Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "—";
+  };
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   let _focusStack = [];
@@ -11,6 +14,51 @@ const UI = (() => {
   let _weightHit = null; // { keys, pad, iw, w, byDay, unit }
   let expandedEntryId = null;
   let expandedDayKey = null;
+  let _modalInert = [];
+
+  function clearModalInert() {
+    for (const row of _modalInert) {
+      if (!row.hadAttribute) row.node.removeAttribute("inert");
+      if ("inert" in row.node) row.node.inert = row.hadProperty;
+      if (row.hadAriaHidden) row.node.setAttribute("aria-hidden", row.ariaHiddenValue);
+      else row.node.removeAttribute("aria-hidden");
+    }
+    _modalInert = [];
+  }
+
+  /** Inert siblings at each ancestor level, never the sheet or its ancestors. */
+  function syncModalInert() {
+    clearModalInert();
+    const id = topSheetId();
+    let current = id && $(`#${id}`);
+    if (!current) return;
+    while (current && current.parentElement) {
+      const parent = current.parentElement;
+      for (const sibling of parent.children) {
+        if (sibling === current || sibling.hasAttribute("inert")) continue;
+        _modalInert.push({
+          node: sibling,
+          hadAttribute: sibling.hasAttribute("inert"),
+          hadProperty: "inert" in sibling ? sibling.inert : false,
+          hadAriaHidden: sibling.hasAttribute("aria-hidden"),
+          ariaHiddenValue: sibling.getAttribute("aria-hidden"),
+        });
+        sibling.setAttribute("inert", "");
+        if ("inert" in sibling) sibling.inert = true;
+        sibling.setAttribute("aria-hidden", "true");
+      }
+      current = parent;
+      if (current === document.body) break;
+    }
+  }
+
+  function focusInsideSheet(sheet, fromEnd, containerOnly) {
+    if (!sheet) return;
+    const nodes = focusablesIn(sheet);
+    const target = !containerOnly && nodes.length ? (fromEnd ? nodes[nodes.length - 1] : nodes[0]) : sheet;
+    if (!target.hasAttribute("tabindex") && target === sheet) target.setAttribute("tabindex", "-1");
+    try { target.focus({ preventScroll: true }); } catch (e) { try { target.focus(); } catch (_e) {} }
+  }
 
   function toast(msg, opts) {
     const el = $("#toast");
@@ -45,28 +93,56 @@ const UI = (() => {
     const isNew = !_sheetStack.includes(id);
     if (isNew) {
       _focusStack.push(document.activeElement);
+      el._returnFocus = document.activeElement;
       _sheetStack.push(id);
     }
     el.hidden = false;
+    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
     el.setAttribute("role", el.getAttribute("role") || "dialog");
     el.setAttribute("aria-modal", "true");
-    requestAnimationFrame(() => {
+    if (!el.getAttribute("aria-label") && !el.getAttribute("aria-labelledby")) {
+      const heading = el.querySelector("h1, h2, h3");
+      if (heading) {
+        if (!heading.id) heading.id = `${id}-title`;
+        el.setAttribute("aria-labelledby", heading.id);
+      }
+    }
+    if (el._openFrame) cancelAnimationFrame(el._openFrame);
+    el._openFrame = requestAnimationFrame(() => {
+      el._openFrame = null;
+      // A save can close a sheet before its opening frame runs (especially in
+      // tests or with keyboard submit). Do not revive a sheet already closed.
+      if (!_sheetStack.includes(id) || el.hidden) return;
       el.classList.add("open");
       // Don't autofocus the picker search — it covers the food list with the mobile keyboard
       const skipFocus = (opts && opts.noAutofocus) || id === "sheet-add";
-      if (skipFocus) return;
+      if (skipFocus) {
+        focusInsideSheet(el, false, true);
+        return;
+      }
       const focusable = el.querySelector("input:not([type=hidden]), button.btn, textarea, select");
       if (focusable) focusable.focus();
+      else focusInsideSheet(el, false);
     });
+    syncModalInert();
+    if ((opts && opts.noAutofocus) || id === "sheet-add") focusInsideSheet(el, false, true);
   }
   function closeSheet(id) {
     const el = typeof id === "string" ? $(`#${id}`) : id;
     if (!el) return;
     const sid = el.id;
+    if (el._openFrame) {
+      cancelAnimationFrame(el._openFrame);
+      el._openFrame = null;
+    }
     const idx = _sheetStack.lastIndexOf(sid);
     // Speculative / duplicate closes must not pop the focus stack
     if (idx < 0) return;
+    const returnFocus = el._returnFocus || _focusStack[idx] || null;
+    el._returnFocus = null;
     _sheetStack.splice(idx, 1);
+    if (idx < _focusStack.length) _focusStack.splice(idx, 1);
+    syncModalInert();
     const shouldRestore = true;
     el.classList.remove("open");
     if (el._hideTimer) clearTimeout(el._hideTimer);
@@ -74,12 +150,53 @@ const UI = (() => {
       el.hidden = true;
       el._hideTimer = null;
       if (!shouldRestore) return;
-      const prev = _focusStack.pop();
-      if (prev && typeof prev.focus === "function" && document.contains(prev)) {
-        try { prev.focus(); } catch (e) {}
+      const top = topSheetId();
+      const topEl = top && $(`#${top}`);
+      // If another modal opened while this one was animating closed, only
+      // restore focus when the original trigger belongs to that modal.
+      if (topEl && (!returnFocus || !topEl.contains(returnFocus))) return;
+      if (returnFocus && typeof returnFocus.focus === "function" && document.contains(returnFocus)) {
+        try { returnFocus.focus(); } catch (e) {}
       }
     }, 200);
   }
+
+  function focusablesIn(el) {
+    return [...el.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter((node) => {
+        const hiddenAncestor = node.closest('[hidden], [aria-hidden="true"]');
+        // The active sheet itself is already checked by the caller. Ignore its
+        // own visibility marker here, but never include a control hidden by an
+        // intermediate multi-step panel.
+        return !hiddenAncestor || hiddenAncestor === el;
+      });
+  }
+
+  // Keep keyboard focus inside the top modal sheet. Escape is handled by the
+  // app, while Tab/Shift+Tab cycle here so focus cannot reach the obscured UI.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const id = topSheetId();
+    const sheet = id && $(`#${id}`);
+    if (!sheet || sheet.hidden) return;
+    const nodes = focusablesIn(sheet);
+    if (!nodes.length) { e.preventDefault(); return; }
+    const first = nodes[0], last = nodes[nodes.length - 1];
+    if (!sheet.contains(document.activeElement) || !nodes.includes(document.activeElement)) {
+      e.preventDefault();
+      focusInsideSheet(sheet, !!e.shiftKey);
+    }
+    else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  // Programmatic focus and assistive-technology navigation can bypass Tab.
+  // Pull escaped focus back into the active dialog immediately.
+  document.addEventListener("focusin", (e) => {
+    const id = topSheetId();
+    const sheet = id && $(`#${id}`);
+    if (!sheet || sheet.hidden || sheet.contains(e.target)) return;
+    focusInsideSheet(sheet, false);
+  });
   function closeAllSheets() {
     [..._sheetStack].reverse().forEach((id) => closeSheet(id));
   }
@@ -98,18 +215,9 @@ const UI = (() => {
 
   function updateHUD(totals, goals) {
     const bumps = goals && goals._bumps;
-    const phase = goals && goals._phase;
     const goalLabel = (resolved, key, unit) => {
       const g = Number(resolved) || 0;
       if (!g) return "";
-      const b = bumps && bumps[key];
-      if (b && phase) {
-        const base = Number(phase[key]) || 0;
-        const sign = b > 0 ? "+" : "";
-        return unit
-          ? `${fmt(g)} (${fmt(base)}${sign}${fmt(b)}) ${unit}`
-          : `${fmt(g)} (${fmt(base)}${sign}${fmt(b)})`;
-      }
       return unit ? `${fmt(g)} ${unit}` : `${fmt(g)}`;
     };
     const set = (id, mean, goal, key, unit) => {
@@ -136,7 +244,7 @@ const UI = (() => {
     const lo = Math.max(0, Math.round(totals.kcal.mean - totals.kcal.sd));
     const hi = Math.round(totals.kcal.mean + totals.kcal.sd);
     const bumpNote = bumps && bumps.kcal
-      ? ` · target ${fmt(goals.kcal)} (${bumps.kcal > 0 ? "+" : ""}${fmt(bumps.kcal)} bump)`
+      ? ` · planned ${fmt(goals.kcal)} kcal (${bumps.kcal > 0 ? "+" : ""}${fmt(bumps.kcal)})`
       : "";
     $("#kcal-range").textContent = totals.count ? `likely ${fmt(lo)}–${fmt(hi)}${bumpNote}` : "—";
     set("kcal", totals.kcal.mean, goals.kcal, "kcal", "");
@@ -144,27 +252,36 @@ const UI = (() => {
     set("c", totals.c.mean, goals.carbs, "carbs", "g");
     set("f", totals.f.mean, goals.fat, "fat", "g");
     set("fb", totals.fb.mean, goals.fiber, "fiber", "g");
-    set("sodium", totals.na.mean, goals.sodium, "sodium", "mg");
+    const incompleteMineral = (id, total, coverage) => {
+      const fill = $(`#f-${id}`), val = $(`#v-${id}`);
+      if (!fill || !val) return;
+      fill.style.width = "0%";
+      fill.classList.remove("near", "over");
+      val.classList.remove("near", "over");
+      const pct = Number.isFinite(coverage) ? ` · ${Math.round(coverage * 100)}% covered` : "";
+      val.textContent = totals.count ? `${fmt(total)} mg known subtotal${pct} · incomplete` : "—";
+    };
+    const sodiumCovered = typeof Phases !== "undefined" && Phases.sodiumCovered(totals);
+    if (sodiumCovered) set("sodium", totals.na.mean, goals.sodium, "sodium", "mg");
+    else incompleteMineral("sodium", totals.na.mean, totals.naCoverage);
 
-    // Potassium and the Na:K ratio. Both stay quiet when the day's potassium
-    // data is too thin to mean anything, rather than showing a number that is
-    // guaranteed to understate potassium.
-    const covered = typeof Phases !== "undefined" && Phases.nakCovered(totals);
+    // Absolute sodium and potassium each use their own coverage. The ratio is
+    // stricter: only paired Na+K entries contribute to it.
+    const potassiumCovered = typeof Phases !== "undefined" && Phases.potassiumCovered(totals);
+    const jointCovered = typeof Phases !== "undefined" && Phases.nakCovered(totals);
     const kFill = $("#f-potassium");
     const kVal = $("#v-potassium");
     if (kFill && kVal) {
-      if (covered) {
+      if (potassiumCovered) {
         set("potassium", totals.k.mean, goals.potassium, "potassium", "mg");
       } else {
-        kFill.style.width = "0%";
-        kFill.classList.remove("near", "over");
-        kVal.classList.remove("near", "over");
-        kVal.textContent = totals.count ? "— add potassium to your foods" : "—";
+        incompleteMineral("potassium", totals.k.mean, totals.kCoverage);
       }
     }
     const nakLine = $("#v-nak");
     if (nakLine) {
-      const ratio = covered ? Phases.naKRatio(totals.na.mean, totals.k.mean) : null;
+      const paired = jointCovered ? Phases.pairedMinerals(totals) : null;
+      const ratio = paired ? Phases.naKRatio(paired.na, paired.k) : null;
       if (ratio == null) {
         nakLine.hidden = true;
         nakLine.textContent = "";
@@ -187,10 +304,13 @@ const UI = (() => {
     return new Date(e.addedTs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   }
 
-  /** Portion-scaled P/C/F/Fb/Na for Today cards and qty preview. */
+  /** Portion-scaled nutrition for Today cards and qty preview. */
   function fmtMacros(m) {
     if (!m) return "";
-    return `P ${m.p} · C ${m.c} · F ${m.f} · Fb ${m.fb} · Na ${fmt(m.na || 0)}`;
+    const amount = (value) => Number.isFinite(Number(value)) ? Number(value) : "?";
+    const na = m.na == null ? "?" : fmt(m.na);
+    const k = m.k == null ? "?" : fmt(m.k);
+    return `P ${amount(m.p)} · C ${amount(m.c)} · F ${amount(m.f)} · Fb ${amount(m.fb)} · Na ${na} · K ${k}`;
   }
 
   /** Newest amend → short "Edited: …" line for the expanded log row. */
@@ -260,7 +380,7 @@ const UI = (() => {
               </div>
               <div class="r-macros">
                 <span class="mini">${fmt(e.macros.kcal)} kcal</span>
-                <span class="mini">P ${e.macros.p}</span>
+                <span class="mini">P ${esc(Number.isFinite(Number(e.macros && e.macros.p)) ? Number(e.macros.p) : "?")}</span>
               </div>
             </div>
           </button>
@@ -422,12 +542,12 @@ const UI = (() => {
       let label = u;
       if (u === "serving" && servG) label = `serving (${Math.round(servG)} g)`;
       if (u === "piece" && pieceG) label = `${noun} (${Math.round(pieceG)} g)`;
-      if (u === "batch" && food.batch) label = `batch (${food.batch.grams} g)`;
-      return `<button type="button" class="uchip${u === unit ? " active" : ""}" data-unit="${u}">${esc(label)}</button>`;
+      if (u === "batch" && food.batch) label = `batch (${fmt(food.batch.grams)} g)`;
+      return `<button type="button" class="uchip${u === unit ? " active" : ""}" data-unit="${esc(u)}" aria-pressed="${u === unit}">${esc(label)}</button>`;
     }).join("");
     const meal = (prefill && prefill.meal) || Foods.inferMeal();
     $("#qty-meals").innerHTML = MEALS.map((m) =>
-      `<button type="button" class="uchip${m === meal ? " active" : ""}" data-meal="${m}">${m}</button>`
+      `<button type="button" class="uchip${m === meal ? " active" : ""}" data-meal="${m}" aria-pressed="${m === meal}">${m}</button>`
     ).join("");
     $("#qty-input").value = prefill && prefill.qty != null ? prefill.qty : hist.qty;
     fillQtySheet._imperial = !!imperial;
@@ -538,14 +658,14 @@ const UI = (() => {
     $("#rev-fb").value = f.per100.fb;
     // Blank means unknown, which is not the same as 0 and must round-trip.
     if ($("#rev-k")) $("#rev-k").value = f.per100.k == null ? "" : f.per100.k;
-    $("#rev-na").value = f.per100.na;
+    $("#rev-na").value = f.per100.na == null ? "" : f.per100.na;
     $("#rev-batch-g").value = (f.batch && f.batch.grams) || "";
     $("#rev-batch-s").value = (f.batch && f.batch.servings) || "";
     const logAs = f.logAs === "piece" || (f.units && f.units.piece && f.logAs !== "grams") ? "piece" : "grams";
     const logRoot = $("#rev-log-as");
     if (logRoot) {
       logRoot.innerHTML = ["grams", "piece"].map((u) =>
-        `<button type="button" class="uchip${u === logAs ? " active" : ""}" data-log-as="${u}">${u === "piece" ? "by count" : "by grams"}</button>`
+        `<button type="button" class="uchip${u === logAs ? " active" : ""}" data-log-as="${u}" aria-pressed="${u === logAs}">${u === "piece" ? "by count" : "by grams"}</button>`
       ).join("");
     }
     $("#rev-piece").value = (f.units && f.units.piece) || "";
@@ -595,7 +715,7 @@ const UI = (() => {
     if (!reasons || !reasons.length) {
       el.hidden = true;
       el.textContent = "";
-      ["#rev-name", "#rev-kcal", "#rev-p", "#rev-c", "#rev-f"].forEach((sel) => {
+      ["#rev-name", "#rev-kcal", "#rev-p", "#rev-c", "#rev-f", "#rev-fb", "#rev-na", "#rev-k"].forEach((sel) => {
         const n = $(sel); if (n) n.classList.remove("field-bad");
       });
       return;
@@ -605,26 +725,37 @@ const UI = (() => {
     const draft = readReviewDraft();
     const mark = (sel, bad) => { const n = $(sel); if (n) n.classList.toggle("field-bad", !!bad); };
     mark("#rev-name", !draft.name);
-    mark("#rev-kcal", draft.per100.kcal < 0 || draft.per100.kcal > 920);
-    mark("#rev-p", draft.per100.p + draft.per100.c + draft.per100.f > 105);
-    mark("#rev-c", draft.per100.p + draft.per100.c + draft.per100.f > 105);
-    mark("#rev-f", draft.per100.p + draft.per100.c + draft.per100.f > 105);
+    const rawBad = (sel) => {
+      const parsed = parseNutrientNumber($(sel) && $(sel).value, { nullable: sel === "#rev-na" || sel === "#rev-k" });
+      return !parsed.ok || (parsed.value != null && parsed.value < 0);
+    };
+    mark("#rev-kcal", rawBad("#rev-kcal") || draft.per100.kcal > 920);
+    const macroMassBad = draft.per100.p + draft.per100.c + draft.per100.f > 105;
+    mark("#rev-p", rawBad("#rev-p") || macroMassBad);
+    mark("#rev-c", rawBad("#rev-c") || macroMassBad);
+    mark("#rev-f", rawBad("#rev-f") || macroMassBad);
+    mark("#rev-fb", rawBad("#rev-fb"));
+    mark("#rev-na", rawBad("#rev-na"));
+    mark("#rev-k", rawBad("#rev-k"));
+  }
+
+  /** Strict review-field parser with well-formed optional thousands commas. */
+  function parseNutrientNumber(value, opts) {
+    const nullable = !!(opts && opts.nullable);
+    const raw = String(value == null ? "" : value).trim();
+    if (!raw) return { ok: true, blank: true, value: nullable ? null : 0 };
+    const plain = /^-?(?:\d+(?:\.\d+)?|\.\d+)$/;
+    const grouped = /^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/;
+    if (!plain.test(raw) && !grouped.test(raw)) return { ok: false, blank: false, value: NaN };
+    const n = Number(raw.replace(/,/g, ""));
+    return Number.isFinite(n)
+      ? { ok: true, blank: false, value: n }
+      : { ok: false, blank: false, value: NaN };
   }
 
   function readReviewDraft(base) {
-    const num = (id) => {
-      const n = Number($(id).value);
-      return Number.isFinite(n) ? n : 0;
-    };
-    /** Blank / missing field → null (unknown), not 0. */
-    const numOrNullField = (id) => {
-      const el = $(id);
-      if (!el) return null;
-      const raw = String(el.value || "").trim();
-      if (!raw) return null;
-      const n = Number(raw);
-      return Number.isFinite(n) && n >= 0 ? n : null;
-    };
+    const num = (id) => parseNutrientNumber($(id) && $(id).value).value;
+    const numOrNullField = (id) => parseNutrientNumber($(id) && $(id).value, { nullable: true }).value;
     const logChip = $("#rev-log-as .uchip.active");
     const logAs = (logChip && logChip.dataset.logAs) || "grams";
     const serving = Number($("#rev-serving").value);
@@ -647,10 +778,8 @@ const UI = (() => {
       cat: $("#rev-cat").value,
       per100: {
         kcal: num("#rev-kcal"), p: num("#rev-p"), c: num("#rev-c"),
-        f: num("#rev-f"), fb: num("#rev-fb"), na: num("#rev-na"),
-        // Blank stays null (unknown). Everything else coerces blank to 0, but
-        // doing that here would claim the food contains no potassium and
-        // silently bias the Na:K ratio upward.
+        f: num("#rev-f"), fb: num("#rev-fb"), na: numOrNullField("#rev-na"),
+        // Blank stays null (unknown); known zero remains an explicit 0.
         k: numOrNullField("#rev-k"),
       },
       units,
@@ -684,8 +813,16 @@ const UI = (() => {
       return t ? `<li>${esc(t)}</li>` : "";
     }).join("");
     const prov = Foods.provenance(food);
-    const batch = food.batch && food.batch.grams
-      ? `<div class="card-block"><b>Batch</b>: ${fmt(food.batch.grams)} g · ${food.batch.servings || 1} servings
+    const nutrientText = (value) => {
+      const n = Number(value);
+      return value != null && Number.isFinite(n) && n >= 0 ? String(n) : "unknown";
+    };
+    const batchGrams = Number(food.batch && food.batch.grams);
+    const batchServings = Number(food.batch && food.batch.servings);
+    const useCount = Number.isFinite(Number(food.useCount)) && Number(food.useCount) >= 0 ? Math.floor(Number(food.useCount)) : 0;
+    const version = Number.isFinite(Number(food.version)) && Number(food.version) >= 1 ? Math.floor(Number(food.version)) : 1;
+    const batch = Number.isFinite(batchGrams) && batchGrams > 0
+      ? `<div class="card-block"><b>Batch</b>: ${fmt(batchGrams)} g · ${fmt(Number.isFinite(batchServings) && batchServings > 0 ? batchServings : 1)} servings
           <button type="button" class="btn ghost full" style="margin-top:8px" data-action="scale-batch" data-id="${esc(food.id)}">Scale batch</button>
         </div>`
       : `<div class="card-block"><button type="button" class="btn ghost full" data-action="scale-batch" data-id="${esc(food.id)}">Set / scale batch</button></div>`;
@@ -701,11 +838,11 @@ const UI = (() => {
     $("#detail-body").innerHTML = `
       <h3>${esc(food.name)}</h3>
       <p class="muted small">${esc(prov.label)}${prov.detail ? " · " + esc(prov.detail) : ""}</p>
-      <p class="muted small">Logged ${food.useCount || 0} times${food.lastUsedAt ? " · last " + new Date(food.lastUsedAt).toLocaleDateString() : ""} · v${food.version || 1}</p>
+      <p class="muted small">Logged ${fmt(useCount)} times${Number.isFinite(Number(food.lastUsedAt)) && Number(food.lastUsedAt) > 0 ? " · last " + esc(new Date(Number(food.lastUsedAt)).toLocaleDateString()) : ""} · v${fmt(version)}</p>
       <div class="card-block">
-        <div><b>Per 100 g</b>: ${fmt(food.per100.kcal)} kcal · P ${food.per100.p} · C ${food.per100.c} · F ${food.per100.f} · Fb ${food.per100.fb} · Na ${food.per100.na}</div>
+        <div><b>Per 100 g</b>: ${fmt(food.per100 && food.per100.kcal)} kcal · P ${esc(nutrientText(food.per100 && food.per100.p))} · C ${esc(nutrientText(food.per100 && food.per100.c))} · F ${esc(nutrientText(food.per100 && food.per100.f))} · Fb ${esc(nutrientText(food.per100 && food.per100.fb))} · Na ${food.per100 && food.per100.na != null ? `${fmt(food.per100.na)} mg` : "unknown"} · K ${food.per100 && food.per100.k != null ? `${fmt(food.per100.k)} mg` : "unknown"}</div>
         ${logHint}
-        ${mServ ? `<div class="muted small" style="margin-top:6px">Optional serving (${serv} g): ${fmt(mServ.kcal)} kcal · P ${mServ.p}</div>` : ""}
+        ${mServ ? `<div class="muted small" style="margin-top:6px">Optional serving (${fmt(serv)} g): ${fmt(mServ.kcal)} kcal · P ${fmt(mServ.p)}</div>` : ""}
       </div>
       ${batch}
       ${ings ? `<div class="card-block"><b>Ingredients</b><ul class="ing-list">${ings}</ul>${food.recipe.prep ? `<p class="small">${esc(food.recipe.prep)}</p>` : ""}</div>` : ""}
@@ -749,6 +886,7 @@ const UI = (() => {
     fat:     { label: "Fat",      unit: " g" },
     fiber:   { label: "Fiber",    unit: " g" },
     sodium:  { label: "Sodium",   unit: " mg" },
+    potassium: { label: "Potassium", unit: " mg" },
   };
 
   function nutMeta(key) { return NUT_META[key] || NUT_META.kcal; }
@@ -806,7 +944,7 @@ const UI = (() => {
   function formatBandDelta(key, avgDelta) {
     if (!Number.isFinite(avgDelta)) return "—";
     const band = bandFor(key);
-    const unit = key === "kcal" ? "" : key === "sodium" ? " mg" : " g";
+    const unit = (key === "kcal" || key === "naK") ? "" : (key === "sodium" || key === "potassium") ? " mg" : " g";
     const mag = `${fmt(Math.abs(avgDelta))}${unit}`;
     const dir = (band && band.dir) || "range";
     if (dir === "ceiling") return avgDelta <= 0 ? `${mag} headroom` : `${mag} over`;
@@ -937,7 +1075,8 @@ const UI = (() => {
     let keys = [];
     let selectedPhase = null;
     if (daysBack === "phase" && typeof Phases !== "undefined") {
-      selectedPhase = Phases.phaseById(settings.phases, phaseId) || Phases.activePhase(settings.phases);
+      selectedPhase = Phases.phaseById(settings.phases, phaseId) ||
+        Phases.phaseForDay(settings.phases, todayKey) || Phases.activePhase(settings.phases);
       if (selectedPhase) keys = Phases.phaseDayKeys(selectedPhase, todayKey);
     }
     if (!keys.length) {
@@ -967,6 +1106,7 @@ const UI = (() => {
       weightKgForDay: (day) =>
         (typeof Phases !== "undefined" ? Phases.weightForDay(settings, day) : null),
       bumpForDay: (day) => (settings.dayGoals && settings.dayGoals[day]) || null,
+      firstAddAt: (day) => Ledger.firstAddAt(day),
     });
     const viewingPastPhase = daysBack === "phase" && !!selectedPhase && selectedPhase.endDay != null;
     const scoreDay = typeof Phases !== "undefined" ? Phases.scoreDayTotals : null;
@@ -978,9 +1118,15 @@ const UI = (() => {
       weightUnit: settings.weightUnit === "kg" ? "kg" : "lb",
       // Today is still in progress; counting it as a miss would be wrong.
       scoreOpts: { todayKey: viewingPastPhase ? null : todayKey },
-      rangeLabel: daysBack === "phase" && selectedPhase ? selectedPhase.name : `${keys.length} days`,
+      rangeLabel: daysBack === "phase" && selectedPhase
+        ? Phases.labelForDay(selectedPhase, selectedPhase.endDay || todayKey)
+        : `${keys.length} days`,
     };
-    ctx.tdee = Analytics.estimateTdee(days);
+    ctx.targetEligibility = typeof Phases !== "undefined" &&
+      typeof Phases.automatedTargetEligibility === "function"
+      ? Phases.automatedTargetEligibility(settings, { todayKey })
+      : { canApply: true, status: "eligible", message: "" };
+    ctx.tdee = Analytics.estimateTdee(days, ctx.scoreOpts);
     ctx.trend = Analytics.trendWeight(days);
     ctx.score = Analytics.nutritionScore(days, scoreDay, ctx.scoreOpts);
     ctx.consistency = ctx.score.consistency;
@@ -1076,6 +1222,55 @@ const UI = (() => {
   }
 
   // ---------------------------------------------------------- intake chart
+
+  function accessibleDate(day) {
+    const d = new Date(`${day}T12:00:00`);
+    return Number.isFinite(d.getTime())
+      ? d.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })
+      : day;
+  }
+
+  function chartDayButton(day, label) {
+    return `<button type="button" class="chart-day-link" data-action="insight-chart-day" data-day="${esc(day)}" aria-label="Open nutrition details for ${esc(accessibleDate(day))}">${esc(label)}</button>`;
+  }
+
+  function renderTrendDataTable(ctx, series, roll, weekly) {
+    const root = $("#trend-data");
+    const canvas = $("#trend-canvas");
+    if (!root) return;
+    const wasOpen = !!root.querySelector("details[open]");
+    const meta = nutMeta(ctx.nutrient);
+    const bt = bandText(ctx.nutrient);
+    const rows = series.map((p, i) => {
+      const status = !p.logged || !Number.isFinite(p.value)
+        ? "Not logged"
+        : (bt[statusFor(ctx.nutrient, p.value, p.goal)] || "Logged");
+      const period = weekly
+        ? `<span>${esc(p.sub || p.key)}</span>`
+        : chartDayButton(p.key, p.sub || p.label || p.key);
+      return `<tr>
+        <th scope="row">${period}</th>
+        <td>${Number.isFinite(p.value) ? `${fmt(p.value)}${esc(meta.unit)}` : "—"}</td>
+        <td>${p.goal ? `${fmt(p.goal)}${esc(meta.unit)}` : "—"}</td>
+        ${weekly ? "" : `<td>${Number.isFinite(roll[i]) ? `${fmt(roll[i])}${esc(meta.unit)}` : "—"}</td>`}
+        <td>${esc(status)}${p.partial ? " · partial week" : ""}</td>
+      </tr>`;
+    }).join("");
+    root.innerHTML = `<details class="chart-data"${wasOpen ? " open" : ""}>
+      <summary id="trend-data-summary">View intake chart data</summary>
+      <div class="chart-table-scroll" tabindex="0" role="region" aria-label="Scrollable intake data table">
+        <table class="chart-data-table">
+          <caption>${esc(meta.label)} ${weekly ? "weekly averages" : "daily values"} for ${esc(ctx.rangeLabel)}</caption>
+          <thead><tr><th scope="col">${weekly ? "Week" : "Day"}</th><th scope="col">${esc(meta.label)}</th><th scope="col">Target</th>${weekly ? "" : '<th scope="col">7-day average</th>'}<th scope="col">Status</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </details>`;
+    if (canvas) {
+      canvas.setAttribute("aria-label", `${meta.label} ${weekly ? "weekly average" : "daily"} chart for ${ctx.rangeLabel}. Use the data table below for exact values${weekly ? "." : " and keyboard-accessible day details."}`);
+      canvas.setAttribute("aria-describedby", "trend-data-summary trend-summary");
+    }
+  }
 
   /**
    * Daily bars (or weekly averages) against the day's own target, with the
@@ -1213,6 +1408,7 @@ const UI = (() => {
       if (!weekly) bits.push(`<span class="lg"><i class="sw sw-roll"></i>7-day avg</span>`);
       legend.innerHTML = bits.join("");
     }
+    renderTrendDataTable(ctx, series, roll, weekly);
   }
 
   /** One-line summary under the intake chart. */
@@ -1270,6 +1466,10 @@ const UI = (() => {
     const root = $("#tdee-card");
     if (!root) return;
     const t = ctx.tdee;
+    const partial = Analytics.partialDays(ctx.days, ctx.scoreOpts);
+    const hasPartial = !!(partial && partial.flagged && partial.flagged.length);
+    const eligibility = ctx.targetEligibility || { canApply: true, message: "" };
+    const allowApply = !!t.actionable && !hasPartial && eligibility.canApply !== false;
     const kcalGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).kcal));
 
     if (t.tdee == null) {
@@ -1281,11 +1481,8 @@ const UI = (() => {
     }
 
     const confLabel = { high: "high confidence", medium: "medium confidence", low: "rough estimate" }[t.confidence] || "";
-    // A margin wider than ~1200 kcal says nothing useful; hide it rather than
-    // dress up noise as precision.
-    const margin = Number.isFinite(t.marginKcal) && t.marginKcal > 0 && t.marginKcal < 1200
-      ? ` ± ${fmt(t.marginKcal)}`
-      : "";
+    // Wide bands are a reason to pause action, not a reason to hide uncertainty.
+    const margin = Number.isFinite(t.marginKcal) ? ` ± ${fmt(t.marginKcal)}` : "";
     const perWeek = Analytics.kgToDisplay(t.kgPerWeek, ctx.weightUnit);
     const dir = Math.abs(t.kgPerWeek) < 0.05 ? "holding steady" : (t.kgPerWeek < 0 ? "losing" : "gaining");
 
@@ -1294,12 +1491,17 @@ const UI = (() => {
       if (target == null) return "";
       const delta = kcalGoal ? target - kcalGoal : null;
       const sub = delta == null ? "" : `${Analytics.fmtSigned(delta)} vs your target`;
+      const targetSupported = Number.isFinite(target) &&
+        target >= Analytics.MIN_AUTOMATED_KCAL && target <= Analytics.MAX_AUTOMATED_KCAL;
       // Already where you want to be — no point offering to set it again.
       const isCurrent = delta != null && Math.abs(delta) < 25;
       const apply = isCurrent
         ? `<span class="muted small rate-current">current</span>`
-        : `<button type="button" class="linkbtn rate-apply" data-action="apply-tdee"
-             data-kcal="${Math.round(target)}" data-label="${esc(label)}">Use</button>`;
+        : (allowApply && targetSupported
+          ? `<button type="button" class="linkbtn rate-apply" data-action="apply-tdee"
+               data-kcal="${Math.round(target)}" data-label="${esc(label)}">Use</button>`
+          : `<span class="muted small rate-current">${targetSupported ? "review only" :
+            (target < Analytics.MIN_AUTOMATED_KCAL ? "below auto floor" : "outside auto range")}</span>`);
       return `<div class="rate-row"><span class="rate-k">${esc(label)}</span>
         <span class="rate-v">${fmt(target)} kcal/day</span>
         ${apply}
@@ -1318,6 +1520,11 @@ const UI = (() => {
         ${rateRow("Maintain", 0)}
         ${rateRow("Gain 0.25 kg/wk", 0.25)}
       </div>
+      ${!allowApply ? `<p class="muted small"><b>Target actions are paused:</b> ${eligibility.canApply === false
+        ? esc(eligibility.message || "profile review is required before applying an automated target.")
+        : hasPartial
+          ? `${partial.flagged.length} unusually low-intake day(s) may be partial logs.`
+          : esc(t.actionReason || "this is still a low-confidence estimate.")} Review the source days before changing targets.</p>` : ""}
       <p class="muted small">Estimates, not prescriptions — expenditure shifts with activity, sleep and time. Recheck it every few weeks.</p>`;
   }
 
@@ -1334,10 +1541,13 @@ const UI = (() => {
       ctx.keys,
       (day) => totalsMap[day],
       ctx.settings,
-      { excludeDay: ctx.scoreOpts.todayKey && !(totalsMap[ctx.todayKey] || {}).count ? ctx.todayKey : null }
+      { excludeDay: ctx.scoreOpts.todayKey || null }
     );
     const calls = Phases.callouts(scorecard);
-    const bal = Phases.kcalBalance(ctx.keys, (day) => totalsMap[day], ctx.settings);
+    const balanceKeys = ctx.scoreOpts.todayKey
+      ? ctx.keys.filter((day) => day !== ctx.scoreOpts.todayKey)
+      : ctx.keys;
+    const bal = Phases.kcalBalance(balanceKeys, (day) => totalsMap[day], ctx.settings);
     const wDelta = ctx.keys.length
       ? Phases.weightDelta(ctx.settings, ctx.keys[0], ctx.keys[ctx.keys.length - 1])
       : null;
@@ -1400,7 +1610,7 @@ const UI = (() => {
    */
   function bandLegend() {
     return `<p class="muted small band-legend">
-      <b>Protein and fiber are floors</b> — a minimum to reach; going above is fine, never flagged.
+      <b>Protein, fiber and potassium are floors</b> — a minimum to reach; going above is fine, never flagged.
       <b>Sodium is a ceiling</b> — lower is better, only going over is flagged.
       <b>Calories, carbs and fat are ranges</b> — either direction counts.
     </p>`;
@@ -1412,8 +1622,12 @@ const UI = (() => {
   function renderHeatmap(ctx) {
     const root = $("#insight-heatmap");
     if (!root) return;
-    const cells = Analytics.heatmapCells(ctx.days, ctx.nutrient, ctx.scoreDay);
-    const bumpDays = new Set(Analytics.bumpAudit(ctx.days).days.map((b) => b.day));
+    const cells = Analytics.heatmapCells(ctx.days, ctx.nutrient, ctx.scoreDay, ctx.scoreOpts);
+    // An energy adjustment only moves the calorie target. Marking that day on
+    // protein, sodium, or potassium heatmaps implies targets that never moved.
+    const bumpDays = ctx.nutrient === "kcal"
+      ? new Set(Analytics.bumpAudit(ctx.days, ctx.scoreOpts).days.map((b) => b.day))
+      : new Set();
     for (const c of cells) c.bumped = bumpDays.has(c.day);
     const weeks = Analytics.heatmapWeeks(cells);
     if (!weeks.length) { root.innerHTML = ""; return; }
@@ -1427,7 +1641,7 @@ const UI = (() => {
         const bt2 = bandText(ctx.nutrient);
         const stateWord = c.logged ? (bt2[c.status] || c.status) : "not logged";
         const title = c.logged
-          ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.bumped ? " · bumped target" : ""}`
+          ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.bumped ? " · planned calorie target" : ""}`
           : `${c.day} · not logged`;
         // Status is carried by shape as well as colour: green/orange alone
         // fails for red-green colour blindness, and this grid has no text or
@@ -1618,13 +1832,15 @@ const UI = (() => {
     const root = $("#top-foods");
     if (!root) return;
     const metric = ctx.topFoodMetric;
-    const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg" }[metric] || "";
+    const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg", potassium: " mg" }[metric] || "";
     const rows = Analytics.topFoods(ctx.keys, (day) => Ledger.entriesFor(day), metric, 6);
     const pills = $("#topfood-metric");
     if (pills) {
-      pills.querySelectorAll("button").forEach((b) =>
-        b.classList.toggle("active", b.dataset.metric === metric)
-      );
+      pills.querySelectorAll("button").forEach((b) => {
+        const on = b.dataset.metric === metric;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
     }
     if (!rows.length) {
       root.innerHTML = `<p class="muted small">Top foods appear as you log.</p>`;
@@ -1641,6 +1857,32 @@ const UI = (() => {
   }
 
   // ------------------------------------------------------------ weight chart
+
+  function renderWeightDataTable(ctx, series, unit) {
+    const root = $("#weight-data");
+    const canvas = $("#weight-canvas");
+    if (!root) return;
+    const wasOpen = !!root.querySelector("details[open]");
+    const rows = series.map((p) => `<tr>
+      <th scope="row">${p.raw != null ? chartDayButton(p.day, accessibleDate(p.day)) : esc(accessibleDate(p.day))}</th>
+      <td>${p.raw == null ? "—" : `${p.raw.toFixed(1)} ${esc(unit)}`}</td>
+      <td>${p.trend == null ? "—" : `${p.trend.toFixed(1)} ${esc(unit)}`}</td>
+    </tr>`).join("");
+    root.innerHTML = `<details class="chart-data"${wasOpen ? " open" : ""}>
+      <summary id="weight-data-summary">View weight chart data</summary>
+      <div class="chart-table-scroll" tabindex="0" role="region" aria-label="Scrollable weight data table">
+        <table class="chart-data-table">
+          <caption>Weigh-ins and smoothed weight trend for ${esc(ctx.rangeLabel)}</caption>
+          <thead><tr><th scope="col">Day</th><th scope="col">Weigh-in</th><th scope="col">Trend</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </details>`;
+    if (canvas) {
+      canvas.setAttribute("aria-label", `Weight and smoothed trend chart for ${ctx.rangeLabel}. Use the data table below for exact values and keyboard-accessible weigh-in day details.`);
+      canvas.setAttribute("aria-describedby", "weight-data-summary weight-summary");
+    }
+  }
 
   /**
    * Raw weigh-ins as dots with the EMA trend line through them. The scale
@@ -1679,6 +1921,7 @@ const UI = (() => {
         ? `<span class="lg"><i class="sw sw-dot"></i>Weigh-in</span><span class="lg"><i class="sw sw-trendline"></i>Trend</span>`
         : "";
     }
+    renderWeightDataTable(ctx, series, unit);
 
     if (anchors.length < 2) {
       summary.textContent = anchors.length === 1
@@ -1792,33 +2035,73 @@ const UI = (() => {
     const logged = Analytics.loggedRows(ctx.days);
     if (!logged.length) { root.hidden = true; root.innerHTML = ""; return; }
 
-    const covered = logged.filter((d) => d.kCovered);
-    const coverage = logged.length ? covered.length / logged.length : 0;
-    const avgCoveragePct = Analytics.mean(logged.map((d) => d.kCoverage || 0)) || 0;
+    const covered = logged.filter((d) => d.jointCovered &&
+      Number.isFinite(d.pairedSodium) && Number.isFinite(d.pairedPotassium));
+    const usableFraction = logged.length ? covered.length / logged.length : 0;
+    const meanPairedCoverage = Analytics.mean(logged.map((d) =>
+      Number.isFinite(d.naKCoverage) ? d.naKCoverage : 0)) ?? 0;
+    // Requiring both prevents many barely-covered days from looking as strong
+    // as a smaller set of genuinely well-covered days (or vice versa).
+    const confidenceEvidence = Math.min(usableFraction, meanPairedCoverage);
+    const goalFor = (row, key, fallback) => {
+      const raw = ((row.goals || {})[key]) ?? fallback;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const constraint = (key, coverageKey, valueKey, fallback) => {
+      const all = logged.map((row) => ({ row, goal: goalFor(row, key, fallback) }));
+      const enabled = all.filter((x) => x.goal > 0);
+      const usable = enabled.filter((x) => x.row[coverageKey] && Number.isFinite(x.row[valueKey]));
+      return {
+        enabled: enabled.length > 0,
+        goal: Analytics.mean(enabled.map((x) => x.goal)) ?? 0,
+        avg: Analytics.mean(usable.map((x) => x.row[valueKey])),
+        n: usable.length,
+      };
+    };
+    // These populations are deliberately independent of ratio usability.
+    // A day can support the sodium ceiling or potassium floor even when it
+    // lacks enough same-entry pairs for the ratio.
+    const sodium = constraint("sodium", "sodiumCovered", "sodium", Phases.DEFAULT_GOALS.sodium);
+    const potassium = constraint("potassium", "potassiumCovered", "potassium", Phases.DEFAULT_GOALS.potassium);
+    const independentText = () => {
+      const na = !sodium.enabled
+        ? "Sodium ceiling disabled."
+        : sodium.avg == null
+          ? `Sodium ceiling ${fmt(sodium.goal)} mg; not enough sodium coverage to assess it.`
+          : `Sodium ${fmt(sodium.avg)} mg/day across ${sodium.n} usable day${sodium.n === 1 ? "" : "s"}; ${sodium.avg <= sodium.goal ? "within" : "above"} the ${fmt(sodium.goal)} mg ceiling.`;
+      const k = !potassium.enabled
+        ? "Potassium floor disabled."
+        : potassium.avg == null
+          ? `Potassium floor ${fmt(potassium.goal)} mg; not enough potassium coverage to assess it.`
+          : `Potassium ${fmt(potassium.avg)} mg/day across ${potassium.n} usable day${potassium.n === 1 ? "" : "s"}; ${potassium.avg >= potassium.goal ? "meets" : "below"} the ${fmt(potassium.goal)} mg floor.`;
+      return `${na} ${k}`;
+    };
     root.hidden = false;
 
     if (!covered.length) {
       root.innerHTML = `
-        <div class="card-head-row"><b>Sodium and potassium</b><span class="conf conf-none">no potassium data</span></div>
-        <p class="muted small">Potassium is not recorded on your foods yet, so the Na:K ratio cannot be computed. Reference foods already carry a value; for your own dishes, re-paste them with a Potassium line or type it into <b>Edit food</b>.</p>
-        <p class="muted small">Only ${Math.round(avgCoveragePct * 100)}% of your logged calories currently come from foods with a potassium value.</p>`;
+        <div class="card-head-row"><b>Sodium and potassium</b><span class="conf conf-none">not enough complete data</span></div>
+        <p class="muted small">The app's 80% paired-coverage heuristic requires both sodium and potassium on the same foods, using the lower of calorie share and item share. Add missing values under <b>Edit food</b>; unknown is kept separate from zero.</p>
+        <p class="muted small">Usable ratio days: 0 of ${logged.length} (0%). Mean within-day paired coverage: ${Math.round(meanPairedCoverage * 100)}%.</p>
+        <p class="muted small">${esc(independentText())}</p>`;
       return;
     }
 
-    const ratios = covered.map((d) => d.naK).filter(Number.isFinite);
-    const avgRatio = Analytics.mean(ratios);
-    const naAvg = Analytics.mean(covered.map((d) => d.sodium));
-    const kAvg = Analytics.mean(covered.map((d) => d.potassium));
-    const kGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).potassium)) || 3400;
-    const target = 1.0;
+    const pairedNaAvg = Analytics.mean(covered.map((d) => d.pairedSodium));
+    const pairedKAvg = Analytics.mean(covered.map((d) => d.pairedPotassium));
+    // One aggregate formula drives both the headline and the lever math.
+    // Averaging daily ratios is not equivalent to a ratio of aggregate intake.
+    const avgRatio = Phases.naKRatio(pairedNaAvg, pairedKAvg);
+    const target = Analytics.mean(covered.map((d) => goalFor(d, "naK", 1.0)).filter((g) => g > 0)) ?? 1.0;
     const status = Phases.classify(avgRatio, target, Phases.BANDS.naK);
 
     // Both levers, and which side the gap is actually on.
     // molar ratio = (Na/22.99)/(K/39.10), so K at target = Na * (39.10/22.99) / target.
-    const kNeeded = naAvg * Phases.NAK_MASS_TO_MOLAR / target;
-    const naNeeded = kAvg * target / Phases.NAK_MASS_TO_MOLAR;
-    const raiseK = Math.max(0, kNeeded - kAvg);
-    const cutNa = Math.max(0, naAvg - naNeeded);
+    const kNeeded = pairedNaAvg * Phases.NAK_MASS_TO_MOLAR / target;
+    const naNeeded = pairedKAvg * target / Phases.NAK_MASS_TO_MOLAR;
+    const raiseK = Math.max(0, kNeeded - pairedKAvg);
+    const cutNa = Math.max(0, pairedNaAvg - naNeeded);
 
     // Deliberately not "whichever number is smaller" — comparing milligrams of
     // sodium against milligrams of potassium treats them as equally hard to
@@ -1826,28 +2109,39 @@ const UI = (() => {
     // removing salt from food you already eat. So the deciding question is
     // whether sodium is already acceptable on its own terms: if it is, the gap
     // is on the potassium side no matter which number looks bigger.
-    const naGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).sodium)) || 2300;
-    const sodiumOk = Phases.classify(naAvg, naGoal, Phases.BANDS.sodium) === "hit";
+    const sodiumUnknown = sodium.enabled && sodium.avg == null;
+    const potassiumUnknown = potassium.enabled && potassium.avg == null;
+    const sodiumMiss = sodium.enabled && sodium.avg != null && sodium.avg > sodium.goal;
+    const potassiumMiss = potassium.enabled && potassium.avg != null && potassium.avg < potassium.goal;
+    const pairedEstimate = `Paired-subtotal estimate: about ${fmt(raiseK)} mg/day more potassium or ${fmt(cutNa)} mg/day less sodium would bring the ratio to ${target.toFixed(1)}.`;
     let lever;
-    if (status === "hit") {
-      lever = `Ratio is at target. Holding it matters more than moving either number further.`;
-    } else if (sodiumOk) {
-      lever = `Sodium is already within its ${fmt(naGoal)} mg limit, so the gap is on the potassium side: about ${fmt(raiseK)} mg/day more would reach the target without cutting any sodium.`;
+    if (sodiumMiss && potassiumMiss) {
+      lever = `Sodium is above its independent ${fmt(sodium.goal)} mg ceiling, and potassium is below its independent ${fmt(potassium.goal)} mg floor. Address both; extra potassium does not cancel a high-sodium day.${status === "hit" ? "" : ` ${pairedEstimate}`}`;
+    } else if (sodiumMiss) {
+      lever = `Sodium is above its independent ${fmt(sodium.goal)} mg ceiling. Lower sodium even if the ratio is at target; extra potassium does not cancel a high-sodium day.${status === "hit" ? "" : ` ${pairedEstimate}`}`;
+    } else if (potassiumMiss) {
+      const floorGap = Math.max(0, potassium.goal - potassium.avg);
+      lever = `Potassium is below its independent ${fmt(potassium.goal)} mg floor by about ${fmt(floorGap)} mg/day on potassium-usable days.${status === "hit" ? "" : ` ${pairedEstimate}`}`;
+    } else if (sodiumUnknown || potassiumUnknown) {
+      lever = `The ratio is available, but at least one enabled independent mineral constraint lacks enough coverage to assess. Add the missing mineral values before treating the card as all-clear.`;
+    } else if (status === "hit") {
+      lever = `The ratio and every enabled independent sodium/potassium constraint are in range. Keep emphasizing ordinary potassium-rich foods and moderate sodium.`;
     } else {
-      lever = `Either would reach the target: about ${fmt(raiseK)} mg/day more potassium, or about ${fmt(cutNa)} mg/day less sodium. Adding tends to stick better than subtracting.`;
+      lever = `The enabled independent sodium/potassium constraints are in range, but the ratio is not. ${pairedEstimate}`;
     }
 
-    const confClass = coverage >= 0.8 ? "conf-high" : coverage >= 0.5 ? "conf-medium" : "conf-low";
-    const confLabel = `${covered.length} of ${logged.length} days covered`;
+    const confClass = confidenceEvidence >= 0.8 ? "conf-high" : confidenceEvidence >= 0.5 ? "conf-medium" : "conf-low";
+    const confLabel = confidenceEvidence >= 0.8 ? "high confidence" : confidenceEvidence >= 0.5 ? "medium confidence" : "low confidence";
 
     root.innerHTML = `
       <div class="card-head-row"><b>Sodium and potassium</b><span class="conf ${confClass}">${esc(confLabel)}</span></div>
       <div class="nak-big ${esc(status)}">${avgRatio.toFixed(2)}<span class="nak-unit"> molar Na:K · target ≤ ${target.toFixed(1)}</span></div>
-      <p class="muted small">Averaging ${fmt(naAvg)} mg sodium and ${fmt(kAvg)} mg potassium on days with enough data. Potassium target ${fmt(kGoal)} mg.</p>
+      <p class="muted small">The ratio uses only same-entry paired subtotals: ${fmt(pairedNaAvg)} mg sodium and ${fmt(pairedKAvg)} mg potassium on usable ratio days. ${esc(independentText())}</p>
+      <p class="muted small">Usable ratio days: ${covered.length} of ${logged.length} (${Math.round(usableFraction * 100)}%). Mean within-day paired coverage: ${Math.round(meanPairedCoverage * 100)}%. Confidence uses the lower of those two signals.</p>
       <p class="small nak-lever">${esc(lever)}</p>
-      <p class="muted small">The ratio matters because the kidney handles the two together: potassium intake increases how much sodium you excrete. It predicts blood pressure better than either number alone, and a randomised trial of potassium-enriched salt found fewer strokes and deaths over five years.</p>
-      <p class="muted small nak-caution"><b>Before using a potassium salt substitute:</b> food potassium is safe with normal kidney function, but concentrated potassium can be dangerous with reduced kidney function or with ACE inhibitors, ARBs, or potassium-sparing diuretics. That is a conversation for your doctor, not an app.</p>
-      ${coverage < 0.8 ? `<p class="muted small">Days without enough potassium data are excluded rather than estimated. Add potassium to more of your foods to widen this.</p>` : ""}`;
+      <p class="muted small">The ratio is a supporting signal, not a replacement for the sodium ceiling or potassium target. Evidence links lower sodium and adequate potassium with better blood-pressure outcomes; the large SSaSS trial specifically tested potassium-enriched salt in an older, high-risk population, not this tracker score.</p>
+      <p class="muted small nak-caution"><b>Potassium safety:</b> kidney disease and medicines such as ACE inhibitors, ARBs, and potassium-sparing diuretics can raise potassium dangerously. Ask a clinician before increasing potassium or using supplements or salt substitutes.</p>
+      ${confidenceEvidence < 0.8 ? `<p class="muted small">Days without enough sodium and potassium data are excluded rather than estimated. Add both values to more foods to widen this.</p>` : ""}`;
   }
 
   /**
@@ -1869,7 +2163,8 @@ const UI = (() => {
 
     const currentPhase = ctx.daysBack === "phase" && ctx.selectedPhase
       ? ctx.selectedPhase
-      : Phases.activePhase(ctx.settings.phases) || phases[phases.length - 1];
+      : Phases.phaseForDay(ctx.settings.phases, ctx.todayKey) ||
+        Phases.activePhase(ctx.settings.phases) || phases[phases.length - 1];
     const idx = phases.findIndex((p) => p.id === currentPhase.id);
     if (idx < 1) return;
     const prevPhase = phases[idx - 1];
@@ -1883,6 +2178,7 @@ const UI = (() => {
         goalsForDay: (day) => Phases.goalsForDay(day, ctx.settings),
         weightKgForDay: (day) => Phases.weightForDay(ctx.settings, day),
         bumpForDay: (day) => (ctx.settings.dayGoals && ctx.settings.dayGoals[day]) || null,
+        firstAddAt: (day) => Ledger.firstAddAt(day),
       });
     };
 
@@ -1899,7 +2195,7 @@ const UI = (() => {
     root.hidden = false;
     root.innerHTML = `
       <div class="card-head-row"><b>vs previous phase</b>
-        <span class="muted small">${esc(prevPhase.name)} → ${esc(currentPhase.name)}</span></div>
+        <span class="muted small">${esc(Phases.labelForDay(prevPhase, prevPhase.endDay || ctx.todayKey))} → ${esc(Phases.labelForDay(currentPhase, currentPhase.endDay || ctx.todayKey))}</span></div>
       <p class="muted small">${prev.loggedDays} logged days then, ${cur.loggedDays} now.</p>
       <ul class="cmp-list">${rows.map((r) => {
         const arrow = r.better === true ? "up" : r.better === false ? "down" : "flat";
@@ -1920,7 +2216,8 @@ const UI = (() => {
     const backBtn = $("#btn-phase-current");
     if (typeof Phases === "undefined") return;
     if (ctxHeader) {
-      const p = ctx.daysBack === "phase" ? ctx.selectedPhase : Phases.activePhase(ctx.settings.phases);
+      const p = ctx.daysBack === "phase" ? ctx.selectedPhase :
+        (Phases.phaseForDay(ctx.settings.phases, ctx.todayKey) || Phases.activePhase(ctx.settings.phases));
       ctxHeader.textContent = Phases.phaseContext(ctx.settings, ctx.todayKey, p);
     }
     if (backBtn) backBtn.hidden = !ctx.viewingPastPhase;
@@ -1935,7 +2232,8 @@ const UI = (() => {
     if (histSum) histSum.textContent = `Phase history (${rows.length})`;
     const selId = ctx.daysBack === "phase" && ctx.selectedPhase
       ? ctx.selectedPhase.id
-      : (Phases.activePhase(ctx.settings.phases) || {}).id;
+      : (Phases.phaseForDay(ctx.settings.phases, ctx.todayKey) ||
+        Phases.activePhase(ctx.settings.phases) || {}).id;
     histList.innerHTML = rows.map((r) => {
       const logs = r.logged ? `${r.logged}/${r.days} logged` : (r.days ? "no logs" : "0 d");
       const bits = [r.rangeLabel, `${r.days} d`, logs];
@@ -1958,15 +2256,19 @@ const UI = (() => {
 
     const nutPills = $("#insight-nutrient");
     if (nutPills) {
-      nutPills.querySelectorAll("button").forEach((b) =>
-        b.classList.toggle("active", b.dataset.nutrient === ctx.nutrient)
-      );
+      nutPills.querySelectorAll("button").forEach((b) => {
+        const on = b.dataset.nutrient === ctx.nutrient;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
     }
     const rollSeg = $("#rollup-seg");
     if (rollSeg) {
-      rollSeg.querySelectorAll("button").forEach((b) =>
-        b.classList.toggle("on", b.dataset.rollup === ctx.rollup)
-      );
+      rollSeg.querySelectorAll("button").forEach((b) => {
+        const on = b.dataset.rollup === ctx.rollup;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
     }
 
     renderPhaseChrome(ctx);
@@ -2131,7 +2433,7 @@ const UI = (() => {
     }
     const metric = o.metric || (_insight && _insight.nutrient) || "kcal";
     const meta = nutMeta(metric);
-    const field = { kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na" }[metric] || "kcal";
+    const field = { kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na", potassium: "k" }[metric] || "kcal";
     const entries = Ledger.entriesFor(dayKey);
     const t = Ledger.totalsFor(dayKey);
     const value = (t[field] && t[field].mean) || 0;
@@ -2152,8 +2454,21 @@ const UI = (() => {
     const dir = (band && band.dir) || "range";
     const goalWord = dir === "ceiling" ? "limit" : dir === "floor" ? "floor" : "target";
     const unitSuffix = metric === "kcal" ? " kcal" : (meta.unit || "");
+    const mineralCoverage = metric === "sodium" ? Number(t.naCoverage)
+      : metric === "potassium" ? Number(t.kCoverage)
+        : null;
+    const mineralComplete = metric === "sodium"
+      ? (typeof Phases !== "undefined" && Phases.sodiumCovered(t))
+      : metric === "potassium"
+        ? (typeof Phases !== "undefined" && Phases.potassiumCovered(t))
+        : true;
     let headLine;
-    if (!goal) {
+    if (!mineralComplete) {
+      const coverageText = Number.isFinite(mineralCoverage)
+        ? ` · ${Math.round(mineralCoverage * 100)}% covered`
+        : "";
+      headLine = `${fmt(value)}${esc(unitSuffix)} known subtotal${coverageText} · incomplete; not compared with the full ${metric === "sodium" ? "limit" : "floor"}`;
+    } else if (!goal) {
       headLine = `${fmt(value)}${esc(unitSuffix)} ${esc(meta.label.toLowerCase())}`;
     } else {
       // formatBandDelta leaves kcal unit-less (scorecard context); give it one here.
@@ -2181,7 +2496,7 @@ const UI = (() => {
     const rows = typeof Analytics !== "undefined"
       ? Analytics.topFoods([dayKey], () => entries, metric, 6)
       : [];
-    const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg" }[metric] || "";
+    const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg", potassium: " mg" }[metric] || "";
     let body;
     if (!rows.length) {
       body = `<p class="muted small">No ${esc(meta.label.toLowerCase())} logged this day.</p>`;
@@ -2218,7 +2533,7 @@ const UI = (() => {
     if (!root) return;
     const m0 = meal || Foods.inferMeal();
     root.innerHTML = MEALS.map((m) =>
-      `<button type="button" class="uchip${m === m0 ? " active" : ""}" data-meal="${m}">${m}</button>`
+      `<button type="button" class="uchip${m === m0 ? " active" : ""}" data-meal="${m}" aria-pressed="${m === m0}">${m}</button>`
     ).join("");
   }
 
@@ -2287,11 +2602,25 @@ const UI = (() => {
   }
 
   function showOnboarding(show) {
-    $("#onboarding").hidden = !show;
+    if (show) {
+      openSheet("onboarding");
+      return;
+    }
+    const el = $("#onboarding");
+    const returnFocus = el && el._returnFocus;
+    closeSheet("onboarding");
+    // Unlike bottom sheets this centered overlay has no exit transition.
+    // Hide and restore synchronously so opening the Add sheet from its primary
+    // button cannot capture a soon-to-be-hidden onboarding control as its
+    // return-focus target.
+    if (el) el.hidden = true;
+    if (returnFocus && typeof returnFocus.focus === "function" && document.contains(returnFocus)) {
+      try { returnFocus.focus(); } catch (e) {}
+    }
   }
 
-  /** Remaining blurb for gap sheet / Today. Fiber = report only; sodium = ceiling headroom. */
-  function formatGapRemaining(remaining, goals) {
+  /** Remaining blurb for gap sheet / Today. Incomplete sodium is a subtotal, never headroom. */
+  function formatGapRemaining(remaining, goals, totals) {
     if (!remaining) return "";
     const bits = [];
     const push = (label, key, unit) => {
@@ -2316,7 +2645,13 @@ const UI = (() => {
     {
       const g = Number(goals && goals.sodium) || 0;
       const r = Number(remaining.sodium);
-      if (g > 0) {
+      const sodiumCovered = !totals || !totals.count ||
+        (typeof Phases !== "undefined" && Phases.sodiumCovered(totals));
+      if (!sodiumCovered) {
+        const known = totals && totals.na ? Number(totals.na.mean) || 0 : Math.max(0, g - (Number.isFinite(r) ? r : g));
+        const pct = Number.isFinite(totals && totals.naCoverage) ? ` · ${Math.round(totals.naCoverage * 100)}% covered` : "";
+        bits.push(`Na ${fmt(known)} mg known subtotal${pct} · incomplete`);
+      } else if (g > 0) {
         if (Number.isFinite(r) && r < 0) bits.push(`Na over ${fmt(Math.abs(r))} mg`);
         else bits.push(`Na room +${fmt(Number.isFinite(r) ? r : g)} mg`);
       } else if (Number.isFinite(r) && r !== 0) {
@@ -2335,7 +2670,7 @@ const UI = (() => {
   }
 
   /** Hard constraint flags for plan projection (protein floor, sodium ceiling). */
-  function planProjectionFlags(projected, goals) {
+  function planProjectionFlags(projected, goals, opts) {
     const flags = [];
     if (!projected) return flags;
     const pFloor = Number(goals && goals.protein) || 0;
@@ -2343,7 +2678,8 @@ const UI = (() => {
     if (pFloor && Phases.classify(projected.protein, pFloor, Phases.BANDS.protein) === "under") {
       flags.push({ id: "p-short", label: "P short" });
     }
-    if (naCap && Phases.classify(projected.sodium, naCap, Phases.BANDS.sodium) === "over") {
+    if ((!opts || opts.sodiumCovered !== false) && naCap &&
+        Phases.classify(projected.sodium, naCap, Phases.BANDS.sodium) === "over") {
       flags.push({ id: "na-over", label: "Na over" });
     }
     return flags;
@@ -2360,13 +2696,15 @@ const UI = (() => {
     const o = opts || {};
     const g = goals || {};
     const lead = o.source === "ai" ? "AI projected end of day" : "With remaining plan";
-    const flagged = new Set(planProjectionFlags(projected, g).map((f) => f.id));
+    const flagged = new Set(planProjectionFlags(projected, g, o).map((f) => f.id));
     const metric = (label, key, unit, flagId) => {
       const v = Number(projected[key]);
       if (!Number.isFinite(v)) return "";
       const goal = Number(g[key]) || 0;
       const hot = flagId && flagged.has(flagId);
-      const val = goal
+      const val = key === "sodium" && o.sodiumCovered === false
+        ? `${fmt(v)} mg known subtotal · incomplete`
+        : goal
         ? `${key === "kcal" ? "~" : ""}${fmt(v)} / ${fmt(goal)}${unit}`
         : `${key === "kcal" ? "~" : ""}${fmt(v)}${unit}`;
       return `<div class="gap-proj-metric${hot ? " flag" : ""}"><span class="gap-proj-k">${esc(label)}</span><span class="gap-proj-v">${esc(val)}</span></div>`;
@@ -2378,6 +2716,7 @@ const UI = (() => {
       metric("F", "fat", " g", null),
       metric("Fb", "fiber", " g", null),
       metric("Sodium", "sodium", " mg", "na-over"),
+      metric("Potassium", "potassium", " mg", null),
     ].filter(Boolean).join("");
     el.hidden = false;
     el.innerHTML = `<div class="gap-proj-lead">${esc(lead)}</div><div class="gap-proj-grid">${grid}</div>`;
@@ -2484,7 +2823,8 @@ const UI = (() => {
   }
 
   /**
-   * options: [{ index, label, reachable, note, summary, itemLines }]
+   * options: [{ index, label, reachable, safe, complete, autoApply,
+   *   reviewReasons, note, summary, itemLines }]
    */
   function renderGapOptions(options) {
     const root = $("#gap-option-list");
@@ -2494,9 +2834,10 @@ const UI = (() => {
       return;
     }
     root.innerHTML = options.map((o, i) => {
-      const reach = o.reachable === false
-        ? `<span class="muted small">Misses protein or exceeds sodium — see note</span>`
-        : `<span class="muted small">Protein + sodium OK</span>`;
+      const reach = o.autoApply
+        ? `<span class="muted small">Local food math passes the checked constraints</span>`
+        : `<span class="muted small">Manual review required — this option is not cleared automatically</span>`;
+      const reasons = (o.reviewReasons || []).map((reason) => `<li>${esc(reason)}</li>`).join("");
       const items = (o.itemLines || []).map((l) => `<li>${esc(l)}</li>`).join("");
       return `
         <div class="phase-option">
@@ -2504,8 +2845,9 @@ const UI = (() => {
           ${reach}
           <p class="muted small">${esc(o.summary || "")}</p>
           ${o.note ? `<p class="small">${esc(o.note)}</p>` : ""}
+          ${reasons ? `<ul class="ing-list gap-review-reasons">${reasons}</ul>` : ""}
           ${items ? `<ul class="ing-list">${items}</ul>` : ""}
-          <button type="button" class="btn full ai-apply-opt" data-action="apply-gap-option" data-opt="${i}">Use this plan</button>
+          <button type="button" class="btn full ai-apply-opt" data-action="apply-gap-option" data-opt="${i}">${o.autoApply ? "Use this plan" : "Review and use"}</button>
         </div>`;
     }).join("");
   }
@@ -2513,7 +2855,7 @@ const UI = (() => {
   return {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
-    showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft,
+    showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft, parseNutrientNumber,
     syncReviewLogAsUI, renderFoodDetail,
     renderInsights, renderTrends, renderWeightTrend,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX,

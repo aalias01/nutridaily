@@ -3,9 +3,23 @@
  * A GAP block may contain 2–3 Option sections (tradeoffs); legacy single-plan blocks still parse.
  */
 const GapPrompt = (() => {
-  const GOAL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium"];
+  const GOAL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium", "potassium"];
   const MEALS = ["breakfast", "lunch", "dinner", "snack"];
-  const TOTAL_KEY = { kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na" };
+  const TOTAL_KEY = { kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na", potassium: "k" };
+  const MINERAL_COVERAGE_MIN = 0.8;
+  const LIMITS = Object.freeze({
+    rawChars: 12000,
+    lines: 200,
+    // Longest persisted field is a 2,000-character Note plus its protocol key.
+    lineChars: 4096,
+    options: 10,
+    labelChars: 160,
+    noteChars: 2000,
+    nameChars: 160,
+    quantity: 1e9,
+    grams: 1e9,
+    nutrient: 1e9,
+  });
 
   const BAND_HINT = {
     kcal: "range, ±10%",
@@ -14,6 +28,7 @@ const GapPrompt = (() => {
     fat: "range, ±15%",
     fiber: "report only, not a hit target",
     sodium: "ceiling only, lower is better; warn if over",
+    potassium: "food-based floor when coverage is adequate; do not suggest supplements or salt substitutes",
   };
 
   function fmtNum(n, digits) {
@@ -80,7 +95,8 @@ const GapPrompt = (() => {
     const p = per100 || {};
     return (
       `${fmtNum(p.kcal)} kcal | P ${fmtNum(p.p, 1)} | C ${fmtNum(p.c, 1)} | F ${fmtNum(p.f, 1)}` +
-      ` | Fiber ${fmtNum(p.fb, 1)} | Sodium ${fmtNum(p.na)} mg (per 100 g)`
+      ` | Fiber ${fmtNum(p.fb, 1)} | Sodium ${p.na == null ? "unknown" : fmtNum(p.na)} mg` +
+      ` | Potassium ${p.k == null ? "unknown" : fmtNum(p.k)} mg (per 100 g)`
     );
   }
 
@@ -97,11 +113,14 @@ const GapPrompt = (() => {
     const day = ctx.day || "";
     const means = ctx.totals && ctx.totals.kcal
       ? totalsMeans(ctx.totals)
-      : (ctx.means || { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sodium: 0 });
+      : (ctx.means || { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sodium: 0, potassium: 0 });
     const goals = ctx.goals || {};
     const remaining = ctx.remaining || remainingFrom(means, goals);
     const logged = Array.isArray(ctx.logged) ? ctx.logged : [];
     const candidates = Array.isArray(ctx.candidates) ? ctx.candidates : [];
+    const sodiumCoverage = Number(ctx.totals && ctx.totals.naCoverage);
+    const sodiumCovered = !ctx.totals || !ctx.totals.count ||
+      !Number.isFinite(sodiumCoverage) || sodiumCoverage >= 0.8;
 
     let loggedBlock = "(nothing logged yet)\n";
     if (logged.length) {
@@ -111,7 +130,8 @@ const GapPrompt = (() => {
         return (
           `- ${e.name}: ${qty} (${e.meal || "snack"}) → ` +
           `${fmtNum(m.kcal)} kcal | P ${fmtNum(m.p, 1)} | C ${fmtNum(m.c, 1)} | F ${fmtNum(m.f, 1)}` +
-          ` | Fiber ${fmtNum(m.fb, 1)} | Sodium ${fmtNum(m.na)}`
+          ` | Fiber ${fmtNum(m.fb, 1)} | Sodium ${m.na == null ? "unknown" : fmtNum(m.na)}` +
+          ` | Potassium ${m.k == null ? "unknown" : fmtNum(m.k)}`
         );
       }).join("\n") + "\n";
     }
@@ -135,10 +155,25 @@ const GapPrompt = (() => {
       else remBits.push(`fiber ${fmtNum(a, 1)} g logged (no target)`);
     }
     {
+      const g = Number(goals.potassium) || 0;
+      const a = Number(means.potassium) || 0;
+      const kCoverage = Number(ctx.totals && ctx.totals.kCoverage);
+      const covered = !ctx.totals || !ctx.totals.count || !Number.isFinite(kCoverage) || kCoverage >= 0.8;
+      if (!(g > 0)) {
+        remBits.push(`potassium ${fmtNum(a)} mg logged (no target set${covered ? "" : "; incomplete data"})`);
+      } else if (!covered) {
+        remBits.push(`potassium ${fmtNum(a)} mg recorded, but coverage is ${fmtNum(kCoverage * 100)}% — treat as incomplete, not a verified shortfall`);
+      } else {
+        remBits.push(`potassium ${fmtNum(a)} of ${fmtNum(g)} mg (${BAND_HINT.potassium})`);
+      }
+    }
+    {
       const g = Number(goals.sodium) || 0;
       const a = Number(means.sodium) || 0;
       const headroom = Number(remaining.sodium) || 0;
-      if (!(g > 0)) {
+      if (!sodiumCovered) {
+        remBits.push(`sodium ${fmtNum(a)} mg known subtotal; coverage is ${fmtNum(sodiumCoverage * 100)}% — incomplete, so do not compare it with the full ceiling`);
+      } else if (!(g > 0)) {
         remBits.push(`sodium ${fmtNum(a)} mg logged (no ceiling set)`);
       } else if (headroom >= 0) {
         remBits.push(`sodium headroom +${fmtNum(headroom)} mg (${BAND_HINT.sodium})`);
@@ -147,6 +182,22 @@ const GapPrompt = (() => {
       }
     }
     const remLine = remBits.join("; ");
+    const sodiumRules = sodiumCovered
+      ? (
+        "- Sodium: ceiling only. Lower is better. Do NOT try to \"reach\" the sodium number.\n" +
+        "  Prefer to stay under the ceiling. Options 1–2 may still overshoot when the candidate set forces it;\n" +
+        "  if projected sodium exceeds the ceiling, warn clearly in Note (e.g. \"Sodium over ceiling by ~X mg\") and set Reachable: no.\n" +
+        "- Reachable: yes means projected protein meets the floor AND projected sodium is at or under the ceiling\n" +
+        "  (or no sodium ceiling is set). Deliberate kcal/carbs/fat drift does not by itself make Reachable: no — describe it in Note.\n" +
+        "- If an option misses the protein floor or breaks the sodium ceiling, set Reachable: no and explain in Note.\n"
+      )
+      : (
+        `- Sodium coverage is only ${fmtNum(sodiumCoverage * 100)}%. Treat every projected sodium value as a known subtotal, not a full-day total.\n` +
+        "  Do NOT calculate sodium headroom or overshoot, compare the subtotal with the full ceiling, or use sodium to decide Reachable.\n" +
+        "- Reachable: yes means projected protein meets the floor. Deliberate kcal/carbs/fat drift does not by itself make Reachable: no.\n" +
+        "  Disclose incomplete sodium in each Note; do not claim that its ceiling passes or fails.\n" +
+        "- If an option misses the protein floor, set Reachable: no and explain in Note.\n"
+      );
 
     let candBlock = "(no candidates selected)\n";
     if (candidates.length) {
@@ -175,13 +226,15 @@ const GapPrompt = (() => {
       "\n" +
       "Totals so far:\n" +
       `- ${fmtNum(means.kcal)} kcal | P ${fmtNum(means.protein, 1)} | C ${fmtNum(means.carbs, 1)}` +
-      ` | F ${fmtNum(means.fat, 1)} | Fiber ${fmtNum(means.fiber, 1)} | Sodium ${fmtNum(means.sodium)}\n\n` +
+      ` | F ${fmtNum(means.fat, 1)} | Fiber ${fmtNum(means.fiber, 1)} | Sodium ${fmtNum(means.sodium)}${sodiumCovered ? "" : " known subtotal (incomplete)"}` +
+      ` | Potassium ${fmtNum(means.potassium)}\n\n` +
       "Daily targets:\n" +
       (Number(goals.kcal) > 0 || Number(goals.protein) > 0
         ? `- ${fmtNum(goals.kcal)} kcal | P ${fmtNum(goals.protein)} | C ${fmtNum(goals.carbs)}` +
           ` | F ${fmtNum(goals.fat)}` +
           ` | Fiber ${fmtNum(goals.fiber)} g (report only)` +
-          ` | Sodium ${fmtNum(goals.sodium)} mg (ceiling — lower is better)\n\n`
+          ` | Sodium ${fmtNum(goals.sodium)} mg (ceiling — lower is better)` +
+          ` | Potassium ${fmtNum(goals.potassium)} mg (food-based floor; only judge when recorded coverage is adequate)\n\n`
         : "- (no kcal/protein targets set — propose sensible portions from history only; say so in Note)\n\n") +
       `Gap / status: ${remLine}\n` +
       "(For kcal/protein/carbs/fat: positive = still to add, negative = already over. Ignore gap math when no target is set.)\n\n" +
@@ -199,13 +252,9 @@ const GapPrompt = (() => {
       "- Prefer each food's preferred portion range when n ≥ 3. Stay near median/last when history is thin.\n" +
       "- Hit rules: protein is a floor; kcal/carbs/fat are soft ranges.\n" +
       "- Fiber: report in Projected only. Do NOT treat fiber as something to hit; fiber shortfalls never make Reachable: no.\n" +
-      "- Sodium: ceiling only. Lower is better. Do NOT try to \"reach\" the sodium number.\n" +
-      "  Prefer to stay under the ceiling. Options 1–2 may still overshoot when the candidate set forces it;\n" +
-      "  if projected sodium exceeds the ceiling, warn clearly in Note (e.g. \"Sodium over ceiling by ~X mg\") and set Reachable: no.\n" +
-      "- Reachable: yes means projected protein meets the floor AND projected sodium is at or under the ceiling\n" +
-      "  (or no sodium ceiling is set). Deliberate kcal/carbs/fat drift that the option's strategy calls for does NOT\n" +
-      "  by itself make Reachable: no — describe it in Note instead.\n" +
-      "- If an option misses the protein floor or breaks the sodium ceiling, set Reachable: no and explain in Note.\n" +
+      sodiumRules +
+      "- Potassium: favor ordinary potassium-rich foods when values are known. Do not suggest supplements or potassium salt substitutes.\n" +
+      "  A potassium shortfall does not by itself make Reachable: no because food data may be incomplete; disclose it in Note.\n" +
       "  Still give honest quantities for that strategy. Do not collapse to a single option when tradeoffs exist.\n" +
       "- Do NOT invent Item lines for foods not listed above. Use each candidate's exact Name.\n" +
       "- Qty MUST include a unit: `120 g` or `2 piece` (never a bare number). No thousands separators (write 1200 not 1,200).\n" +
@@ -223,7 +272,7 @@ const GapPrompt = (() => {
       "Note: <tradeoff in one or two sentences>\n" +
       "Item: <exact candidate name> | <n> g | <meal>\n" +
       "Item: <exact candidate name> | <n> piece | <meal>\n" +
-      "Projected: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg>\n" +
+      "Projected: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg> | Potassium <mg>\n" +
       "Option: 2 | Protect protein\n" +
       "(same fields; may omit some candidates)\n" +
       "Option: 3 | Lowest sodium\n" +
@@ -247,24 +296,20 @@ const GapPrompt = (() => {
     const re = /GAP\s*v?1\b/gi;
     let m;
     let lastComplete = null;
-    let lastAny = null;
     while ((m = re.exec(src))) {
       const start = m.index + m[0].length;
       const rest = src.slice(start);
       const endMatch = rest.match(/\n\s*END\s*[.!?]?(?:\n|$)/i);
-      const body = (endMatch ? rest.slice(0, endMatch.index) : rest).replace(/^\s*\n/, "");
-      lastAny = body;
-      if (endMatch) {
+      // Do not let a later protocol block's END accidentally "complete" a
+      // truncated GAP block pasted before it.
+      const nextBlock = rest.match(/\n\s*(?:GAP|NUTRI|PHASE)\s*v?\d+\b/i);
+      if (endMatch && (!nextBlock || endMatch.index < nextBlock.index)) {
+        const body = rest.slice(0, endMatch.index).replace(/^\s*\n/, "");
         lastComplete = body;
         re.lastIndex = start + endMatch.index + endMatch[0].length;
       }
     }
-    return lastComplete != null ? lastComplete : lastAny;
-  }
-
-  function parseNum(line) {
-    const m = String(line).match(/-?\d+(\.\d+)?/);
-    return m ? Number(m[0]) : NaN;
+    return lastComplete;
   }
 
   function normalizeMeal(raw) {
@@ -287,17 +332,22 @@ const GapPrompt = (() => {
     const f = s.match(/\bF(?:at)?\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
     const fb = s.match(/\bFiber\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
     const na = s.match(/\bSodium\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
+    const k = s.match(/\bPotassium\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
     if (p) out.protein = Math.round(Number(p[1]));
     if (c) out.carbs = Math.round(Number(c[1]));
     if (f) out.fat = Math.round(Number(f[1]));
     if (fb) out.fiber = Math.round(Number(fb[1]));
     if (na) out.sodium = Math.round(Number(na[1]));
+    if (k) out.potassium = Math.round(Number(k[1]));
+    for (const key of Object.keys(out)) {
+      if (!Number.isFinite(out[key]) || out[key] < 0) delete out[key];
+    }
     return out;
   }
 
   function parseQtyField(raw) {
     const s = String(raw || "").trim().toLowerCase();
-    const range = s.match(/^(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)\s*(g|grams?|oz|piece|pieces)?$/i);
+    const range = s.match(/^(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/i);
     if (range) {
       const a = Number(range[1]);
       const b = Number(range[2]);
@@ -306,17 +356,14 @@ const GapPrompt = (() => {
       if (unit === "grams" || unit === "gram") unit = "g";
       if (unit === "pieces") unit = "piece";
       const qty = Math.round(((a + b) / 2) * 10) / 10;
+      if (!Number.isFinite(qty) || qty <= 0 || qty > LIMITS.quantity) return null;
       const gramsHint = unit === "g" ? qty : (unit === "oz" ? Math.round(qty * 28.3495 * 10) / 10 : null);
       return { qty, unit, gramsHint, ranged: true, rangeText: s, unitPresent, unknownUnit: unitPresent && !(unit === "g" || unit === "oz" || unit === "piece" || unit === "serving") };
     }
     const m = s.match(/^(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/);
-    if (!m) {
-      const n = parseNum(s);
-      return Number.isFinite(n)
-        ? { qty: n, unit: "g", gramsHint: n, ranged: false, unknownUnit: false, unitPresent: false }
-        : null;
-    }
+    if (!m) return null;
     const qty = Number(m[1]);
+    if (!Number.isFinite(qty) || qty <= 0 || qty > LIMITS.quantity) return null;
     const unitPresent = !!m[2];
     let unit = (m[2] || "g").toLowerCase();
     if (unit === "grams" || unit === "gram") unit = "g";
@@ -348,41 +395,132 @@ const GapPrompt = (() => {
     return { cand: best.c, score: best.s, exact: false, ambiguous: false };
   }
 
-  /**
-   * Whitelist yes; anything unrecognized → not reachable (pessimistic).
-   * @returns {{ reachable: boolean, unknown: boolean }}
-   */
+  /** Whitelist explicit yes/no values; commentary such as "maybe" is incomplete. */
   function parseReachable(val) {
     const v = String(val || "").trim().replace(/^\*+|\*+$/g, "").replace(/^`+|`+$/g, "").trim().toLowerCase();
     if (/^(yes|y|true|1)\b/.test(v)) return { reachable: true, unknown: false };
-    if (/^(no|n|false|0|partial|partially|unlikely|maybe|not)\b/.test(v)) {
+    if (/^(no|n|false|0)\b/.test(v)) {
       return { reachable: false, unknown: false };
     }
-    if (!v) return { reachable: false, unknown: true };
     return { reachable: false, unknown: true };
   }
 
-  function parseItemLine(line, candidates, scorer, hasCandidateList, warnings) {
+  function addIssue(issues, flag, message, warnings) {
+    issues = Array.isArray(issues) ? issues : [];
+    if (!issues.some((x) => x.flag === flag && x.message === message)) issues.push({ flag, message });
+    if (message && warnings && !warnings.includes(message)) warnings.push(message);
+  }
+
+  function normalizeUnit(unit) {
+    const raw = String(unit || "").trim().toLowerCase();
+    const aliases = {
+      gram: "g", grams: "g", gm: "g", gms: "g",
+      ounce: "oz", ounces: "oz",
+      pieces: "piece", pc: "piece", pcs: "piece",
+      servings: "serving",
+    };
+    return aliases[raw] || raw;
+  }
+
+  /** Resolve a parsed quantity only from conversions actually carried by the selected food. */
+  function resolveCandidateGrams(qtyParsed, cand) {
+    const qty = Number(qtyParsed && qtyParsed.qty);
+    let unit = normalizeUnit(qtyParsed && qtyParsed.unit);
+    let assumed = false;
+    if (!qtyParsed || !Number.isFinite(qty) || qty <= 0) {
+      return { ok: false, unit, grams: null, assumed, reason: "invalid quantity" };
+    }
+
+    if (!qtyParsed.unitPresent) {
+      const pieceG = Number(cand && (cand.pieceGrams != null
+        ? cand.pieceGrams
+        : cand.units && cand.units.piece));
+      if (cand && (cand.logAs === "piece" || Number.isFinite(pieceG)) && qty <= 12 && pieceG > 0) {
+        unit = "piece";
+      } else {
+        unit = "g";
+      }
+      assumed = true;
+    }
+
+    let perUnit = null;
+    if (unit === "g") perUnit = 1;
+    else if (unit === "oz") perUnit = 28.3495;
+    else if (unit === "piece") {
+      perUnit = Number(cand && (cand.pieceGrams != null
+        ? cand.pieceGrams
+        : cand.units && cand.units.piece));
+    } else if (unit === "serving") {
+      perUnit = Number(cand && (cand.servingGrams != null
+        ? cand.servingGrams
+        : cand.units && cand.units.serving));
+    } else if (cand && cand.units && Object.prototype.hasOwnProperty.call(cand.units, unit)) {
+      perUnit = Number(cand.units[unit]);
+    }
+
+    if (!Number.isFinite(perUnit) || perUnit <= 0) {
+      return { ok: false, unit, grams: null, assumed, reason: `unsupported unit "${unit || "(missing)"}"` };
+    }
+    const grams = Math.round(qty * perUnit * 10) / 10;
+    if (!Number.isFinite(grams) || grams <= 0 || grams > LIMITS.grams) {
+      return { ok: false, unit, grams: null, assumed, reason: "quantity exceeds the storage limit" };
+    }
+    return {
+      ok: true,
+      unit,
+      grams,
+      assumed,
+      reason: "",
+    };
+  }
+
+  function per100Value(per100, key) {
+    const short = TOTAL_KEY[key];
+    const raw = per100 && per100[short] != null ? per100[short] : per100 && per100[key];
+    if (raw == null || raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  function nutrientsFor(cand, grams) {
+    const out = {};
+    const scale = Number(grams) / 100;
+    for (const key of GOAL_KEYS) {
+      const per100 = per100Value(cand && cand.per100, key);
+      if (per100 == null || !Number.isFinite(scale)) {
+        out[key] = null;
+      } else {
+        const value = per100 * scale;
+        out[key] = key === "kcal" || key === "sodium" || key === "potassium"
+          ? Math.round(value)
+          : Math.round(value * 10) / 10;
+      }
+    }
+    return out;
+  }
+
+  function parseItemLine(line, candidates, scorer, hasCandidateList, warnings, issues) {
     const itemM = line.replace(/^\*+\s*/, "").replace(/\*+$/, "")
       .replace(/^[-•]\s*/, "")
       .match(/^Item:\s*(.+)$/i);
     if (!itemM) return null;
     const parts = itemM[1].split("|").map((p) => p.trim().replace(/^\*+|\*+$/g, ""));
     if (parts.length < 2) {
-      warnings.push(`Ignored incomplete Item line: ${line}`);
+      addIssue(issues, "incomplete-item", `Ignored incomplete Item line: ${line}`, warnings);
       return null;
     }
     const name = parts[0];
+    if (!name || name.length > LIMITS.nameChars) {
+      addIssue(issues, "invalid-name", "Ignored Item with an overlong or missing food name", warnings);
+      return null;
+    }
     const qtyParsed = parseQtyField(parts[1]);
     if (!qtyParsed || !(qtyParsed.qty > 0)) {
-      warnings.push(`Ignored Item with bad qty: ${name}`);
+      addIssue(issues, "invalid-quantity", `Ignored Item with bad qty: ${name}`, warnings);
       return null;
     }
     if (qtyParsed.ranged) {
-      warnings.push(`Used midpoint of range for ${name}: ${qtyParsed.rangeText}`);
-    }
-    if (qtyParsed.unknownUnit) {
-      warnings.push(`Unrecognized unit "${qtyParsed.unit}" for ${name}; confirm amount when logging`);
+      addIssue(issues, "ranged-quantity", `Used midpoint of range for ${name}: ${qtyParsed.rangeText}`, warnings);
     }
     const mealRaw = parts[2] || "snack";
     const meal = normalizeMeal(mealRaw);
@@ -392,88 +530,438 @@ const GapPrompt = (() => {
     const match = matchCandidate(name, candidates, scorer);
     if (hasCandidateList) {
       if (match.ambiguous) {
-        warnings.push(`Dropped ambiguous food name: ${name}`);
+        addIssue(issues, "ambiguous-food", `Dropped ambiguous food name: ${name}`, warnings);
         return null;
       }
       if (!match.cand) {
-        warnings.push(`Dropped unknown food (not in candidates): ${name}`);
+        addIssue(issues, "unresolved-food", `Dropped unknown food (not in candidates): ${name}`, warnings);
         return null;
       }
       if (!match.exact) {
-        warnings.push(`Matched "${name}" → "${match.cand.name}"`);
+        addIssue(issues, "fuzzy-food-match", `Matched "${name}" → "${match.cand.name}"`, warnings);
       }
     }
     const cand = match.cand;
-    let grams = qtyParsed.gramsHint;
-    let unit = qtyParsed.unit;
     const qty = qtyParsed.qty;
-    if (!qtyParsed.unitPresent) {
-      const pieceLike = cand && (cand.logAs === "piece" || (cand.pieceGrams != null && Number(cand.pieceGrams) > 0));
-      if (pieceLike && qty > 0 && qty <= 12) {
-        unit = "piece";
-        grams = cand.pieceGrams != null ? Math.round(qty * cand.pieceGrams * 10) / 10 : null;
-        warnings.push(`Assumed ${qty} piece for ${name} (qty had no unit)`);
-      } else {
-        warnings.push(`No unit on qty for ${name}; treated as grams`);
-      }
-    } else if (grams == null && unit === "piece" && cand && cand.pieceGrams) {
-      grams = Math.round(qty * cand.pieceGrams * 10) / 10;
-    } else if (grams == null && unit === "g") {
-      grams = qty;
+    const converted = resolveCandidateGrams(qtyParsed, cand);
+    if (!converted.ok) {
+      addIssue(issues, "unsupported-unit", `Dropped ${name}: ${converted.reason} for the selected food`, warnings);
+      return null;
+    }
+    if (converted.assumed) {
+      const message = converted.unit === "piece"
+        ? `Assumed ${qty} piece for ${name} (qty had no unit)`
+        : `No unit on qty for ${name}; treated as grams`;
+      addIssue(issues, "missing-unit", message, warnings);
+    }
+    const nutrients = nutrientsFor(cand, converted.grams);
+    if (Object.values(nutrients).some((value) => value != null &&
+        (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > LIMITS.nutrient))) {
+      addIssue(issues, "out-of-range-nutrients", `Dropped ${name}: local nutrients exceed storage limits`, warnings);
+      return null;
     }
     return {
       name: cand ? cand.name : name,
       foodId: cand && cand.id ? cand.id : null,
       qty,
-      unit,
-      grams: grams != null ? grams : null,
+      unit: converted.unit,
+      grams: converted.grams,
       meal,
+      nutrients,
+      macros: {
+        kcal: nutrients.kcal,
+        p: nutrients.protein,
+        c: nutrients.carbs,
+        f: nutrients.fat,
+        fb: nutrients.fiber,
+        na: nutrients.sodium,
+        k: nutrients.potassium,
+      },
+      _candidate: cand || null,
+    };
+  }
+
+  function clamp01(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(0, Math.min(1, n));
+  }
+
+  function roundNutrient(key, value) {
+    if (!Number.isFinite(value)) return null;
+    return key === "kcal" || key === "sodium" || key === "potassium"
+      ? Math.round(value)
+      : Math.round(value * 10) / 10;
+  }
+
+  function readBaseMean(totals, means, key) {
+    const short = TOTAL_KEY[key];
+    const cell = totals && totals[short];
+    if (cell && Number.isFinite(Number(cell.mean))) return Number(cell.mean);
+    const raw = means && means[key] != null ? means[key] : means && means[short];
+    return Number.isFinite(Number(raw)) ? Number(raw) : null;
+  }
+
+  /** Normalize the trusted, app-owned data needed for an end-of-day projection. */
+  function localContext(raw) {
+    const ctx = raw && typeof raw === "object" ? raw : null;
+    const totals = ctx && (ctx.totals || ctx.loggedTotals || ctx.baseTotals) || null;
+    const means = ctx && (ctx.means || ctx.loggedMeans || ctx.baseMeans) || null;
+    const available = !!(totals || means);
+    const base = {};
+    let baseComplete = available;
+    for (const key of GOAL_KEYS) {
+      const value = readBaseMean(totals, means, key);
+      if (value == null || value < 0) {
+        base[key] = 0;
+        if (!["sodium", "potassium"].includes(key)) baseComplete = false;
+      } else {
+        base[key] = value;
+      }
+    }
+
+    let count = Number(totals && totals.count);
+    if (!Number.isFinite(count)) count = Number(ctx && (ctx.count != null ? ctx.count : ctx.entryCount));
+    if (!Number.isFinite(count) || count < 0) {
+      count = available && GOAL_KEYS.some((key) => base[key] > 0) ? 1 : 0;
+    }
+
+    const coverageFor = (key, short, explicitName) => {
+      if (count === 0) return 1;
+      const explicit = clamp01(totals && totals[`${short}Coverage`]);
+      if (explicit != null) return explicit;
+      const direct = clamp01(ctx && (ctx[explicitName] != null ? ctx[explicitName] : ctx[`${short}Coverage`]));
+      if (direct != null) return direct;
+      const coveredBool = ctx && ctx[`${key}Covered`];
+      if (coveredBool === true) return 1;
+      if (coveredBool === false) return 0;
+      // Legacy Ledger totals had a numeric mineral total but no coverage field.
+      const cell = totals && totals[short];
+      if (cell && Number.isFinite(Number(cell.mean))) return 1;
+      return 0;
+    };
+
+    return {
+      available,
+      baseComplete,
+      base,
+      count,
+      kcal: Math.max(0, Number(base.kcal) || 0),
+      sodiumCoverage: coverageFor("sodium", "na", "sodiumCoverage"),
+      potassiumCoverage: coverageFor("potassium", "k", "potassiumCoverage"),
+      goals: ctx && ctx.goals && typeof ctx.goals === "object" ? ctx.goals : {},
+    };
+  }
+
+  function combineCoverage(baseCoverage, baseCount, baseKcal, knownItems, knownKcal, itemCount, itemKcal) {
+    const countDen = Math.max(0, baseCount) + Math.max(0, itemCount);
+    const kcalDen = Math.max(0, baseKcal) + Math.max(0, itemKcal);
+    if (!countDen) return 1;
+    const knownBaseItems = Math.max(0, baseCount) * Math.max(0, Math.min(1, baseCoverage));
+    const knownBaseKcal = Math.max(0, baseKcal) * Math.max(0, Math.min(1, baseCoverage));
+    const itemShare = (knownBaseItems + Math.max(0, knownItems)) / countDen;
+    const calorieShare = kcalDen > 0
+      ? (knownBaseKcal + Math.max(0, knownKcal)) / kcalDen
+      : itemShare;
+    return Math.max(0, Math.min(1, Math.min(itemShare, calorieShare)));
+  }
+
+  function sumLocalItems(items, optionIndex, issues, warnings) {
+    const sums = Object.fromEntries(GOAL_KEYS.map((key) => [key, 0]));
+    const mineral = {
+      sodium: { items: 0, kcal: 0 },
+      potassium: { items: 0, kcal: 0 },
+    };
+    let complete = true;
+    let itemKcal = 0;
+    for (const item of items) {
+      const nutrients = item.nutrients || nutrientsFor(item._candidate, item.grams);
+      item.nutrients = nutrients;
+      const missing = ["kcal", "protein", "carbs", "fat", "fiber"]
+        .filter((key) => nutrients[key] == null);
+      if (missing.length) {
+        complete = false;
+        addIssue(
+          issues,
+          "incomplete-nutrients",
+          `Option ${optionIndex}: ${item.name} is missing local ${missing.join(", ")} data`,
+          warnings
+        );
+      }
+      for (const key of ["kcal", "protein", "carbs", "fat", "fiber"]) {
+        if (nutrients[key] != null) sums[key] += nutrients[key];
+      }
+      const kcal = Math.max(0, Number(nutrients.kcal) || 0);
+      itemKcal += kcal;
+      for (const key of ["sodium", "potassium"]) {
+        if (nutrients[key] == null) continue;
+        sums[key] += nutrients[key];
+        mineral[key].items += 1;
+        mineral[key].kcal += kcal;
+      }
+    }
+    for (const key of GOAL_KEYS) sums[key] = roundNutrient(key, sums[key]);
+    return { additions: sums, mineral, complete, itemKcal };
+  }
+
+  function projectionDiffers(ai, local) {
+    if (!ai || !local) return false;
+    const tolerances = { kcal: 25, protein: 2, carbs: 3, fat: 2, fiber: 2, sodium: 50, potassium: 75 };
+    return GOAL_KEYS.some((key) => Number.isFinite(Number(ai[key])) &&
+      Math.abs(Number(ai[key]) - Number(local[key])) > tolerances[key]);
+  }
+
+  function finalizeOption(raw, context, warnings) {
+    const issues = raw._issues || [];
+    if (!raw._reachableSeen) {
+      addIssue(issues, "missing-reachable", `Option ${raw.index}: missing explicit Reachable: yes/no`, warnings);
+    } else if (!raw._reachableKnown) {
+      addIssue(issues, "unrecognized-reachable", `Option ${raw.index}: Reachable must be explicit yes or no`, warnings);
+    }
+    if (!raw._projectedSeen) {
+      addIssue(issues, "missing-projected", `Option ${raw.index}: missing Projected line`, warnings);
+    }
+
+    const local = sumLocalItems(raw.items, raw.index, issues, warnings);
+    let aggregateOutOfRange = GOAL_KEYS.some((key) =>
+      !Number.isFinite(Number(local.additions[key])) || Number(local.additions[key]) > LIMITS.nutrient
+    );
+    if (aggregateOutOfRange) {
+      local.complete = false;
+      addIssue(
+        issues,
+        "aggregate-out-of-range",
+        `Option ${raw.index}: combined local nutrition exceeds the supported storage range`,
+        warnings
+      );
+    }
+    if (!context.available || !context.baseComplete) {
+      addIssue(
+        issues,
+        "missing-local-context",
+        `Option ${raw.index}: trusted logged totals are required for end-of-day safety checks`,
+        warnings
+      );
+    }
+
+    let projected = null;
+    let sodiumCoverage = 0;
+    let potassiumCoverage = 0;
+    if (context.available && context.baseComplete) {
+      projected = {};
+      for (const key of GOAL_KEYS) {
+        projected[key] = roundNutrient(key, (Number(context.base[key]) || 0) + (Number(local.additions[key]) || 0));
+      }
+      if (GOAL_KEYS.some((key) =>
+        !Number.isFinite(Number(projected[key])) || Number(projected[key]) > LIMITS.nutrient
+      )) {
+        aggregateOutOfRange = true;
+        local.complete = false;
+        addIssue(
+          issues,
+          "aggregate-out-of-range",
+          `Option ${raw.index}: combined local projection exceeds the supported storage range`,
+          warnings
+        );
+        // This derived field is optional. Never expose an outbound-invalid
+        // projection to an apply path, even for manual review.
+        projected = null;
+      }
+      sodiumCoverage = combineCoverage(
+        context.sodiumCoverage,
+        context.count,
+        context.kcal,
+        local.mineral.sodium.items,
+        local.mineral.sodium.kcal,
+        raw.items.length,
+        local.itemKcal
+      );
+      potassiumCoverage = combineCoverage(
+        context.potassiumCoverage,
+        context.count,
+        context.kcal,
+        local.mineral.potassium.items,
+        local.mineral.potassium.kcal,
+        raw.items.length,
+        local.itemKcal
+      );
+    }
+
+    const goals = context.goals || {};
+    const proteinFloor = Number(goals.protein) || 0;
+    const sodiumCeiling = Number(goals.sodium) || 0;
+    const lowProtein = !!(projected && proteinFloor > 0 && projected.protein < proteinFloor);
+    // A known subtotal over the ceiling is already conclusive, even if coverage is incomplete.
+    const highSodium = !!(projected && sodiumCeiling > 0 && projected.sodium > sodiumCeiling);
+    if (lowProtein) {
+      addIssue(
+        issues,
+        "low-protein",
+        `Option ${raw.index}: local projection is below the protein floor (${projected.protein} < ${proteinFloor} g)`,
+        warnings
+      );
+    }
+    if (highSodium) {
+      addIssue(
+        issues,
+        "high-sodium",
+        `Option ${raw.index}: local sodium projection exceeds the ceiling (${projected.sodium} > ${sodiumCeiling} mg)`,
+        warnings
+      );
+    }
+    if (projected && (sodiumCoverage < MINERAL_COVERAGE_MIN || potassiumCoverage < MINERAL_COVERAGE_MIN)) {
+      addIssue(
+        issues,
+        "low-mineral-coverage",
+        `Option ${raw.index}: local mineral coverage is incomplete (Na ${Math.round(sodiumCoverage * 100)}%, K ${Math.round(potassiumCoverage * 100)}%)`,
+        warnings
+      );
+    }
+    if (projectionDiffers(raw.aiProjected, projected)) {
+      const msg = `Option ${raw.index}: ignored AI Projected values that differ from local food math`;
+      if (!warnings.includes(msg)) warnings.push(msg);
+    }
+
+    const protocolComplete = raw._reachableSeen && raw._reachableKnown && raw._projectedSeen;
+    const issueFlags = [...new Set(issues.map((x) => x.flag))];
+    const structuralFlags = new Set([
+      "incomplete-item", "invalid-quantity", "ranged-quantity", "ambiguous-food",
+      "unresolved-food", "fuzzy-food-match", "unsupported-unit", "missing-unit",
+      "missing-candidates", "option-1-missing-candidates", "incomplete-nutrients",
+      "missing-reachable", "unrecognized-reachable", "missing-projected", "missing-local-context",
+      "low-mineral-coverage", "aggregate-out-of-range",
+    ]);
+    const complete = protocolComplete && context.available && context.baseComplete && local.complete &&
+      !issueFlags.some((flag) => structuralFlags.has(flag));
+    const sodiumVerifiable = !(sodiumCeiling > 0) || sodiumCoverage >= MINERAL_COVERAGE_MIN;
+    const reachable = !!(projected && local.complete && !lowProtein && !highSodium && sodiumVerifiable);
+    const safe = complete && reachable;
+    const publicItems = raw.items.map((item) => {
+      const { _candidate, ...rest } = item;
+      return rest;
+    });
+    return {
+      index: raw.index,
+      label: raw.label || `Option ${raw.index}`,
+      // Trusted/local fields used for decisions.
+      reachable,
+      safe,
+      complete,
+      autoApply: safe && complete,
+      requiresManualConfirm: !(safe && complete),
+      manualConfirm: !(safe && complete),
+      flags: issueFlags,
+      manualConfirmFlags: issueFlags,
+      manualConfirmReasons: issues.map((x) => x.message),
+      note: raw.note || "",
+      items: publicItems,
+      additions: local.additions,
+      projected,
+      localProjected: projected,
+      mineralCoverage: { sodium: sodiumCoverage, potassium: potassiumCoverage },
+      // Untrusted report fields are retained for transparency only.
+      aiReachable: raw.aiReachable,
+      reportedReachable: raw.aiReachable,
+      aiProjected: raw.aiProjected || null,
+      reportedProjected: raw.aiProjected || null,
     };
   }
 
   /**
-   * @returns {{
-   *   ok: boolean,
-   *   error?: string,
-   *   day?: string,
-   *   options?: Array<{index:number, label:string, reachable:boolean, note:string, items:Array, projected:object|null}>,
-   *   warnings?: string[],
-   *   // legacy convenience (first option)
-   *   reachable?: boolean,
-   *   note?: string,
-   *   items?: Array,
-   *   projected?: object|null
-   * }}
+   * Parse an untrusted GAP reply and assess it with trusted selected-food data.
+   * `context` should contain `{ totals, goals }` (or `{ means, goals }`).
+   * The AI's Projected/Reachable claims are retained as `ai*` fields but never
+   * drive `projected`, `reachable`, `safe`, or `autoApply`.
    */
-  function parseGapBlock(text, candidates, scorer) {
-    const body = extractBody(text);
-    if (!body) {
-      return { ok: false, error: "No GAP v1 block found. Ask the AI to use the GAP v1 … END format." };
+  function parseGapBlock(text, candidates, scorer, context) {
+    // Convenience: allow parseGapBlock(text, candidates, { scorer, totals, goals }).
+    if (scorer && typeof scorer === "object" && typeof scorer !== "function" && context == null) {
+      context = scorer;
+      scorer = typeof context.scorer === "function" ? context.scorer : null;
+    }
+    const rawText = String(text || "");
+    const rawLines = rawText.split(/\r?\n/);
+    if (rawText.length > LIMITS.rawChars || rawLines.length > LIMITS.lines ||
+        rawLines.some((line) => line.length > LIMITS.lineChars)) {
+      return {
+        ok: false, complete: false, safe: false, autoApply: false,
+        requiresManualConfirm: true, manualConfirm: true,
+        flags: ["oversized"], manualConfirmFlags: ["oversized"],
+        error: "GAP reply is too large. Ask for a shorter GAP v1 block and try again.",
+      };
+    }
+    const body = extractBody(rawText);
+    if (body == null) {
+      const truncated = /GAP\s*v?1\b/i.test(preprocess(text));
+      return {
+        ok: false,
+        complete: false,
+        safe: false,
+        autoApply: false,
+        requiresManualConfirm: true,
+        manualConfirm: true,
+        flags: [truncated ? "truncated" : "missing-block"],
+        manualConfirmFlags: [truncated ? "truncated" : "missing-block"],
+        error: truncated
+          ? "Incomplete GAP v1 block: a standalone END line is required before any plan can be used."
+          : "No complete GAP v1 … END block found. Ask the AI to use the GAP v1 … END format.",
+      };
     }
     const lines = body.split(/\n/).map((l) => l.trim()).filter(Boolean);
+    const optionLines = lines.filter((line) => /^Option:\s*\d+/i.test(line));
+    if (optionLines.length > LIMITS.options) {
+      return {
+        ok: false, complete: false, safe: false, autoApply: false,
+        requiresManualConfirm: true, manualConfirm: true,
+        flags: ["too-many-options"], manualConfirmFlags: ["too-many-options"],
+        error: `GAP reply has too many options (maximum ${LIMITS.options}).`,
+      };
+    }
     let day = "";
     const warnings = [];
     const hasCandidateList = Array.isArray(candidates);
     // Pre-scan so a preamble Note before Option: 1 does not spawn a phantom legacy plan.
     const hasOptionHeader = lines.some((l) => /^Option:\s*\d+/i.test(l));
-    const options = [];
+    const rawOptions = [];
+    const rejected = [];
     let cur = null;
+
+    function newOption(index, label, legacy) {
+      return {
+        index,
+        label,
+        note: "",
+        items: [],
+        aiReachable: null,
+        aiProjected: null,
+        aiRespects: "",
+        _reachableSeen: false,
+        _reachableKnown: false,
+        _projectedSeen: false,
+        _issues: [],
+        _legacy: !!legacy,
+      };
+    }
 
     function pushCur() {
       if (!cur) return;
       if (!cur.items.length) {
-        warnings.push(`Option ${cur.index} (${cur.label}) had no valid items — skipped`);
+        if (!cur._reachableSeen) {
+          addIssue(cur._issues, "missing-reachable", `Option ${cur.index}: missing explicit Reachable: yes/no`, warnings);
+        } else if (!cur._reachableKnown) {
+          addIssue(cur._issues, "unrecognized-reachable", `Option ${cur.index}: Reachable must be explicit yes or no`, warnings);
+        }
+        addIssue(
+          cur._issues,
+          "incomplete-option",
+          `Option ${cur.index} (${cur.label}) had no valid supported items — skipped`,
+          warnings
+        );
+        rejected.push(cur);
         cur = null;
         return;
       }
-      options.push({
-        index: cur.index,
-        label: cur.label || `Option ${cur.index}`,
-        reachable: cur.reachable !== false,
-        note: cur.note || "",
-        items: cur.items,
-        projected: cur.projected || null,
-      });
+      rawOptions.push(cur);
       cur = null;
     }
 
@@ -481,20 +969,21 @@ const GapPrompt = (() => {
     function ensureLegacyCur() {
       if (hasOptionHeader) return;
       if (cur) return;
-      cur = {
-        index: 1,
-        label: "Plan",
-        reachable: true,
-        note: "",
-        items: [],
-        projected: null,
-        _legacy: true,
-      };
+      cur = newOption(1, "Plan", true);
     }
 
     for (const line of lines) {
       const dayM = line.match(/^Day:\s*(.+)$/i);
-      if (dayM && !cur) { day = dayM[1].trim(); continue; }
+      if (dayM && !cur) {
+        day = dayM[1].trim();
+        if (day.length > 10) return {
+          ok: false, complete: false, safe: false, autoApply: false,
+          requiresManualConfirm: true, manualConfirm: true,
+          flags: ["invalid-day"], manualConfirmFlags: ["invalid-day"],
+          error: "GAP day is invalid.",
+        };
+        continue;
+      }
 
       // Accept "Option: 1 | Label", "Option: 1 - Label", "Option: 1 — Label", "Option: 1 (Label)"
       const optM = line.match(/^Option:\s*(\d+)\s*(?:[|:\-–—(]\s*(.+?)\)?\s*)?$/i);
@@ -502,14 +991,13 @@ const GapPrompt = (() => {
         pushCur();
         let label = (optM[2] || "").trim().replace(/^\|+/, "").trim();
         if (!label) label = `Option ${optM[1]}`;
-        cur = {
-          index: Number(optM[1]),
-          label,
-          reachable: true,
-          note: "",
-          items: [],
-          projected: null,
+        if (label.length > LIMITS.labelChars) return {
+          ok: false, complete: false, safe: false, autoApply: false,
+          requiresManualConfirm: true, manualConfirm: true,
+          flags: ["overlong-label"], manualConfirmFlags: ["overlong-label"],
+          error: "GAP option label is too long.",
         };
+        cur = newOption(Number(optM[1]), label, false);
         continue;
       }
 
@@ -518,9 +1006,16 @@ const GapPrompt = (() => {
         ensureLegacyCur();
         if (!cur) continue;
         const r = parseReachable(reachM[1]);
-        cur.reachable = r.reachable;
+        cur.aiReachable = r.reachable;
+        cur._reachableSeen = true;
+        cur._reachableKnown = !r.unknown;
         if (r.unknown) {
-          warnings.push(`Option ${cur.index}: unrecognized Reachable "${reachM[1].trim()}" — treating as no`);
+          addIssue(
+            cur._issues,
+            "unrecognized-reachable",
+            `Option ${cur.index}: unrecognized Reachable "${reachM[1].trim()}"; use explicit yes or no`,
+            warnings
+          );
         }
         continue;
       }
@@ -529,52 +1024,135 @@ const GapPrompt = (() => {
         ensureLegacyCur();
         if (!cur) continue;
         cur.note = noteM[1].trim();
+        if (cur.note.length > LIMITS.noteChars) return {
+          ok: false, complete: false, safe: false, autoApply: false,
+          requiresManualConfirm: true, manualConfirm: true,
+          flags: ["overlong-note"], manualConfirmFlags: ["overlong-note"],
+          error: "GAP option note is too long.",
+        };
         continue;
       }
       const projM = line.match(/^Projected:\s*(.*)$/i);
       if (projM) {
         ensureLegacyCur();
         if (!cur) continue;
-        cur.projected = parseProjected(projM[1]);
+        cur.aiProjected = parseProjected(projM[1]);
+        cur._projectedSeen = true;
+        continue;
+      }
+      const respectsM = line.match(/^Respects:\s*(.*)$/i);
+      if (respectsM) {
+        ensureLegacyCur();
+        if (!cur) continue;
+        cur.aiRespects = respectsM[1].trim();
         continue;
       }
       if (/^Item:/i.test(line.replace(/^\*+\s*/, "").replace(/^[-•]\s*/, ""))) {
         ensureLegacyCur();
         if (!cur) continue;
-        const item = parseItemLine(line, candidates, scorer, hasCandidateList, warnings);
+        const item = parseItemLine(line, candidates, scorer, hasCandidateList, warnings, cur._issues);
         if (item) cur.items.push(item);
       }
     }
     pushCur();
 
-    if (!options.length) {
-      return { ok: false, error: "GAP block found but no valid options/items matched your selected foods." };
+    if (!rawOptions.length) {
+      const flags = [...new Set(rejected.flatMap((o) => (o._issues || []).map((x) => x.flag)))];
+      return {
+        ok: false,
+        complete: false,
+        safe: false,
+        autoApply: false,
+        requiresManualConfirm: true,
+        manualConfirm: true,
+        flags: flags.length ? flags : ["incomplete-option"],
+        manualConfirmFlags: flags.length ? flags : ["incomplete-option"],
+        warnings,
+        error: "GAP block found but no valid, locally resolvable options matched your selected foods.",
+      };
     }
 
     if (hasCandidateList && candidates.length) {
-      const opt1 = options.find((o) => o.index === 1);
+      const opt1 = rawOptions.find((o) => o.index === 1);
       if (opt1) {
         const used = new Set((opt1.items || []).map((it) => String(it.name || "").trim().toLowerCase()));
         const missing = candidates
           .filter((c) => !used.has(String(c.name || "").trim().toLowerCase()))
           .map((c) => c.name);
         if (missing.length) {
-          warnings.push(`Option 1 skipped: ${missing.join(", ")}`);
+          addIssue(
+            opt1._issues,
+            "option-1-missing-candidates",
+            `Option 1 skipped: ${missing.join(", ")}`,
+            warnings
+          );
         }
+      }
+    } else if (!hasCandidateList) {
+      for (const opt of rawOptions) {
+        addIssue(
+          opt._issues,
+          "missing-candidates",
+          `Option ${opt.index}: selected candidate foods are required for local verification`,
+          warnings
+        );
       }
     }
 
+    const trusted = localContext(context);
+    const options = rawOptions.map((option) => finalizeOption(option, trusted, warnings));
+    const rejectedFlags = rejected.flatMap((option) => (option._issues || []).map((issue) => issue.flag));
+    const flags = [...new Set(options.flatMap((option) => option.flags || []).concat(rejectedFlags))];
+    const missingExplicitReachable = flags.includes("missing-reachable") || flags.includes("unrecognized-reachable");
+    const rejectedOptions = rejected.map((option) => ({
+      index: option.index,
+      label: option.label,
+      flags: [...new Set((option._issues || []).map((issue) => issue.flag))],
+      reasons: (option._issues || []).map((issue) => issue.message),
+    }));
     const first = options[0];
+    if (missingExplicitReachable) {
+      return {
+        ok: false,
+        complete: false,
+        safe: false,
+        autoApply: false,
+        requiresManualConfirm: true,
+        manualConfirm: true,
+        flags,
+        manualConfirmFlags: flags,
+        warnings,
+        day,
+        options,
+        rejectedOptions,
+        error: "Every GAP option must include an explicit Reachable: yes or Reachable: no line.",
+      };
+    }
+
+    const autoApply = rejected.length === 0 && options.length === 1 && first.autoApply === true;
     return {
       ok: true,
       day,
       options,
+      rejectedOptions,
       warnings,
+      complete: rejected.length === 0 && options.every((option) => option.complete),
+      safe: first.safe,
+      autoApply,
+      requiresManualConfirm: !autoApply,
+      manualConfirm: !autoApply,
+      flags,
+      manualConfirmFlags: flags,
       // Convenience for single-option / legacy callers
       reachable: first.reachable,
+      aiReachable: first.aiReachable,
+      reportedReachable: first.aiReachable,
       note: first.note,
       items: first.items,
       projected: first.projected,
+      localProjected: first.localProjected,
+      aiProjected: first.aiProjected,
+      reportedProjected: first.aiProjected,
     };
   }
 
@@ -591,6 +1169,7 @@ const GapPrompt = (() => {
     parseGapBlock,
     matchCandidate,
     preprocess,
+    LIMITS,
   };
 })();
 

@@ -175,10 +175,13 @@ const FoodMatch = (() => {
   function computeMacros(per100, grams) {
     const k = grams / 100;
     const r1 = (x) => Math.round(x * 10) / 10;
-    // Potassium alone is nullable. `|| 0` would turn "not recorded" into
-    // "contains none", which silently understates potassium and pushes the
-    // Na:K ratio the wrong way — reporting a worse ratio than reality. Null
-    // propagates so coverage can be measured instead of guessed.
+    // Sodium and potassium are nullable. `|| 0` would turn "not recorded"
+    // into "contains none" and can manufacture a reassuring 0.00 Na:K ratio.
+    // Null propagates so the ledger can measure coverage instead of guessing.
+    const nn = per100 && per100.na;
+    const sodium = (nn == null || nn === "" || !Number.isFinite(Number(nn)))
+      ? null
+      : Math.round(Number(nn) * k);
     const kk = per100 && per100.k;
     const potassium = (kk == null || kk === "" || !Number.isFinite(Number(kk)))
       ? null
@@ -189,7 +192,7 @@ const FoodMatch = (() => {
       c: r1((per100.c || 0) * k),
       f: r1((per100.f || 0) * k),
       fb: r1((per100.fb || 0) * k),
-      na: Math.round((per100.na || 0) * k),
+      na: sodium,
       k: potassium,
     };
   }
@@ -216,6 +219,18 @@ const FoodMatch = (() => {
       const kpg = entry.macros.kcal / entry.grams;
       if (kpg > KCAL_PER_G_MAX) warns.push(`${entry.name}: ${kpg.toFixed(1)} kcal/g exceeds the physical max (~9 kcal/g) — the estimate looks wrong.`);
       if (kpg < KCAL_PER_G_MIN) warns.push(`${entry.name}: negative energy? The estimate looks wrong.`);
+      const na = entry.macros && entry.macros.na;
+      const potassium = entry.macros && entry.macros.k;
+      if (na != null && Number.isFinite(Number(na))) {
+        const per100Na = Number(na) * 100 / entry.grams;
+        if (per100Na < 0) warns.push(`${entry.name}: sodium cannot be negative — the estimate looks wrong.`);
+        else if (per100Na > 5000) warns.push(`${entry.name}: sodium exceeds 5000 mg per 100 g — check mg versus g and the portion.`);
+      }
+      if (potassium != null && Number.isFinite(Number(potassium))) {
+        const per100K = Number(potassium) * 100 / entry.grams;
+        if (per100K < 0) warns.push(`${entry.name}: potassium cannot be negative — the estimate looks wrong.`);
+        else if (per100K > 3000) warns.push(`${entry.name}: potassium exceeds 3000 mg per 100 g — check mg versus g and the portion.`);
+      }
     }
     return warns;
   }

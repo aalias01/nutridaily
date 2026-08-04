@@ -168,6 +168,7 @@ console.log("\n[5] Adaptive TDEE");
   }));
   const t = Analytics.estimateTdee(days);
   ok(t.confidence === "high", "full logging + daily weigh-ins → high confidence", `got ${t.confidence}`);
+  ok(t.actionable === true, "strong plausible inputs explicitly permit target actions");
   approx(t.tdee, 2770, 25, "TDEE ≈ intake + deficit implied by weight loss");
   approx(t.intakeAvg, 2000, 0.5, "intake average");
   approx(t.coverage, 1, 0.001, "coverage 100%");
@@ -207,6 +208,87 @@ console.log("\n[5] Adaptive TDEE");
   const nt = Analytics.estimateTdee(noisy);
   ok(nt.tdee > 2000 && nt.tdee < 3200, "noisy data still yields a plausible TDEE", `got ${Math.round(nt.tdee)}`);
   ok(nt.marginKcal > 0, "reports a confidence margin");
+
+  // Adversarial: consistent tiny logs can look statistically perfect while
+  // clearly failing the absolute-completion contract.
+  const tiny = makeDays(keys, () => ({
+    kcal: 250, protein: 15, carbs: 30, fat: 8, fiber: 2, sodium: 200,
+    weightKg: 80,
+  }));
+  const tinyTdee = Analytics.estimateTdee(tiny);
+  ok(tinyTdee.tdee != null, "tiny-log estimate remains visible for honest review");
+  ok(tinyTdee.confidence === "low" && tinyTdee.actionable === false,
+    "28 statistically neat 250 kcal logs never become high-confidence/actionable");
+  ok(tinyTdee.intakePlausible === false && /incomplete/i.test(tinyTdee.actionReason),
+    "tiny-log action pause names completion plausibility");
+
+  // Exact adversarial fixture: a beautifully stable scale cannot turn 28 days
+  // of one 1,200-kcal item against a 2,200-kcal target into an action signal.
+  const uniformPartial = Analytics.buildDays({
+    keys,
+    totalsForDay: () => ({
+      count: 1,
+      kcal: { mean: 1200 }, p: { mean: 80 }, c: { mean: 120 },
+      f: { mean: 45 }, fb: { mean: 12 }, na: { mean: 1200 },
+    }),
+    goalsForDay: () => ({ ...GOALS, kcal: 2200 }),
+    weightKgForDay: () => 80,
+  });
+  const uniformPartialTdee = Analytics.estimateTdee(uniformPartial);
+  ok(uniformPartialTdee.tdee != null && uniformPartialTdee.actionable === false,
+    "28 one-item 1200/2200 days with stable weight are review-only");
+  ok(uniformPartialTdee.oneItemLowDays === 28 && /one low-calorie item|incomplete/i.test(uniformPartialTdee.actionReason),
+    "uniform one-item partial logging is named in the action pause");
+  ok(uniformPartialTdee.marginKcal >= Analytics.MIN_TDEE_MARGIN_KCAL && uniformPartialTdee.marginKcal > 0,
+    "a perfect flat fixture still has a nonzero TDEE uncertainty floor");
+
+  const oneStub = makeDays(keys, (k, i) => ({
+    kcal: i === 10 ? 250 : 2000,
+    protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000,
+    items: i === 10 ? 1 : 4,
+    weightKg: 80,
+  }));
+  const stubTdee = Analytics.estimateTdee(oneStub);
+  ok(stubTdee.partialLogDays === 1 && stubTdee.actionable === false,
+    "an isolated likely-partial day pauses actions in the estimator contract itself");
+
+  // Adversarial: a computable but very poor weight fit stays displayable and
+  // cannot enable an action even when logging coverage is perfect.
+  const wildWeights = makeDays(keys, (k, i) => ({
+    kcal: 2200, protein: 150, carbs: 220, fat: 70, fiber: 30, sodium: 2000,
+    weightKg: 80 - i * 0.02 + (i % 2 ? 2 : -2),
+  }));
+  const wild = Analytics.estimateTdee(wildWeights);
+  ok(wild.tdee != null && wild.marginKcal > 0, "wide estimate remains visible with its margin");
+  ok(wild.actionable === false && wild.confidence === "low",
+    "poor residual fit / wide uncertainty cannot become actionable");
+  ok(/trend|uncertainty/i.test(wild.actionReason), "wide estimate explains why action is paused");
+
+  const implausibleRate = makeDays(keys, (k, i) => ({
+    kcal: 2200, protein: 150, carbs: 220, fat: 70, fiber: 30, sodium: 2000,
+    weightKg: 80 - i * 0.3,
+  }));
+  const implausible = Analytics.estimateTdee(implausibleRate);
+  ok(implausible.tdee != null && implausible.actionable === false,
+    "implausible rate can display but cannot drive a target");
+
+  const belowAutoFloor = makeDays(keys, () => ({
+    kcal: 1100, protein: 100, carbs: 110, fat: 35, fiber: 20, sodium: 1500,
+    weightKg: 80,
+  }));
+  const lowExpenditure = Analytics.estimateTdee(belowAutoFloor);
+  ok(Math.round(lowExpenditure.tdee) === 1100 && lowExpenditure.actionable === false &&
+      /expenditure estimate/i.test(lowExpenditure.actionReason),
+    "a sub-1200 expenditure estimate remains visible but is outside the action gate");
+
+  const unfinishedToday = makeDays(keys, (day) => ({
+    kcal: day === END ? 250 : 2000,
+    protein: day === END ? 10 : 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000,
+    weightKg: 80,
+  }));
+  const completedOnly = Analytics.estimateTdee(unfinishedToday, { todayKey: END });
+  ok(completedOnly.loggedDays === 27 && Math.round(completedOnly.intakeAvg) === 2000,
+    "adaptive TDEE excludes the current in-progress day");
 
   // intakeForRate inverts cleanly.
   approx(Analytics.intakeForRate(t, -0.5), t.tdee - 550, 1, "intake for -0.5 kg/week");
@@ -572,16 +654,13 @@ console.log("\n[18] Effort weighting in the score");
   ok(base.score === 100, "all targets met still scores 100");
 
   const W = Analytics.SCORE_WEIGHTS;
-  // naK and sodium share one 0.10 slot and are never both scored on the same
-  // day, so the effective total counts that slot once.
-  const effective = Object.entries(W)
-    .filter(([k]) => k !== "sodium")
-    .reduce((a, [, v]) => a + v, 0);
-  approx(effective, 1, 0.0001, "effort weights sum to 1 with the sodium slot counted once");
-  ok(W.sodium === W.naK, "the sodium fallback carries the same weight as the ratio");
+  const effective = Object.values(W).reduce((a, v) => a + v, 0);
+  approx(effective, 1, 0.0001, "effort weights contain exactly one 0.10 mineral slot");
+  ok(Object.keys(W).filter((k) => k === "naK" || k === "sodium" || k === "potassium").length === 1,
+    "the composite has no extra sodium or potassium weight aliases");
   ok(W.kcal > W.carbs && W.kcal > W.fat, "energy outweighs the macros it largely determines");
   ok(W.protein >= W.kcal, "protein carries at least as much as calories");
-  ok(W.sodium < W.protein && W.sodium < W.fiber, "the sodium guardrail carries less than the floors you work at");
+  ok(W.naK < W.protein && W.naK < W.fiber, "the mineral composite carries less than the primary floors");
   ok(W.carbs === W.fat && W.carbs <= 0.05, "carbs and fat are residual once kcal and protein land");
 
   // Missing an effortful target must cost more than missing an implied one.
@@ -618,7 +697,7 @@ console.log("\n[18] Effort weighting in the score");
   const mixed = makeDays(keys, (k, i) => ({ ...on, fat: 20, protein: i < 7 ? 60 : 150 }));
   const g = Analytics.nutritionScore(mixed, Phases.scoreDayTotals, { todayKey: END }).gap;
   ok(g && g.key === "protein", "gap picks the costly target over the more-often-missed cheap one", `got ${g && g.key}`);
-  ok(g.n === 14 && g.hit === 7, "gap reports the underlying counts");
+  ok(g.n === 13 && g.hit === 6, "gap reports completed-day counts and excludes today");
   ok(Analytics.nutritionScore(perfect, Phases.scoreDayTotals, { todayKey: END }).gap === null, "no gap when everything lands");
   ok(Analytics.biggestGap([{ key: "fiber", weight: 0.2, hitRate: 0, n: 2 }]) === null, "gap needs a few days before it speaks");
 }
@@ -652,6 +731,12 @@ console.log("\n[19] Partial-day detection");
     "needs a baseline before flagging anything");
   ok(Analytics.partialDays(makeDays(keys, () => null)).flagged.length === 0, "no logged days, nothing to flag");
 
+  const todayStub = makeDays(keys, (day) => day === END
+    ? { ...full, kcal: 250, items: 1 }
+    : full);
+  ok(Analytics.partialDays(todayStub, { todayKey: END }).flagged.length === 0,
+    "unfinished today is excluded from completed-day partial-log audits");
+
   // Flagged days must still be counted everywhere else.
   const stats = Analytics.summaryStats(withStubs, "kcal");
   ok(stats.n === 14, "flagged days remain in the underlying stats");
@@ -662,34 +747,80 @@ console.log("\n[20] Bump audit");
   const keys = keysEndingAt(END, 10);
   const endOf = (day) => { const d = Analytics.dateOf(day); d.setHours(24, 0, 0, 0); return d.getTime(); };
 
+  const base = { ...GOALS, potassium: 3400 };
+  const settings = {
+    goals: base, phases: [], weights: {},
+    dayGoals: {
+      [keys[0]]: {
+        bumps: { kcal: 500, protein: 50, carbs: 100, fat: 20, fiber: 10, sodium: -500, potassium: 900 },
+        updatedAt: 1,
+      },
+      [keys[1]]: {
+        kcal: 2300, protein: 999, carbs: 999, fat: 999, fiber: 999, sodium: 9999, potassium: 9999,
+        updatedAt: 2,
+      },
+    },
+  };
+  const adjusted = Phases.goalsForDay(keys[0], settings);
+  ok(adjusted.kcal === base.kcal + 500, "one-day energy adjustment changes calories");
+  for (const key of ["protein", "carbs", "fat", "fiber", "sodium", "potassium"]) {
+    ok(adjusted[key] === base[key], `one-day adjustment cannot move ${key}`);
+  }
+  ok(Object.keys(adjusted._bumps).length === 1 && adjusted._bumps.kcal === 500,
+    "legacy multi-nutrient bump keys are dropped from resolved metadata");
+  const legacyAbsolute = Phases.goalsForDay(keys[1], settings);
+  ok(legacyAbsolute.kcal === 2300, "legacy absolute day goal derives a calorie adjustment");
+  ok(legacyAbsolute.protein === base.protein && legacyAbsolute.sodium === base.sodium && legacyAbsolute.potassium === base.potassium,
+    "legacy absolute macro and electrolyte targets are ignored");
+  ok(Phases.formatBumpSummary({ kcal: 500, protein: 50, sodium: -500 }) === "+500 kcal",
+    "energy-adjustment summary contains calories only");
+
   ok(Analytics.bumpIsRetroactive(keys[0], endOf(keys[0]) + 3600e3) === true, "set after midnight is retroactive");
   ok(Analytics.bumpIsRetroactive(keys[0], endOf(keys[0]) - 3600e3) === false, "set during the day is planned");
   ok(Analytics.bumpIsRetroactive(keys[0], null) === false, "an untimestamped bump is not assumed retroactive");
 
   const bumps = {
-    [keys[2]]: { bumps: { kcal: 500 }, updatedAt: endOf(keys[2]) - 7200e3 },   // planned
+    [keys[2]]: { bumps: { kcal: 500, protein: 50, sodium: -500 }, updatedAt: endOf(keys[2]) - 7200e3 }, // legacy multi-key, planned
     [keys[5]]: { bumps: { kcal: 800 }, updatedAt: endOf(keys[5]) + 86400e3 },  // after the fact
     [keys[7]]: { bumps: { kcal: 0 }, updatedAt: endOf(keys[7]) },              // empty, ignored
+    [keys[8]]: { bumps: { protein: 100, sodium: -1000 }, updatedAt: endOf(keys[8]) }, // no energy adjustment, ignored
+    [keys[9]]: { kcal: 2300, protein: 999, updatedAt: endOf(keys[9]) - 3600e3 }, // legacy absolute; resolved delta is +300
+  };
+  const firstAdds = {
+    [keys[2]]: endOf(keys[2]) - 3600e3,
+    [keys[5]]: endOf(keys[5]),
+    // No immutable first-add provenance is available for the legacy absolute row.
   };
   const days = Analytics.buildDays({
     keys,
     totalsForDay: () => ({ count: 3, kcal: { mean: 2500 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } }),
-    goalsForDay: () => GOALS,
+    goalsForDay: (d) => d === keys[9]
+      ? { ...GOALS, _bumps: { kcal: 300 }, _phase: GOALS }
+      : GOALS,
     weightKgForDay: () => null,
     bumpForDay: (d) => bumps[d] || null,
+    firstAddAt: (d) => firstAdds[d] || null,
   });
   const audit = Analytics.bumpAudit(days);
-  ok(audit.total === 2, "counts only bumps with a non-zero delta", `got ${audit.total}`);
-  ok(audit.retroactive === 1 && audit.planned === 1, "separates planned from retroactive");
-  ok(audit.kcalTotal === 1300, "sums the calorie deltas");
+  ok(audit.total === 3, "counts only energy adjustments with a non-zero calorie delta", `got ${audit.total}`);
+  ok(audit.retroactive === 1 && audit.planned === 1 && audit.unknown === 1,
+    "compares plan time with first-add time and keeps unsupported legacy provenance unknown");
+  ok(audit.kcalTotal === 1600, "sums modern and legacy calorie deltas");
   ok(audit.days.every((r) => r.day && typeof r.retroactive === "boolean"), "rows carry day and flag");
+  ok(audit.days.every((r) => Object.keys(r.bumps).length === 1 && Number.isFinite(r.bumps.kcal)),
+    "audit sanitizes legacy records to their energy adjustment");
   ok(Analytics.bumpAudit(makeDays(keys, () => null)).total === 0, "no bumps, empty audit");
+  const completedAudit = Analytics.bumpAudit(days, { todayKey: END });
+  ok(completedAudit.total === 2 && !completedAudit.days.some((r) => r.day === END),
+    "current day is excluded from completed-day adjustment audits");
 
   const obs = Analytics.observations(days, { todayKey: END });
   const bumpObs = obs.find((o) => o.id === "bumps");
   ok(!!bumpObs, "bumps surface as an observation");
+  ok(/energy adjustment/.test(bumpObs.text), "audit wording calls it an energy adjustment");
   ok(bumpObs.tone === "watch", "a retroactive bump raises the tone");
-  ok(/after the day ended/.test(bumpObs.text), "and says so plainly");
+  ok(/after logging began/.test(bumpObs.text) && !/provenance is unknown/.test(bumpObs.text),
+    "completed-day observation uses immutable provenance and excludes today's unfinished audit row");
 }
 
 console.log("\n[21] Range comparison");
@@ -742,9 +873,20 @@ console.log("\n[22] Retarget macros for a new calorie goal");
   const fatty = Analytics.retargetForKcal({ ...g, carbs: 100, fat: 111 }, 2000);
   ok(fatty.fat * 9 > fatty.carbs * 4, "a fat-leaning split stays fat-leaning");
 
-  ok(Analytics.retargetForKcal(g, 200).kcal === 800, "clamps absurdly low targets");
+  ok(Analytics.retargetForKcal(g, 1190) === null, "automated targets below 1200 are refused");
+  ok(Analytics.retargetForKcal(g, 9000) === null, "automated targets above the supported maximum are refused");
   ok(Analytics.retargetForKcal({ kcal: 2000, protein: 0, carbs: 0, fat: 0 }, 2000).carbs > 0,
     "handles empty macro targets without dividing by zero");
+  ok(Analytics.retargetForKcal({ ...g, protein: 250 }, 1200) === null,
+    "refuses a target that cannot fit protected protein plus minimum fat");
+  const floorFit = Analytics.retargetForKcal({ ...g, protein: 225 }, 1200);
+  ok(floorFit && floorFit.protein === 225 && floorFit.fat >= Analytics.MIN_RETARGET_FAT_G,
+    "a tight feasible target still protects protein and a defensible fat floor");
+  for (const plan of [up, down, fatty, floorFit]) {
+    const atwater = plan.protein * 4 + plan.carbs * 4 + plan.fat * 9;
+    ok(atwater <= plan.kcal && plan.kcal - atwater <= 3,
+      `retargeted macros are Atwater-consistent at ${plan.kcal} kcal`, `macros ${atwater}`);
+  }
 }
 
 
@@ -774,6 +916,15 @@ console.log("\n[23] Top foods covers every nutrient");
   ok(top("fiber") === "Lentils", "fiber ranking", `got ${top("fiber")}`);
   ok(top("sodium") === "Salted nuts", "sodium ranking", `got ${top("sodium")}`);
   ok(top("protein") === "Lentils", "protein ranking", `got ${top("protein")}`);
+
+  const potassiumEntries = {
+    [keys[0]]: [
+      { name: "High calorie", macros: { kcal: 900, k: 80 } },
+      { name: "High potassium", macros: { kcal: 100, k: 900 } },
+    ],
+  };
+  ok(Analytics.topFoods(keys, (d) => potassiumEntries[d] || [], "potassium", 5)[0].name === "High potassium",
+    "potassium ranking uses potassium rather than falling back to calories");
 
   // Shares are computed against that metric's own total, not calories.
   const fat = Analytics.topFoods(keys, entriesFor, "fat", 5);
@@ -875,43 +1026,48 @@ console.log("\n[26] Potassium coverage gating");
   ok(lowK.potassium.status === "under", "and potassium is short");
 }
 
-console.log("\n[27] Ratio and sodium never double-count in the score");
+console.log("\n[27] Exactly one mineral-composite slot");
 {
   const keys = keysEndingAt(END, 14);
   const goals = { ...GOALS, potassium: 3400, naK: 1.0 };
-  const build = (kMg, coverage) => Analytics.buildDays({
+  const build = (kMg, kCoverage, jointCoverage) => Analytics.buildDays({
     keys,
     totalsForDay: () => ({
       count: 4,
       kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 },
-      fb: { mean: 30 }, na: { mean: 2000 },
-      k: { mean: kMg }, kCoverage: coverage, kItems: 3,
+      fb: { mean: 30 }, na: { mean: 2000 }, naCoverage: 1, naItems: 4,
+      k: { mean: kMg }, kCoverage, kItems: kCoverage >= 0.8 ? 4 : 0,
+      naKNa: { mean: 2000 }, naKK: { mean: kMg },
+      naKCoverage: jointCoverage == null ? Math.min(1, kCoverage) : jointCoverage,
+      naKItems: jointCoverage >= 0.8 ? 4 : 2,
     }),
     goalsForDay: () => goals,
     weightKgForDay: () => null,
   });
 
-  const covered = Analytics.nutritionScore(build(3600, 1.0), Phases.scoreDayTotals, { todayKey: END });
+  const covered = Analytics.nutritionScore(build(3600, 1.0, 1.0), Phases.scoreDayTotals, { todayKey: END });
   const keys2 = covered.nutrients.map((n) => n.key);
-  ok(keys2.includes("naK"), "a covered range scores the ratio");
-  ok(!keys2.includes("sodium"), "and does not also score sodium");
+  ok(keys2.includes("naK") && covered.nutrients.find((n) => n.key === "naK").mode === "joint",
+    "joint-covered days score one composite requiring ratio plus both absolutes");
+  ok(!keys2.includes("sodium") && !keys2.includes("potassium"),
+    "sodium and potassium do not create extra headline slots");
 
-  const uncovered = Analytics.nutritionScore(build(0, 0), Phases.scoreDayTotals, { todayKey: END });
+  const uncovered = Analytics.nutritionScore(build(0, 0, 0), Phases.scoreDayTotals, { todayKey: END });
   const keys3 = uncovered.nutrients.map((n) => n.key);
-  ok(keys3.includes("sodium"), "a range with no potassium data falls back to sodium");
-  ok(!keys3.includes("naK"), "and does not score the ratio");
-  ok(!keys3.includes("potassium"), "potassium is never scored separately — it is inside the ratio");
+  ok(!keys3.includes("naK") && !keys3.includes("sodium") && !keys3.includes("potassium"),
+    "one incomplete absolute mineral skips the composite instead of awarding sodium alone");
 
-  // Both routes must produce a comparable score, so adding potassium data
-  // does not silently reset a number the user has been watching.
-  ok(Math.abs(covered.score - uncovered.score) <= 5,
-    "scores stay comparable whether or not potassium data exists",
-    `covered ${covered.score} vs fallback ${uncovered.score}`);
+  const absolute = Analytics.nutritionScore(build(3600, 1.0, 0.5), Phases.scoreDayTotals, { todayKey: END });
+  const absoluteRow = absolute.nutrients.find((n) => n.key === "naK");
+  ok(absoluteRow && absoluteRow.mode === "absolute" && absoluteRow.hit === absoluteRow.n,
+    "without joint coverage, both independently complete absolutes can earn the same single slot");
 
   // Weights renormalize to 1 either way.
   const sum = (r) => r.nutrients.reduce((a, n) => a + n.weight, 0);
   approx(sum(covered), 1, 0.0001, "covered weights sum to 1");
-  approx(sum(uncovered), 1, 0.0001, "fallback weights sum to 1");
+  approx(sum(uncovered), 0.9, 0.0001, "skipped mineral slot is absent from the raw breakdown");
+  ok(uncovered.score === 100, "remaining target weights are renormalized when mineral coverage is incomplete");
+  approx(sum(absolute), 1, 0.0001, "absolute-mineral weights sum to 1");
 }
 
 console.log("\n[28] Potassium is nullable end to end");
@@ -995,6 +1151,180 @@ console.log("\n[30] Which lever to pull");
   // Both routes genuinely land on the target.
   approx(Phases.naKRatio(2100, 2600 + raiseK(2100, 2600)), 1.0, 0.01, "raising potassium reaches 1.0");
   approx(Phases.naKRatio(2100 - cutNa(2100, 2600), 2600), 1.0, 0.01, "cutting sodium also reaches 1.0");
+}
+
+console.log("\n[31] Honest sodium completeness and exact ratio boundary");
+{
+  ok(Phases.naKRatio(null, 3000) === null, "unknown sodium cannot become a 0.00 ratio");
+  ok(Phases.naKRatio("", 3000) === null, "blank sodium cannot become a 0.00 ratio");
+  ok(Phases.naKRatio(-1, 3000) === null, "negative sodium is invalid");
+  ok(Phases.classify(1.0, 1.0, Phases.BANDS.naK) === "hit", "ratio target boundary is inclusive");
+  ok(Phases.classify(1.001, 1.0, Phases.BANDS.naK) === "over", "ratio above target is over without a hidden 10% grace band");
+
+  const totals = {
+    count: 2,
+    kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 },
+    na: { mean: 0 }, naCoverage: 0, naItems: 0,
+    k: { mean: 3600 }, kCoverage: 1, kItems: 2,
+  };
+  ok(!Phases.sodiumCovered(totals), "explicitly unknown sodium is not covered");
+  ok(!Phases.nakCovered(totals), "ratio requires sodium as well as potassium coverage");
+  const scored = Phases.scoreDayTotals(totals, { ...GOALS, potassium: 3400, naK: 1 });
+  ok(scored.sodium.status === "skip" && scored.naK.status === "skip", "unknown sodium skips both sodium and ratio scoring");
+  ok(scored.potassium.status === "hit", "independently covered potassium still scores its floor");
+
+  const legacy = { ...totals, na: { mean: 2000 } };
+  delete legacy.naCoverage;
+  ok(Phases.sodiumCovered(legacy), "legacy numeric totals without a coverage field remain compatible");
+
+  const callout = Phases.callouts({
+    logged: 4,
+    nutrients: [{ key: "potassium", label: "Potassium", hit: 0, under: 4, over: 0, avgDelta: -900, n: 4 }],
+  });
+  ok(/900 mg short/.test(callout.need || ""), "potassium callouts use milligrams, not grams", callout.need);
+}
+
+console.log("\n[32] Shared sodium score slot and current-day grace");
+{
+  const keys = keysEndingAt(END, 10);
+  const goals = { ...GOALS, potassium: 3400, naK: 1 };
+  const days = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => {
+      const jointMiss = day === keys[0];
+      return {
+        count: 4,
+        kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 },
+        na: { mean: 2000 }, naCoverage: 1, naItems: 4,
+        k: { mean: jointMiss ? 1000 : 4000 }, kCoverage: 1, kItems: 4,
+        naKNa: { mean: 2000 }, naKK: { mean: jointMiss ? 1000 : 4000 },
+        naKCoverage: jointMiss ? 1 : 0.5, naKItems: jointMiss ? 4 : 2,
+      };
+    },
+    goalsForDay: () => goals,
+  });
+  const mixed = Analytics.nutritionScore(days, Phases.scoreDayTotals, {});
+  const handling = mixed.nutrients.find((n) => n.key === "naK" || n.key === "sodium");
+  ok(handling && handling.mode === "mixed", "mixed ranges expose one mineral-composite row");
+  ok(handling && handling.n === 10 && handling.hit === 9, "one shared tally spans joint and both-absolute days");
+  approx(mixed.nutrients.reduce((sum, n) => sum + n.weight, 0), 1, 0.0001,
+    "mixed ranges count the 0.10 sodium slot only once");
+  ok(mixed.score === 99, "one sodium-handling miss costs about one point", `got ${mixed.score}`);
+
+  const highBoth = Analytics.buildDays({
+    keys,
+    totalsForDay: () => ({
+      count: 4,
+      kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 },
+      // The ratio is favorable (~0.85) only because potassium is also huge;
+      // absolute sodium still exceeds its independent ceiling.
+      na: { mean: 4000 }, naCoverage: 1, naItems: 4,
+      k: { mean: 8000 }, kCoverage: 1, kItems: 4,
+      naKNa: { mean: 4000 }, naKK: { mean: 8000 }, naKCoverage: 1, naKItems: 4,
+    }),
+    goalsForDay: () => goals,
+  });
+  const strict = Analytics.nutritionScore(highBoth, Phases.scoreDayTotals, {});
+  const strictHandling = strict.nutrients.find((n) => n.key === "naK");
+  ok(strictHandling && strictHandling.ratioHits === 10, "covered days record that the ratio itself cleared");
+  ok(strictHandling && strictHandling.hit === 0 && strictHandling.absoluteSodiumHits === 0 && strictHandling.potassiumHits === 10,
+    "a favorable ratio cannot mask an exceeded absolute sodium ceiling");
+  approx(strict.nutrients.reduce((sum, n) => sum + n.weight, 0), 1, 0.0001,
+    "strict ratio+sodium safety still occupies one shared score slot");
+
+  const mineralDays = (dayGoals, overrides) => Analytics.buildDays({
+    keys,
+    totalsForDay: () => ({
+      count: 4,
+      kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 },
+      na: { mean: 4000 }, naCoverage: 1, naItems: 4,
+      k: { mean: 8000 }, kCoverage: 1, kItems: 4,
+      naKNa: { mean: 4000 }, naKK: { mean: 8000 }, naKCoverage: 1, naKItems: 4,
+      ...(overrides || {}),
+    }),
+    goalsForDay: () => dayGoals,
+  });
+  const sodiumDisabled = Analytics.nutritionScore(
+    mineralDays({ ...goals, sodium: 0 }), Phases.scoreDayTotals, {});
+  const sodiumDisabledRow = sodiumDisabled.nutrients.find((n) => n.key === "naK");
+  ok(sodiumDisabledRow && sodiumDisabledRow.hit === sodiumDisabledRow.n,
+    "a zero sodium target stays disabled instead of becoming a permanent composite miss");
+
+  const potassiumDisabled = Analytics.nutritionScore(
+    mineralDays({ ...goals, potassium: 0 }, {
+      na: { mean: 2000 }, naKNa: { mean: 2000 },
+    }), Phases.scoreDayTotals, {});
+  const potassiumDisabledRow = potassiumDisabled.nutrients.find((n) => n.key === "naK");
+  ok(potassiumDisabledRow && potassiumDisabledRow.hit === potassiumDisabledRow.n,
+    "a zero potassium target stays disabled instead of becoming a permanent composite miss");
+
+  const allMineralsDisabled = Analytics.nutritionScore(
+    mineralDays({ ...goals, sodium: 0, potassium: 0, naK: 0 }), Phases.scoreDayTotals, {});
+  ok(!allMineralsDisabled.nutrients.some((n) => n.key === "naK"),
+    "the composite drops out when every mineral constraint is explicitly disabled");
+
+  const enabledPotassiumUncovered = Analytics.nutritionScore(
+    mineralDays({ ...goals, sodium: 0 }, {
+      kCoverage: 0.5, kItems: 2, naKCoverage: 0.5, naKItems: 2,
+    }), Phases.scoreDayTotals, {});
+  ok(!enabledPotassiumUncovered.nutrients.some((n) => n.key === "naK"),
+    "an enabled but uncovered mineral skips the composite coherently");
+
+  const partialToday = makeDays(keysEndingAt(END, 7), (day) => day === END
+    ? { kcal: 300, protein: 10, carbs: 30, fat: 5, fiber: 2, sodium: 200, items: 1 }
+    : { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000, items: 4 });
+  const withGrace = Analytics.nutritionScore(partialToday, Phases.scoreDayTotals, { todayKey: END });
+  const withoutGrace = Analytics.nutritionScore(partialToday, Phases.scoreDayTotals, {});
+  ok(withGrace.consistency.loggedDays === 7, "logged today still counts toward consistency");
+  ok(withGrace.nutrients.find((n) => n.key === "protein").n === 6, "today is excluded from target misses until complete");
+  ok(withGrace.score > withoutGrace.score, "an unfinished current day does not depress adherence");
+  const todayHeatmap = Analytics.heatmapCells(partialToday, "protein", Phases.scoreDayTotals, { todayKey: END });
+  ok(todayHeatmap[todayHeatmap.length - 1].status === "logged",
+    "heatmap audit shows today as logged without grading it hit/under/over");
+  const scoreTotals = Object.fromEntries(partialToday.map((d) => [d.day, {
+    count: d.itemCount,
+    kcal: { mean: d.kcal }, p: { mean: d.protein }, c: { mean: d.carbs },
+    f: { mean: d.fat }, fb: { mean: d.fiber }, na: { mean: d.sodium },
+  }]));
+  const currentExcluded = Phases.scoreRange(
+    partialToday.map((d) => d.day),
+    (day) => scoreTotals[day],
+    { goals: GOALS, phases: [], dayGoals: {}, weights: {} },
+    { excludeDay: END }
+  );
+  const currentProtein = currentExcluded.nutrients.find((n) => n.key === "protein");
+  ok(currentExcluded.logged === 6 && currentProtein.n === 6 && currentProtein.hit === 6,
+    "scorecard target ranges also exclude a logged current day consistently");
+}
+
+console.log("\n[33] Phase overlap and revision conflict safety");
+{
+  const settings = { goals: { ...GOALS }, phases: [], dayGoals: {}, weights: {} };
+  const replacement = Phases.startPhase(settings, {
+    kind: "cut", goals: { ...GOALS, kcal: 1800 }, startDay: "2026-08-03", copyGoals: false,
+  });
+  const active = settings.phases.filter((p) => !p.archived && p.endDay == null);
+  ok(active.length === 1 && active[0].id === replacement.id, "starting again on the same day leaves one active phase");
+  ok(Phases.phaseForDay(settings.phases, "2026-08-03").id === replacement.id, "same-day replacement owns that date");
+
+  const base = {
+    id: "ph-sync", name: "Maintain v1.1", kind: "maintain", startDay: "2026-07-01", endDay: null,
+    createdAt: 1, updatedAt: 20, revisions: [
+      { id: "r1", effectiveFrom: "2026-07-01", goals: { ...GOALS, kcal: 2000 }, createdAt: 1, updatedAt: 10 },
+      { id: "r2", effectiveFrom: "2026-07-15", goals: { ...GOALS, kcal: 2100 }, createdAt: 2, updatedAt: 20 },
+    ],
+  };
+  const staleRemote = JSON.parse(JSON.stringify(base));
+  const localSettings = { goals: { ...GOALS }, phases: [JSON.parse(JSON.stringify(base))], dayGoals: {}, weights: {} };
+  Phases.deleteRevision(localSettings, "ph-sync", "r2", "2026-08-03");
+  const mergedDeleted = Phases.mergePhases(localSettings.phases, [staleRemote])[0];
+  ok(!mergedDeleted.revisions.some((r) => r.id === "r2"), "revision tombstone prevents stale remote resurrection");
+
+  const older = { ...base, revisions: [{ ...base.revisions[0], goals: { ...GOALS, kcal: 1900 }, updatedAt: 30 }] };
+  const newer = { ...base, revisions: [{ ...base.revisions[0], goals: { ...GOALS, kcal: 2300 }, updatedAt: 40 }] };
+  const mergedLww = Phases.mergePhases([older], [newer])[0];
+  ok(mergedLww.revisions.find((r) => r.id === "r1").goals.kcal === 2300,
+    "same-id revision merge uses revision-level last-write-wins");
 }
 
 console.log(`\nanalytics: ${pass} passed, ${fail} failed\n`);

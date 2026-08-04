@@ -18,6 +18,13 @@
 const Analytics = (() => {
   /** Energy density of body-mass change (kcal per kg). Standard 3500 kcal/lb. */
   const KCAL_PER_KG = 7700;
+  /** Automated target changes are deliberately narrower than manual entry. */
+  const MIN_AUTOMATED_KCAL = 1200;
+  const MAX_AUTOMATED_KCAL = 6000;
+  /** Even a perfect flat line cannot prove zero intake/scale/model error. */
+  const MIN_TDEE_MARGIN_KCAL = 100;
+  /** A small absolute fat floor prevents calorie retargeting from erasing fat. */
+  const MIN_RETARGET_FAT_G = 30;
   const DOW_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MEALS = ["breakfast", "lunch", "dinner", "snack"];
   /** Nutrient keys as they appear on a built day row. */
@@ -80,7 +87,8 @@ const Analytics = (() => {
    * @param {Function} opts.totalsForDay    day → Ledger totals
    * @param {Function} opts.goalsForDay     day → resolved goals for that day
    * @param {Function} [opts.weightKgForDay] day → body weight in kg (or null)
-   * @param {Function} [opts.bumpForDay] day → { bumps, updatedAt } | null
+   * @param {Function} [opts.bumpForDay] day → calorie-plan record | null
+   * @param {Function} [opts.firstAddAt] day → immutable first-add timestamp | null
    * @returns {Array<Object>} rows: { day, dow, weekend, logged, itemCount,
    *   kcal, protein, carbs, fat, fiber, sodium, goals, weightKg, bump }
    */
@@ -91,6 +99,7 @@ const Analytics = (() => {
     const goalsForDay = o.goalsForDay || (() => ({}));
     const weightKgForDay = o.weightKgForDay || (() => null);
     const bumpForDay = o.bumpForDay || (() => null);
+    const firstAddAt = o.firstAddAt || (() => null);
 
     return keys.map((day) => {
       const t = totalsForDay(day);
@@ -105,19 +114,38 @@ const Analytics = (() => {
         goals: goalsForDay(day) || {},
         weightKg: numOrNull(weightKgForDay(day)),
         bump: bumpForDay(day) || null,
+        firstAddAt: numOrNull(firstAddAt(day)),
       };
       for (const k of NUTRIENTS) {
         const bucket = t && t[TOTALS_KEY[k]];
         row[k] = logged && bucket ? bucket.mean : null;
       }
-      // Potassium is only meaningful alongside how much of the day it covers.
+      // Each absolute mineral has its own completeness contract. The ratio has
+      // a stricter paired-entry contract so separately-known subsets are never
+      // divided as though they came from the same foods.
       row.kCoverage = logged && t && Number.isFinite(t.kCoverage) ? t.kCoverage : 0;
       row.kItems = (t && t.kItems) || 0;
-      const covered = typeof Phases !== "undefined" ? Phases.nakCovered(t) : false;
-      row.kCovered = !!covered;
-      if (!covered) row.potassium = null;
-      row.naK = covered && typeof Phases !== "undefined"
-        ? Phases.naKRatio(row.sodium, row.potassium)
+      // Sodium coverage is explicit for new nullable-Na entries. Totals created
+      // before that contract have no coverage field; their numeric sodium was
+      // historically treated as known, so preserve that interpretation.
+      row.naCoverage = logged && t && Number.isFinite(t.naCoverage) ? t.naCoverage : (logged ? 1 : 0);
+      row.naItems = (t && t.naItems) || 0;
+      row.naKCoverage = logged && t && Number.isFinite(t.naKCoverage)
+        ? t.naKCoverage
+        : Math.min(row.naCoverage, row.kCoverage);
+      row.naKItems = (t && t.naKItems) || 0;
+      row.pairedSodium = t && t.naKNa && Number.isFinite(t.naKNa.mean) ? t.naKNa.mean : row.sodium;
+      row.pairedPotassium = t && t.naKK && Number.isFinite(t.naKK.mean) ? t.naKK.mean : row.potassium;
+      row.sodiumCovered = typeof Phases !== "undefined" ? Phases.sodiumCovered(t) : false;
+      row.potassiumCovered = typeof Phases !== "undefined" ? Phases.potassiumCovered(t) : false;
+      row.jointCovered = typeof Phases !== "undefined" ? Phases.nakCovered(t) : false;
+      // Compatibility aliases used by existing renderers.
+      row.naCovered = row.sodiumCovered;
+      row.kCovered = row.potassiumCovered;
+      if (!row.sodiumCovered) row.sodium = null;
+      if (!row.potassiumCovered) row.potassium = null;
+      row.naK = row.jointCovered && typeof Phases !== "undefined"
+        ? Phases.naKRatio(row.pairedSodium, row.pairedPotassium)
         : null;
       return row;
     });
@@ -198,7 +226,8 @@ const Analytics = (() => {
 
   /**
    * Least-squares fit of y on x.
-   * @returns {{slope:number, intercept:number, n:number, r2:number, slopeSe:number}|null}
+   * @returns {{slope:number, intercept:number, n:number, r2:number,
+   *   slopeSe:number, rmse:number, residualSd:number}|null}
    */
   function linearFit(xs, ys) {
     const pts = [];
@@ -224,8 +253,10 @@ const Analytics = (() => {
       ssRes += e * e;
     }
     const r2 = syy === 0 ? 1 : Math.max(0, 1 - ssRes / syy);
-    const slopeSe = n > 2 ? Math.sqrt(ssRes / (n - 2) / sxx) : 0;
-    return { slope, intercept, n, r2, slopeSe };
+    const residualSd = n > 2 ? Math.sqrt(ssRes / (n - 2)) : 0;
+    const slopeSe = n > 2 ? residualSd / Math.sqrt(sxx) : 0;
+    const rmse = Math.sqrt(ssRes / n);
+    return { slope, intercept, n, r2, slopeSe, rmse, residualSd };
   }
 
   // ---------------------------------------------------------- trend weight
@@ -276,7 +307,8 @@ const Analytics = (() => {
    * trend is still what gets drawn and what "current weight" means; it just
    * isn't what the slope is measured from.
    *
-   * @returns {{kgPerDay, kgPerWeek, n, spanDays, r2, seKgPerDay, first, last}|null}
+   * @returns {{kgPerDay, kgPerWeek, n, spanDays, r2, rmseKg,
+   *   residualSdKg, seKgPerDay, first, last}|null}
    */
   function weightRate(trendSeries, opts) {
     const windowDays = (opts && opts.windowDays) || null;
@@ -301,6 +333,8 @@ const Analytics = (() => {
       n: anchors.length,
       spanDays,
       r2: fit.r2,
+      rmseKg: fit.rmse,
+      residualSdKg: fit.residualSd,
       seKgPerDay: fit.slopeSe,
       first: anchors[0].trend,
       last: anchors[anchors.length - 1].trend,
@@ -319,13 +353,20 @@ const Analytics = (() => {
    * weigh-ins returns `confidence: "none"` with a plain-language `reason`
    * instead of a number.
    *
-   * @returns {{tdee, marginKcal, intakeAvg, kgPerWeek, loggedDays, rangeDays,
-   *   coverage, weighIns, spanDays, confidence, reason}}
+   * The estimate and the action gate are intentionally separate. A number can
+   * still be useful to inspect when its interval is wide or the food logs look
+   * incomplete; those conditions must never silently enable a target change.
+   *
+   * @returns {{tdee, marginKcal, intervalLow, intervalHigh, intakeAvg,
+   *   medianIntake, completionRatio, kgPerWeek, loggedDays, rangeDays,
+   *   coverage, weighIns, spanDays, fitR2, fitRmseKg, partialLogDays,
+   *   confidence, actionable, reason, actionReason}}
    */
   function estimateTdee(days, opts) {
     const o = opts || {};
     const kcalPerKg = o.kcalPerKg || KCAL_PER_KG;
-    const rows = days || [];
+    const excludeDay = o.excludeDay || o.todayKey || null;
+    const rows = (days || []).filter((d) => !(excludeDay && d.day === excludeDay));
     const logged = loggedRows(rows);
     const rangeDays = rows.length;
     const coverage = rangeDays ? logged.length / rangeDays : 0;
@@ -333,12 +374,32 @@ const Analytics = (() => {
     const rate = weightRate(trend);
     const weighIns = trend.filter((p) => !p.carried).length;
     const spanDays = rate ? rate.spanDays : 0;
-    const intakeAvg = mean(logged.map((r) => r.kcal));
+    const intakes = logged.map((r) => r.kcal).filter(Number.isFinite);
+    const intakeAvg = mean(intakes);
+    const medianIntake = median(intakes);
+    const completionRatios = logged.map((r) => {
+      const goal = Number(r.goals && r.goals.kcal);
+      return Number.isFinite(r.kcal) && Number.isFinite(goal) && goal > 0 ? r.kcal / goal : null;
+    }).filter(Number.isFinite);
+    const completionRatio = median(completionRatios);
+    const oneItemLowDays = logged.filter((row) => {
+      const goal = Number(row.goals && row.goals.kcal);
+      return row.itemCount <= 1 && Number.isFinite(goal) && goal > 0 && row.kcal < goal * 0.75;
+    }).length;
+    const oneItemLowShare = logged.length ? oneItemLowDays / logged.length : 0;
+    const partial = partialDays(rows, o);
 
     const base = {
-      tdee: null, marginKcal: null, intakeAvg, kgPerWeek: rate ? rate.kgPerWeek : null,
+      tdee: null, marginKcal: null, intervalLow: null, intervalHigh: null,
+      intakeAvg, medianIntake, completionRatio,
+      kgPerWeek: rate ? rate.kgPerWeek : null,
       loggedDays: logged.length, rangeDays, coverage, weighIns, spanDays,
-      confidence: "none", reason: "",
+      fitR2: rate ? rate.r2 : null,
+      fitRmseKg: rate ? rate.rmseKg : null,
+      partialLogDays: partial.flagged.length,
+      oneItemLowDays,
+      oneItemLowShare,
+      confidence: "none", actionable: false, reason: "", actionReason: "",
     };
 
     if (!rate || weighIns < 3) {
@@ -358,20 +419,70 @@ const Analytics = (() => {
     }
 
     const tdee = intakeAvg - rate.kgPerDay * kcalPerKg;
-    // 95% band on the slope, carried through to kcal.
-    const margin = 1.96 * (rate.seKgPerDay || 0) * kcalPerKg;
+    // Combine uncertainty in mean intake with uncertainty in the weight slope.
+    // This is an approximate 95% band, but materially more honest than showing
+    // only the regression term when intake itself swings widely.
+    const intakeSe = intakes.length > 1 ? (stdev(intakes) || 0) / Math.sqrt(intakes.length) : 0;
+    const slopeKcalSe = (rate.seKgPerDay || 0) * kcalPerKg;
+    const modeledMargin = 1.96 * Math.sqrt(intakeSe * intakeSe + slopeKcalSe * slopeKcalSe);
+    const margin = Math.max(MIN_TDEE_MARGIN_KCAL, modeledMargin);
+    const intervalLow = Number.isFinite(margin) ? tdee - margin : null;
+    const intervalHigh = Number.isFinite(margin) ? tdee + margin : null;
 
-    let confidence = "low";
-    if (spanDays >= 21 && weighIns >= 10 && coverage >= 0.8) confidence = "high";
-    else if (spanDays >= 14 && weighIns >= 6 && coverage >= 0.65) confidence = "medium";
+    let sampleConfidence = "low";
+    if (spanDays >= 21 && weighIns >= 10 && coverage >= 0.8) sampleConfidence = "high";
+    else if (spanDays >= 14 && weighIns >= 6 && coverage >= 0.65) sampleConfidence = "medium";
+
+    const minPlausibleIntake = Number.isFinite(o.minPlausibleIntakeKcal)
+      ? o.minPlausibleIntakeKcal : 800;
+    const minCompletionRatio = Number.isFinite(o.minCompletionRatio)
+      ? o.minCompletionRatio : 0.65;
+    const intakePlausible = Number.isFinite(medianIntake) && medianIntake >= minPlausibleIntake &&
+      (completionRatio == null || completionRatio >= minCompletionRatio) && oneItemLowShare < 0.5;
+    const fitPlausible = Number.isFinite(rate.rmseKg) && rate.rmseKg <= (o.maxFitRmseKg || 0.75);
+    const ratePlausible = Math.abs(rate.kgPerWeek) <= (o.maxAbsKgPerWeek || 1.5);
+    const minPlausibleTdee = Number.isFinite(o.minPlausibleTdeeKcal)
+      ? o.minPlausibleTdeeKcal : MIN_AUTOMATED_KCAL;
+    const maxPlausibleTdee = Number.isFinite(o.maxPlausibleTdeeKcal)
+      ? o.maxPlausibleTdeeKcal : MAX_AUTOMATED_KCAL;
+    const estimatePlausible = Number.isFinite(tdee) &&
+      tdee >= minPlausibleTdee && tdee <= maxPlausibleTdee &&
+      Number.isFinite(intervalLow) && intervalLow >= 1000 &&
+      Number.isFinite(intervalHigh) && intervalHigh <= MAX_AUTOMATED_KCAL;
+    const marginPlausible = Number.isFinite(margin) && margin <= (o.maxActionMarginKcal || 400);
+    const actionProblems = [];
+    if (sampleConfidence === "low") actionProblems.push("needs a stronger span of complete food logs and weigh-ins");
+    if (!intakePlausible) {
+      actionProblems.push("logged intake looks too incomplete to drive an automated target");
+    }
+    if (oneItemLowShare >= 0.5) {
+      actionProblems.push("most days contain only one low-calorie item and are likely partial logs");
+    }
+    if (!fitPlausible) actionProblems.push("weight readings do not fit a stable enough trend");
+    if (!ratePlausible) actionProblems.push("the inferred weight-change rate is outside the supported range");
+    if (!estimatePlausible) actionProblems.push("the expenditure estimate is outside the supported range");
+    if (!marginPlausible) actionProblems.push("the uncertainty range is too wide");
+    if (partial.flagged.length) {
+      actionProblems.push(`${partial.flagged.length} unusually low-intake day(s) may be incomplete`);
+    }
+
+    const actionable = actionProblems.length === 0;
+    const confidence = actionable ? sampleConfidence : "low";
 
     return {
       ...base,
       tdee,
       marginKcal: Number.isFinite(margin) ? margin : null,
+      intervalLow,
+      intervalHigh,
       kgPerWeek: rate.kgPerWeek,
+      fitR2: rate.r2,
+      fitRmseKg: rate.rmseKg,
       confidence,
+      actionable,
+      intakePlausible,
       reason: "",
+      actionReason: actionProblems.join("; "),
     };
   }
 
@@ -457,7 +568,7 @@ const Analytics = (() => {
   /**
    * How much each target contributes to the score.
    *
-   * A flat average across the six nutrients is the obvious choice and the wrong
+   * A flat average across the seven tracked nutrients is the obvious choice and the wrong
    * one, for two reasons.
    *
    * First, they are not independent. Protein and carbs are 4 kcal/g and fat is
@@ -477,20 +588,16 @@ const Analytics = (() => {
     kcal: 0.30,     // energy adherence — the primary lever
     protein: 0.30,  // floor, most often missed, most outcome-relevant at fixed kcal
     fiber: 0.20,    // floor, and a genuinely separate behaviour: food quality
-    // One 0.10 slot for sodium handling, filled by whichever measure the day's
-    // data supports. The Na:K ratio is the better predictor and already
-    // contains both numbers, so scoring sodium *and* potassium *and* the ratio
-    // would count the same behaviour three times — the mistake this weighting
-    // exists to avoid. On days without enough potassium data the ratio cannot
-    // be computed, and plain sodium takes the slot instead.
+    // Exactly one 0.10 mineral-completeness slot. Joint-covered days require
+    // sodium, potassium, and their paired ratio. Otherwise both independently
+    // complete absolute minerals are required; incomplete days are skipped.
     naK: 0.10,
-    sodium: 0.10,   // fallback only — never scored on the same day as naK
     carbs: 0.05,    // largely implied once calories and protein land
     fat: 0.05,
   };
 
-  /** Nutrients the score walks, including the ratio pseudo-nutrient. */
-  const SCORED_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "naK", "sodium"];
+  /** Non-mineral nutrients scored directly; minerals are one composite below. */
+  const SCORED_KEYS = ["kcal", "protein", "carbs", "fat", "fiber"];
 
   /**
    * One headline number, 0–100, so the tab opens with an answer rather than a
@@ -512,15 +619,58 @@ const Analytics = (() => {
 
     if (typeof scoreDay === "function") {
       const tally = {};
-      for (const k of SCORED_KEYS) tally[k] = { hit: 0, n: 0 };
-      for (const d of loggedRows(days)) {
+      for (const k of SCORED_KEYS) {
+        tally[k] = { hit: 0, n: 0 };
+      }
+      const mineralHandling = {
+        hit: 0, n: 0, jointN: 0, absoluteN: 0,
+        ratioHits: 0, sodiumHits: 0, potassiumHits: 0,
+      };
+      const todayKey = opts && opts.todayKey;
+      const targetRows = loggedRows(days).filter((d) => !(todayKey && d.day === todayKey));
+      for (const d of targetRows) {
         const s = scoreDay(toTotalsLike(d), d.goals || {});
         if (!s) continue;
-        // Exactly one of naK / sodium is scored per day: the ratio when the
-        // day's potassium data supports it, plain sodium when it does not.
-        const ratioScored = !!(s.naK && s.naK.status !== "skip");
-        for (const k of SCORED_KEYS) {
-          if (k === "sodium" && ratioScored) continue;
+        const goals = d.goals || {};
+        const enabled = (key, fallback) => {
+          const raw = goals[key] ?? fallback;
+          const value = Number(raw);
+          return Number.isFinite(value) && value > 0;
+        };
+        const ratioEnabled = enabled("naK", 1.0);
+        const sodiumEnabled = enabled("sodium", null);
+        const potassiumEnabled = enabled("potassium", null);
+        const ratioCell = ratioEnabled && s.naK && s.naK.status !== "skip" ? s.naK : null;
+        const sodiumCell = sodiumEnabled && s.sodium && s.sodium.status !== "skip" ? s.sodium : null;
+        const potassiumCell = potassiumEnabled && s.potassium && s.potassium.status !== "skip" ? s.potassium : null;
+        const enabledAbsolutes = [
+          sodiumEnabled ? sodiumCell : undefined,
+          potassiumEnabled ? potassiumCell : undefined,
+        ].filter((cell) => cell !== undefined);
+        const absolutesUsable = enabledAbsolutes.length > 0 && enabledAbsolutes.every(Boolean);
+
+        // A jointly covered day can enforce the ratio plus whichever absolute
+        // constraints are enabled. A zero goal is disabled, not a required
+        // cell that can only ever miss. Without a usable ratio, fall back to
+        // the enabled absolute constraints only when all of them are covered.
+        if (ratioCell) {
+          if (!enabledAbsolutes.every(Boolean)) continue;
+          mineralHandling.n += 1;
+          mineralHandling.jointN += 1;
+          if (ratioCell.status === "hit") mineralHandling.ratioHits += 1;
+          if (sodiumCell && sodiumCell.status === "hit") mineralHandling.sodiumHits += 1;
+          if (potassiumCell && potassiumCell.status === "hit") mineralHandling.potassiumHits += 1;
+          if (ratioCell.status === "hit" && enabledAbsolutes.every((cell) => cell.status === "hit")) {
+            mineralHandling.hit += 1;
+          }
+        } else if (absolutesUsable) {
+          mineralHandling.n += 1;
+          mineralHandling.absoluteN += 1;
+          if (sodiumCell && sodiumCell.status === "hit") mineralHandling.sodiumHits += 1;
+          if (potassiumCell && potassiumCell.status === "hit") mineralHandling.potassiumHits += 1;
+          if (enabledAbsolutes.every((cell) => cell.status === "hit")) mineralHandling.hit += 1;
+        }
+        for (const k of Object.keys(tally)) {
           const cell = s[k];
           if (!cell || cell.status === "skip") continue;
           tally[k].n += 1;
@@ -528,12 +678,32 @@ const Analytics = (() => {
         }
       }
       let acc = 0, wsum = 0;
-      for (const k of SCORED_KEYS) {
+      for (const k of Object.keys(tally)) {
         const t = tally[k];
         if (!t.n) continue; // no goal set for this nutrient in this range
         const w = SCORE_WEIGHTS[k] || 0;
         const hitRate = t.hit / t.n;
         nutrients.push({ key: k, label: LABEL[k], weight: w, hitRate, hit: t.hit, n: t.n });
+        acc += hitRate * w;
+        wsum += w;
+      }
+      if (mineralHandling.n) {
+        const hitRate = mineralHandling.hit / mineralHandling.n;
+        const w = SCORE_WEIGHTS.naK;
+        nutrients.push({
+          key: "naK",
+          label: "Mineral balance",
+          mode: mineralHandling.jointN && mineralHandling.absoluteN ? "mixed" : (mineralHandling.jointN ? "joint" : "absolute"),
+          ratioN: mineralHandling.jointN,
+          sodiumN: mineralHandling.absoluteN,
+          ratioHits: mineralHandling.ratioHits,
+          absoluteSodiumHits: mineralHandling.sodiumHits,
+          potassiumHits: mineralHandling.potassiumHits,
+          weight: w,
+          hitRate,
+          hit: mineralHandling.hit,
+          n: mineralHandling.n,
+        });
         acc += hitRate * w;
         wsum += w;
       }
@@ -593,10 +763,16 @@ const Analytics = (() => {
       c: { mean: row.carbs || 0 },
       f: { mean: row.fat || 0 },
       fb: { mean: row.fiber || 0 },
-      na: { mean: row.sodium || 0 },
+      na: { mean: Number.isFinite(row.sodium) ? row.sodium : 0 },
+      naCoverage: Number.isFinite(row.naCoverage) ? row.naCoverage : 0,
+      naItems: row.naItems || 0,
       k: { mean: row.potassium == null ? 0 : row.potassium },
       kCoverage: row.kCoverage || 0,
       kItems: row.kItems || 0,
+      naKNa: { mean: Number.isFinite(row.pairedSodium) ? row.pairedSodium : 0 },
+      naKK: { mean: Number.isFinite(row.pairedPotassium) ? row.pairedPotassium : 0 },
+      naKCoverage: row.naKCoverage || 0,
+      naKItems: row.naKItems || 0,
     };
   }
 
@@ -746,10 +922,10 @@ const Analytics = (() => {
    * not just calories — is what turns this from trivia into something you can
    * act on ("my sodium is one soup").
    *
-   * @param {string} metric one of kcal | protein | sodium | fiber
+   * @param {string} metric one of kcal | protein | sodium | potassium | fiber
    */
   function topFoods(keys, entriesForDay, metric, limit) {
-    const field = { kcal: "kcal", protein: "p", sodium: "na", fiber: "fb", carbs: "c", fat: "f" }[metric] || "kcal";
+    const field = { kcal: "kcal", protein: "p", sodium: "na", potassium: "k", fiber: "fb", carbs: "c", fat: "f" }[metric] || "kcal";
     const agg = new Map();
     let grand = 0;
     for (const day of keys || []) {
@@ -785,7 +961,8 @@ const Analytics = (() => {
    * nutrient landed against that day's target. Whole-range consistency at a
    * glance, in the layout everyone already understands from commit graphs.
    */
-  function heatmapCells(days, key, scoreDay) {
+  function heatmapCells(days, key, scoreDay, opts) {
+    const excludeDay = opts && (opts.excludeDay || opts.todayKey);
     return (days || []).map((d) => {
       const goal = (d.goals || {})[key] || 0;
       const value = d[key];
@@ -793,7 +970,10 @@ const Analytics = (() => {
       let ratio = null;
       if (d.logged && Number.isFinite(value)) {
         ratio = goal ? value / goal : null;
-        if (typeof scoreDay === "function") {
+        if (excludeDay && d.day === excludeDay) {
+          // Keep the activity visible without grading an in-progress day.
+          status = "logged";
+        } else if (typeof scoreDay === "function") {
           const s = scoreDay(toTotalsLike(d), d.goals || {});
           status = (s && s[key] && s[key].status) || "hit";
           if (status === "skip") status = "logged";
@@ -925,7 +1105,7 @@ const Analytics = (() => {
       });
     }
 
-    const partial = partialDays(days);
+    const partial = partialDays(days, opts);
     if (partial.flagged.length) {
       const n = partial.flagged.length;
       const adj = partial.adjustedAvg != null
@@ -938,15 +1118,18 @@ const Analytics = (() => {
       });
     }
 
-    const bumps = bumpAudit(days);
+    const bumps = bumpAudit(days, opts);
     if (bumps.total) {
       const retro = bumps.retroactive
-        ? ` ${bumps.retroactive} ${bumps.retroactive === 1 ? "was" : "were"} set after the day ended.`
+        ? ` ${bumps.retroactive} ${bumps.retroactive === 1 ? "was" : "were"} set after logging began.`
+        : "";
+      const unknown = bumps.unknown
+        ? ` Planning provenance is unknown for ${bumps.unknown} legacy ${bumps.unknown === 1 ? "record" : "records"}.`
         : "";
       out.push({
         id: "bumps",
-        tone: bumps.retroactive ? "watch" : "info",
-        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used a target bump, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted target.${retro}`,
+        tone: bumps.retroactive || bumps.unknown ? "watch" : "info",
+        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used an energy adjustment, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted calorie target.${retro}${unknown}`,
       });
     }
 
@@ -972,7 +1155,8 @@ const Analytics = (() => {
     const o = opts || {};
     const ratio = o.ratio || 0.4;
     const maxItems = o.maxItems || 2;
-    const logged = loggedRows(days);
+    const excludeDay = o.excludeDay || o.todayKey || null;
+    const logged = loggedRows(days).filter((d) => !(excludeDay && d.day === excludeDay));
     const empty = { flagged: [], median: null, avg: null, adjustedAvg: null, threshold: null };
     if (logged.length < 5) return empty; // no baseline worth trusting yet
 
@@ -1001,31 +1185,52 @@ const Analytics = (() => {
   }
 
   /**
-   * Which days had their targets bumped, and which of those were bumped after
-   * the fact.
+   * Which days had a one-day energy adjustment, and which were adjusted after
+   * the fact. Old records may contain macro/electrolyte bump keys; only their
+   * kcal delta remains effective or appears in this audit.
    *
-   * Bumping is legitimate — a planned refeed or a wedding genuinely has a
-   * different target, and scoring it against the plan you set beats pretending
-   * every day is identical. But because a bump moves the target, it converts an
-   * "over" day into a "hit", so an unmarked bump makes adherence self-marking.
-   * Recording them, and separating planned from retroactive, keeps the feature
-   * useful without letting it quietly launder a miss.
+   * An energy adjustment is legitimate — a planned refeed or a wedding can
+   * genuinely have a different calorie target. Because it can convert an
+   * "over" day into a "hit", recording planned versus retroactive adjustments
+   * keeps the feature useful without making adherence self-marking.
    */
-  function bumpAudit(days) {
+  function bumpAudit(days, opts) {
+    const excludeDay = opts && (opts.excludeDay || opts.todayKey);
     const rows = [];
     let retroactive = 0;
+    let planned = 0;
+    let unknown = 0;
     let kcalTotal = 0;
     for (const d of days || []) {
+      if (excludeDay && d.day === excludeDay) continue;
       const b = d.bump;
-      if (!b || !b.bumps) continue;
-      const entries = Object.entries(b.bumps).filter(([, v]) => Number(v));
-      if (!entries.length) continue;
-      const retro = bumpIsRetroactive(d.day, b.updatedAt);
-      if (retro) retroactive += 1;
-      kcalTotal += Number(b.bumps.kcal) || 0;
-      rows.push({ day: d.day, bumps: b.bumps, retroactive: retro, logged: d.logged });
+      if (!b) continue;
+      // Resolved goals carry the phase-aware delta even for the oldest
+      // absolute `{kcal: ...}` dayGoal shape. Fall back to the raw modern bump
+      // so callers that provide audit rows directly remain compatible.
+      const resolvedKcal = d.goals && d.goals._bumps && d.goals._bumps.kcal;
+      const rawKcal = b.bumps && b.bumps.kcal;
+      const kcal = Number(resolvedKcal != null ? resolvedKcal : rawKcal);
+      if (!Number.isFinite(kcal) || kcal === 0) continue;
+      const recordedAt = numOrNull(b.plannedAt != null ? b.plannedAt : b.updatedAt);
+      const firstAdd = numOrNull(d.firstAddAt);
+      let provenance = "unknown";
+      if (Number.isFinite(recordedAt) && Number.isFinite(firstAdd)) {
+        provenance = recordedAt < firstAdd ? "planned" : "retroactive";
+      }
+      if (provenance === "retroactive") retroactive += 1;
+      else if (provenance === "planned") planned += 1;
+      else unknown += 1;
+      kcalTotal += kcal;
+      rows.push({
+        day: d.day,
+        bumps: { kcal },
+        retroactive: provenance === "retroactive",
+        provenance,
+        logged: d.logged,
+      });
     }
-    return { total: rows.length, retroactive, planned: rows.length - retroactive, kcalTotal, days: rows };
+    return { total: rows.length, retroactive, planned, unknown, kcalTotal, days: rows };
   }
 
   // ----------------------------------------------------------- comparison
@@ -1096,21 +1301,53 @@ const Analytics = (() => {
    * fat, split in whatever ratio they already sit at, so the macros still add
    * up to the calories instead of silently contradicting them.
    */
-  function retargetForKcal(goals, newKcal) {
+  function retargetForKcal(goals, newKcal, opts) {
     const g = { ...(goals || {}) };
-    const kcal = Math.max(800, Math.round(Number(newKcal) / 10) * 10);
-    const proteinKcal = (Number(g.protein) || 0) * 4;
-    const remaining = Math.max(0, kcal - proteinKcal);
-    const curCarbKcal = (Number(g.carbs) || 0) * 4;
-    const curFatKcal = (Number(g.fat) || 0) * 9;
-    const curTotal = curCarbKcal + curFatKcal;
+    const rawKcal = Number(newKcal);
+    if (!Number.isFinite(rawKcal) || rawKcal < MIN_AUTOMATED_KCAL || rawKcal > MAX_AUTOMATED_KCAL) {
+      return null;
+    }
+    const kcal = Math.round(rawKcal / 10) * 10;
+    const protein = Number(g.protein);
+    if (!Number.isFinite(protein) || protein < 0) return null;
+    const requestedFatFloor = Number(opts && opts.minFatGrams);
+    const minFat = Number.isFinite(requestedFatFloor)
+      ? Math.max(MIN_RETARGET_FAT_G, requestedFatFloor)
+      : MIN_RETARGET_FAT_G;
+    const proteinKcal = protein * 4;
+    const protectedKcal = proteinKcal + minFat * 9;
+    // Never manufacture an internally contradictory goal. The caller can ask
+    // the person to choose more energy or explicitly revise protected protein.
+    if (protectedKcal > kcal) return null;
+
+    const available = kcal - protectedKcal;
+    const curCarbKcal = Math.max(0, Number(g.carbs) || 0) * 4;
+    const curExtraFatKcal = Math.max(0, (Number(g.fat) || 0) - minFat) * 9;
+    const curTotal = curCarbKcal + curExtraFatKcal;
     const carbShare = curTotal > 0 ? curCarbKcal / curTotal : 0.55;
-    const round5 = (n) => Math.max(0, Math.round(n / 5) * 5);
+
+    // Search the small integer space so Atwater calories never exceed the
+    // target and land within at most 3 kcal, while preserving the prior split
+    // as closely as integer grams allow.
+    let best = null;
+    for (let extraFat = 0; extraFat <= Math.floor(available / 9); extraFat++) {
+      const remaining = available - extraFat * 9;
+      const carbs = Math.max(0, Math.floor(remaining / 4));
+      const used = carbs * 4 + extraFat * 9;
+      const gap = available - used;
+      const share = available > 0 ? (carbs * 4) / available : carbShare;
+      const splitError = Math.abs(share - carbShare);
+      if (!best || gap < best.gap || (gap === best.gap && splitError < best.splitError)) {
+        best = { carbs, fat: minFat + extraFat, gap, splitError };
+      }
+    }
+    if (!best || best.gap > 3) return null;
     return {
       ...g,
       kcal,
-      carbs: round5((remaining * carbShare) / 4),
-      fat: round5((remaining * (1 - carbShare)) / 9),
+      protein,
+      carbs: best.carbs,
+      fat: best.fat,
     };
   }
 
@@ -1133,7 +1370,9 @@ const Analytics = (() => {
   }
 
   return {
-    KCAL_PER_KG, DOW_LABEL, MEALS, NUTRIENTS, TOTALS_KEY, UNIT, LABEL,
+    KCAL_PER_KG, MIN_AUTOMATED_KCAL, MAX_AUTOMATED_KCAL, MIN_RETARGET_FAT_G,
+    MIN_TDEE_MARGIN_KCAL,
+    DOW_LABEL, MEALS, NUTRIENTS, TOTALS_KEY, UNIT, LABEL,
     dayKeyFromDate, dateOf, addDays, daysBetween, weekStart, shortDate,
     buildDays, loggedRows, toTotalsLike,
     mean, median, stdev, summaryStats, rollingMean, linearFit,

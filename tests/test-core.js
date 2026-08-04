@@ -166,6 +166,253 @@ console.log("\n[5b] portionStats (weigh-first history)");
   Ledger.clearAll();
 }
 
+console.log("\n[5c] Ledger causality, completeness, and durable writes");
+{
+  const day = "2026-08-03";
+  const base = {
+    id: "entry-clock-skew", name: "soup", displayQty: "1 bowl", grams: 300,
+    macros: { kcal: 200, p: 8, c: 20, f: 9, fb: 3, na: 900, k: 400 },
+    sd: 0.1,
+  };
+
+  // The remove/amend references establish causality even when the originating
+  // device's wall clock is behind the device that created the add.
+  Ledger.replaceAll([
+    { id: "remove-early-clock", ts: 50, day, type: "remove", target: base.id },
+    { id: "add-late-clock", ts: 100, day, type: "add", entry: base },
+  ]);
+  ok(Ledger.entriesFor(day).length === 0, "clock-skewed remove is replayed after its causal add");
+
+  Ledger.replaceAll([
+    { id: "amend-early-clock", ts: 50, day, type: "amend", target: base.id, patch: { grams: 350, displayQty: "350 g" } },
+    { id: "add-late-clock", ts: 100, day, type: "add", entry: base },
+  ]);
+  const skewed = Ledger.entriesFor(day)[0];
+  ok(skewed && skewed.grams === 350 && skewed.history.length === 1,
+    "clock-skewed amend is not silently discarded");
+
+  const mineralTotals = Ledger.totalsOf([
+    { macros: { kcal: 300, na: 600, k: 900 }, sd: 0.1 },
+    { macros: { kcal: 100, na: null, k: null }, sd: 0.1 },
+  ]);
+  ok(mineralTotals.na.mean === 600 && mineralTotals.naItems === 1, "sodium sums only known values");
+  approx(mineralTotals.naCoverage, 0.5, 0.001, "sodium coverage conservatively uses the lower of calorie and item share");
+  approx(mineralTotals.kCoverage, 0.5, 0.001, "potassium coverage uses the same conservative contract");
+  const zeroCalUnknown = Ledger.totalsOf([
+    { macros: { kcal: 300, na: 600, k: 900 }, sd: 0.1 },
+    { macros: { kcal: 0, na: null, k: null }, sd: 0.1 },
+  ]);
+  approx(zeroCalUnknown.naCoverage, 0.5, 0.001, "a zero-calorie sodium unknown still lowers item coverage");
+  approx(zeroCalUnknown.kCoverage, 0.5, 0.001, "a zero-calorie potassium unknown still lowers item coverage");
+  const disjointMinerals = Ledger.totalsOf([
+    { macros: { kcal: 100, na: 400, k: null }, sd: 0.1 },
+    { macros: { kcal: 100, na: null, k: 800 }, sd: 0.1 },
+    { macros: { kcal: 100, na: 200, k: 500 }, sd: 0.1 },
+  ]);
+  ok(disjointMinerals.na.mean === 600 && disjointMinerals.k.mean === 1300,
+    "independent mineral totals include their separately known entries");
+  ok(disjointMinerals.naKNa.mean === 200 && disjointMinerals.naKK.mean === 500 && disjointMinerals.naKItems === 1,
+    "paired ratio totals use only entries where both minerals are known");
+
+  Ledger.replaceAll([{ id: "ever-add", ts: 10, day, type: "add", entry: { ...base, id: "ever-entry" } },
+    { id: "ever-remove", ts: 20, day, type: "remove", target: "ever-entry" }]);
+  ok(Ledger.entriesFor(day).length === 0 && Ledger.hasEverAdded(day),
+    "immutable add history remains after the last visible entry is removed");
+  ok(Ledger.firstAddAt(day) === 10, "first-add audit timestamp comes from immutable history");
+
+  // A rejected write must not mutate the in-memory working copy and exposes a
+  // stable, actionable error contract to app/sync callers.
+  let raw = "[]";
+  const readable = {
+    getItem: () => raw,
+    setItem: (_key, value) => { raw = String(value); },
+    removeItem: () => { raw = "[]"; },
+  };
+  Ledger._setStoreForTests(readable);
+  Ledger.replaceAll([{ id: "kept", ts: 1, day, type: "add", entry: { ...base, id: "kept-entry" } }]);
+  Ledger._setStoreForTests({
+    getItem: () => raw,
+    setItem: () => { throw new Error("quota"); },
+    removeItem: () => { throw new Error("quota"); },
+  });
+  let persistenceErr = null;
+  try { Ledger.addEntry(day, { ...base, id: "rejected-entry" }); }
+  catch (e) { persistenceErr = e; }
+  ok(Ledger.isPersistenceError(persistenceErr) && persistenceErr.operation === "save",
+    "failed localStorage write throws the ledger persistence contract");
+  ok(Ledger.allEvents().length === 1 && Ledger.allEvents()[0].id === "kept",
+    "failed localStorage write leaves the working copy unchanged");
+
+  // Restore a functioning isolated store for the remainder of this process.
+  let cleanRaw = "[]";
+  Ledger._setStoreForTests({
+    getItem: () => cleanRaw,
+    setItem: (_key, value) => { cleanRaw = String(value); },
+    removeItem: () => { cleanRaw = "[]"; },
+  });
+  Ledger.clearAll();
+}
+
+console.log("\n[5d] Causal ledger convergence");
+{
+  Ledger.clearAll();
+  const day = "2026-08-04";
+  const base = {
+    id: "causal-entry", name: "oats", displayQty: "100 g", grams: 100,
+    macros: { kcal: 380, p: 13, c: 68, f: 7, fb: 10, na: 5, k: 360 },
+    sd: 0.1, meal: "breakfast",
+  };
+
+  const added = Ledger.addEntry(day, base);
+  const amended = Ledger.amendEntry(day, base.id, { grams: 110, displayQty: "110 g" }, "quantity edited");
+  const removed = Ledger.removeEntry(day, base.id, "removed");
+  const immutablePrefix = JSON.stringify(Ledger.allEvents());
+  const restored = Ledger.addEntry(day, { ...base, grams: 110, displayQty: "110 g" });
+  ok(added.causal.entryId === base.id && added.causal.seq === 0 && added.causal.parentEventId === null,
+    "initial add records an explicit seq-0 causal root");
+  ok(amended.causal.seq === 1 && amended.causal.parentEventId === added.id,
+    "amend links the current per-entry head");
+  ok(removed.causal.seq === 2 && removed.causal.parentEventId === amended.id,
+    "remove advances the per-entry logical clock");
+  ok(restored.causal.seq === 3 && restored.causal.parentEventId === removed.id,
+    "undo restore is an add linked to the removed head");
+  ok(JSON.stringify(Ledger.allEvents().slice(0, 3)) === immutablePrefix && Ledger.allEvents().length === 4,
+    "restore appends without rewriting prior causal history");
+  ok(Ledger.validateEvents(Ledger.allEvents()) && Ledger.entriesFor(day)[0].grams === 110,
+    "generated causal history validates and restores the same entry identity");
+  let duplicateLive = null;
+  try { Ledger.addEntry(day, base); } catch (e) { duplicateLive = e; }
+  ok(duplicateLive && duplicateLive.code === "ledger-causal-duplicate-live-add",
+    "local duplicate add of a live identity fails closed");
+
+  const root = {
+    id: "root", ts: 100, day, type: "add",
+    causal: { entryId: "forked", seq: 0, parentEventId: null },
+    entry: { ...base, id: "forked" },
+  };
+  const qtyA = {
+    id: "fork-a", ts: 100, day, type: "amend", target: "forked",
+    causal: { entryId: "forked", seq: 1, parentEventId: "root" },
+    patch: { grams: 120, displayQty: "120 g" },
+  };
+  const mealB = {
+    id: "fork-b", ts: 100, day, type: "amend", target: "forked",
+    causal: { entryId: "forked", seq: 1, parentEventId: "root" },
+    patch: { meal: "lunch" },
+  };
+  const qtyZ = {
+    id: "fork-z", ts: 100, day, type: "amend", target: "forked",
+    causal: { entryId: "forked", seq: 1, parentEventId: "root" },
+    patch: { grams: 130, displayQty: "130 g" },
+  };
+  const forkForward = Ledger.replayEvents([root, qtyA, mealB, qtyZ]);
+  const forkReverse = Ledger.replayEvents([qtyZ, mealB, qtyA, root]);
+  ok(JSON.stringify(forkForward) === JSON.stringify(forkReverse),
+    "same-timestamp sibling replay is independent of input order");
+  ok(forkForward[0].grams === 130 && forkForward[0].meal === "lunch",
+    "compatible sibling amendments merge and same-field conflicts use the canonical winner");
+  ok(forkForward[0].history.length === 3,
+    "all valid sibling amendments remain visible in correction history");
+
+  const siblingRemove = {
+    id: "fork-remove", ts: 1, day, type: "remove", target: "forked",
+    causal: { entryId: "forked", seq: 1, parentEventId: "root" },
+  };
+  const deeperAmend = {
+    id: "fork-deeper", ts: 999, day, type: "amend", target: "forked",
+    causal: { entryId: "forked", seq: 2, parentEventId: "fork-b" },
+    patch: { meal: "dinner" },
+  };
+  ok(Ledger.replayEvents([deeperAmend, siblingRemove, mealB, root]).length === 0,
+    "remove tombstones its generation even against a deeper concurrent amendment branch");
+
+  const laterRestore = {
+    id: "fork-restore", ts: 0, day, type: "add",
+    causal: { entryId: "forked", seq: 2, parentEventId: "fork-remove" },
+    entry: { ...base, id: "forked", meal: "breakfast" },
+  };
+  const afterRestore = Ledger.replayEvents([deeperAmend, siblingRemove, mealB, laterRestore, root]);
+  ok(afterRestore.length === 1 && afterRestore[0].meal === "breakfast" && afterRestore[0].history.length === 0,
+    "causally later restore reactivates a fresh generation without leaking old amendments");
+  Ledger.replaceAll([laterRestore, siblingRemove, root]);
+  ok(Ledger.firstAddAt(day) === 100,
+    "clock-skewed restore add cannot move immutable first-log provenance before the seq-0 root");
+
+  function validationCode(events) {
+    try { Ledger.validateEvents(events); return null; } catch (e) { return e && e.code; }
+  }
+  const orphan = {
+    ...mealB, id: "orphan", causal: { entryId: "forked", seq: 1, parentEventId: "missing" },
+  };
+  ok(validationCode([orphan]) === "ledger-causal-orphan",
+    "validator distinguishes an orphaned causal parent");
+  ok(validationCode([root, { ...mealB, id: "wrong-day", day: "2026-08-05" }]) === "ledger-causal-cross-day",
+    "validator distinguishes a cross-day entry reference");
+  const duplicateAdd = {
+    id: "duplicate-add", ts: 101, day, type: "add",
+    causal: { entryId: "forked", seq: 1, parentEventId: "root" },
+    entry: { ...base, id: "forked" },
+  };
+  ok(validationCode([root, duplicateAdd]) === "ledger-causal-duplicate-live-add",
+    "validator rejects an add whose parent is still live");
+  const removeAgain = {
+    id: "remove-again", ts: 102, day, type: "remove", target: "forked",
+    causal: { entryId: "forked", seq: 2, parentEventId: "fork-remove" },
+  };
+  ok(validationCode([root, siblingRemove, removeAgain]) === "ledger-causal-invalid-transition",
+    "validator rejects amend/remove transitions from a removed parent");
+  ok(Ledger.validateEvents([root, siblingRemove, laterRestore]),
+    "validator accepts an add restore whose parent is removed");
+
+  const legacy = [
+    { id: "legacy-amend", ts: 10, day, type: "amend", target: "legacy-entry", patch: { grams: 160 } },
+    { id: "legacy-add", ts: 100, day, type: "add", entry: { ...base, id: "legacy-entry" } },
+  ];
+  const legacyRaw = JSON.stringify(legacy);
+  const legacyA = Ledger.replayEvents(legacy);
+  const legacyB = Ledger.replayEvents(legacy.slice().reverse());
+  ok(legacyA[0].grams === 160 && JSON.stringify(legacyA) === JSON.stringify(legacyB),
+    "legacy clock-skew fallback is deterministic under reversed input");
+  ok(JSON.stringify(legacy) === legacyRaw && legacy.every((event) => event.causal == null),
+    "legacy causal fallback is derived without rewriting immutable events");
+  const hybrid = {
+    id: "hybrid-amend", ts: 1, day, type: "amend", target: "legacy-entry",
+    causal: { entryId: "legacy-entry", seq: 2, parentEventId: "legacy-amend" },
+    patch: { meal: "snack" },
+  };
+  ok(Ledger.validateEvents([...legacy, hybrid]) && Ledger.replayEvents([hybrid, ...legacy])[0].meal === "snack",
+    "new causal events may safely parent a legacy event's deterministic synthetic sequence");
+
+  Ledger.clearAll();
+  Ledger.configureContext({
+    getResetEpoch: () => 42,
+    getDayGoalLock: () => ({
+      targetKcal: 2550, baseKcal: 2200, plannedAt: 40, veryLowCalorieAcknowledged: true,
+    }),
+  });
+  Ledger.addEntry("2026-09-01", { id: "context-first", name: "first" });
+  Ledger.addEntry("2026-09-01", { id: "context-second", name: "second" });
+  Ledger.amendEntry("2026-09-01", "context-first", { grams: 120 }, "changed");
+  Ledger.removeEntry("2026-09-01", "context-first", "removed");
+  Ledger.addEntry("2026-09-01", { id: "context-first", name: "restored" });
+  const contextEvents = Ledger.allEvents();
+  const contextFirstRoot = contextEvents.find((event) => event.type === "add" &&
+    event.causal && event.causal.entryId === "context-first" && event.causal.seq === 0);
+  const contextSecondRoot = contextEvents.find((event) => event.type === "add" &&
+    event.causal && event.causal.entryId === "context-second" && event.causal.seq === 0);
+  ok(contextFirstRoot && contextFirstRoot.resetEpoch === 42 &&
+      contextFirstRoot.dayGoalLock.targetKcal === 2550 && contextFirstRoot.dayGoalLock.baseKcal === 2200,
+    "the ledger producer stamps the reset generation and target/base snapshot on the first root add");
+  ok(contextSecondRoot && !contextSecondRoot.dayGoalLock &&
+      contextEvents.filter((event) => event.causal && event.causal.entryId === "context-first")
+        .every((event) => event.resetEpoch === 42),
+    "later roots cannot redefine the day lock and amend/remove/restore inherit the root generation");
+  ok(contextEvents.filter((event) => event.type === "add" && event.dayGoalLock).length === 1,
+    "a restore cannot create a second immutable day-target snapshot");
+  Ledger.configureContext({});
+  Ledger.clearAll();
+}
+
 console.log("\n[6] Display formatting");
 {
   ok(FoodMatch.displayQty(2, "pieces", 120) === "2 pieces (120 g)", "household qty shows grams too");
@@ -200,6 +447,190 @@ console.log("\n[7] Phases / goalsForDay");
   ok(settings.phases[0].startDay === "2026-07-01", "phase starts at earliest ledger day");
   ok(Phases.goalsForDay("2026-07-15", settings).kcal === 2200, "historical day uses migrated goals");
 
+  const legacyMigrationA = {
+    goals: { kcal: 1875, protein: 130, carbs: 210, fat: 58, fiber: 27, sodium: 2200 },
+    goalsUpdatedAt: 77, goalsResetEpoch: 75, dayGoals: {}, phases: [], weights: {},
+  };
+  const legacyMigrationB = {
+    goals: { sodium: 2200, fat: 58, kcal: 1875, carbs: 210, fiber: 27, protein: 130 },
+    goalsUpdatedAt: 77, goalsResetEpoch: 75, dayGoals: {}, phases: [], weights: {},
+  };
+  Phases.ensureMigrated(legacyMigrationA, null, "2026-08-01");
+  Phases.ensureMigrated(legacyMigrationB, null, "2026-09-17");
+  ok(legacyMigrationA.phases[0].id === legacyMigrationB.phases[0].id &&
+      legacyMigrationA.phases[0].revisions[0].id === legacyMigrationB.phases[0].revisions[0].id,
+    "no-event legacy phase migration ids do not depend on each device's local today");
+  ok(legacyMigrationA.phases[0].resetEpoch === 75 &&
+      legacyMigrationA.phases[0].revisions[0].resetEpoch === 75,
+    "a deterministic goals-only migration inherits the goals privacy generation");
+  const eventAnchoredMigration = {
+    goals: { kcal: 1875, protein: 130, carbs: 210, fat: 58, fiber: 27, sodium: 2200 },
+    goalsUpdatedAt: 77, goalsResetEpoch: 75, dayGoals: {}, phases: [], weights: {},
+  };
+  Phases.ensureMigrated(eventAnchoredMigration, "2026-06-12", "2026-08-01");
+  ok(eventAnchoredMigration.phases[0].id !== legacyMigrationA.phases[0].id &&
+      eventAnchoredMigration.phases[0].startDay === "2026-06-12",
+    "the earliest immutable event day participates in deterministic legacy identity");
+  const migratedOnce = JSON.stringify(legacyMigrationA);
+  Phases.ensureMigrated(legacyMigrationA, null, "2026-08-01");
+  ok(JSON.stringify(legacyMigrationA) === migratedOnce, "legacy phase migration is idempotent");
+  const freshMigration = { goals: { ...Phases.DEFAULT_GOALS }, goalsUpdatedAt: 0, dayGoals: {}, phases: [], weights: {} };
+  Phases.ensureMigrated(freshMigration, "2026-06-12", "2026-08-01");
+  const migratedLegacyFirst = Phases.mergePhases(
+    legacyMigrationA.phases, freshMigration.phases, []
+  );
+  const migratedFreshFirst = Phases.mergePhases(
+    freshMigration.phases, legacyMigrationA.phases, []
+  );
+  ok(migratedLegacyFirst.length === 1 && migratedFreshFirst.length === 1 &&
+      migratedLegacyFirst[0].revisions[0].goals.kcal === 1875 &&
+      JSON.stringify(migratedLegacyFirst) === JSON.stringify(migratedFreshFirst),
+    "an untouched fresh default cannot override a real deterministic legacy target in either shard order");
+
+  const policyValid = {
+    kcal: 2200, protein: 140, carbs: 250, fat: 70,
+    fiber: 28, sodium: 2300, potassium: 3510,
+  };
+  const policyLow = { ...policyValid, kcal: 700 };
+  const policyMacroInvalid = {
+    kcal: 2200, protein: 400, carbs: 150, fat: 0,
+    fiber: 28, sodium: 2300, potassium: 3510,
+  };
+  ok(!Phases.validatePersistentGoals(policyLow).ok &&
+      Phases.validatePersistentGoals(policyLow).errors.some((error) => /1200/.test(error)),
+    "persistent target policy rejects a 700 kcal imported target");
+  const macroPolicyResult = Phases.validatePersistentGoals(policyMacroInvalid);
+  ok(!macroPolicyResult.ok && /protein.*40%/i.test(macroPolicyResult.errors.join(" ")) &&
+      /fat.*20.*45%/i.test(macroPolicyResult.errors.join(" ")),
+    "persistent target policy rejects 2200 kcal with 400 g protein and zero fat");
+
+  const quarantinedTimeline = {
+    goals: policyMacroInvalid, goalsUpdatedAt: 30, dayGoals: {}, weights: {}, profile: {},
+    phases: [{
+      id: "policy-phase", name: "Maintain v1.2", kind: "maintain",
+      startDay: "2026-01-01", endDay: null, createdAt: 1, updatedAt: 30,
+      revisionTombstones: {}, revisions: [
+        { id: "policy-valid", effectiveFrom: "2026-01-01", goals: policyValid, createdAt: 10, updatedAt: 10 },
+        { id: "policy-low", effectiveFrom: "2026-02-01", goals: policyLow, createdAt: 20, updatedAt: 20 },
+        { id: "policy-macro", effectiveFrom: "2026-03-01", goals: policyMacroInvalid, createdAt: 30, updatedAt: 30 },
+      ],
+    }],
+  };
+  Phases.ensureMigrated(quarantinedTimeline, "2026-01-01", "2026-03-15");
+  const quarantinedPhase = quarantinedTimeline.phases[0];
+  ok(quarantinedPhase.revisions.find((revision) => revision.id === "policy-low").auditOnly === true &&
+      quarantinedPhase.revisions.find((revision) => revision.id === "policy-macro").auditOnly === true &&
+      quarantinedTimeline.goals.kcal === 2200 && quarantinedTimeline.goals.protein === 140,
+    "invalid imported phase revisions remain audit-only while the nearest preceding valid target is active");
+  ok(Phases.goalsForDay("2026-02-15", quarantinedTimeline).kcal === 2200 &&
+      Phases.goalsForDay("2026-03-15", quarantinedTimeline).protein === 140 &&
+      Phases.revisionHistoryRows(quarantinedPhase, "2026-03-15")
+        .filter((row) => row.id !== "policy-valid").every((row) => row.auditOnly && row.validationErrors.length),
+    "audit-only targets cannot feed historical scoring and stay visible in target history");
+  ok(quarantinedTimeline.targetReview && quarantinedTimeline.targetReview.required &&
+      quarantinedTimeline.targetReview.fallback === "preceding-valid" &&
+      quarantinedTimeline.targetReview.invalidRevisionIds.join(",") === "policy-macro",
+    "a bad current target records deterministic review state and its valid fallback");
+
+  const invalidOnlyTimeline = {
+    goals: policyLow, goalsUpdatedAt: 20, dayGoals: {}, weights: {}, profile: {}, phases: [],
+  };
+  Phases.ensureMigrated(invalidOnlyTimeline, null, "2026-03-15");
+  const invalidOnlyAudit = invalidOnlyTimeline.phases[0].revisions[0];
+  const invalidOnlyOnce = JSON.stringify(invalidOnlyTimeline);
+  Phases.ensureMigrated(invalidOnlyTimeline, null, "2026-03-15");
+  ok(invalidOnlyAudit.auditOnly === true && invalidOnlyTimeline.goals.kcal === Phases.DEFAULT_GOALS.kcal &&
+      invalidOnlyTimeline.targetReview && invalidOnlyTimeline.targetReview.fallback === "generic-default" &&
+      JSON.stringify(invalidOnlyTimeline) === invalidOnlyOnce,
+    "invalid-only legacy history gets an idempotent generic fallback and explicit review state");
+
+  const historicalInvalidTimeline = {
+    goals: policyValid, goalsUpdatedAt: 20, dayGoals: {}, weights: {}, profile: {}, phases: [{
+      id: "historical-policy-phase", kind: "maintain", startDay: "2026-01-01", endDay: null,
+      createdAt: 1, updatedAt: 20, revisionTombstones: {}, revisions: [
+        { id: "historical-invalid", effectiveFrom: "2026-01-01", goals: policyLow, createdAt: 10, updatedAt: 10 },
+        { id: "historical-valid", effectiveFrom: "2026-02-01", goals: policyValid, createdAt: 20, updatedAt: 20 },
+      ],
+    }],
+  };
+  Phases.ensureMigrated(historicalInvalidTimeline, "2026-01-01", "2026-03-15");
+  ok(historicalInvalidTimeline.phases[0].revisions[0].auditOnly === true &&
+      !historicalInvalidTimeline.targetReview &&
+      Phases.goalsForDay("2026-03-15", historicalInvalidTimeline).kcal === policyValid.kcal,
+    "an invalid historical revision stays audit-only without blocking a later valid current target");
+
+  const producerTimeline = JSON.parse(JSON.stringify(historicalInvalidTimeline));
+  const producerBefore = JSON.stringify(producerTimeline);
+  let appendPolicyError = null, startPolicyError = null;
+  try { Phases.appendRevision(producerTimeline, policyLow, "2026-04-01", ""); }
+  catch (error) { appendPolicyError = error; }
+  try { Phases.startPhase(producerTimeline, {
+    kind: "cut", goals: policyMacroInvalid, startDay: "2026-04-01", copyGoals: false,
+  }); } catch (error) { startPolicyError = error; }
+  ok(appendPolicyError && appendPolicyError.code === "persistent-target-invalid" &&
+      startPolicyError && startPolicyError.code === "persistent-target-invalid" &&
+      JSON.stringify(producerTimeline) === producerBefore,
+    "phase producers reject unsafe persistent targets without mutating the timeline");
+
+  const kindTimeline = {
+    goals: { ...Phases.DEFAULT_GOALS }, goalsUpdatedAt: 10, dayGoals: {}, phases: [], weights: {},
+  };
+  Phases.ensureMigrated(kindTimeline, "2026-08-01", "2026-08-01");
+  const kindPhase = kindTimeline.phases[0];
+  const governedBeforeKindChange = Phases.governedRevisionUsage(kindTimeline.phases, [{
+    id: "kind-root", ts: 20, day: "2026-08-01", type: "add", entry: { id: "kind-entry" },
+  }]);
+  const beforeUndatedKind = JSON.stringify(kindTimeline);
+  ok(governedBeforeKindChange.length === 1 &&
+      Phases.updatePhaseMeta(kindTimeline, { kind: "cut" }) === false &&
+      JSON.stringify(kindTimeline) === beforeUndatedKind,
+    "an undated kind-only update is refused without rewriting logged history");
+  const datedKindChange = Phases.updatePhaseMeta(kindTimeline, {
+    kind: "cut", effectiveFrom: "2026-08-02",
+  });
+  ok(datedKindChange && kindPhase.revisions.length === 2 &&
+      kindPhase.revisions.every((revision) => revision.kind) &&
+      kindPhase.kind === "maintain" && !/Cut/i.test(kindPhase.name),
+    "a kind-only change creates a dated target revision");
+  ok(Phases.kindForDay(kindPhase, "2026-08-01") === "maintain" &&
+      Phases.kindForDay(kindPhase, "2026-08-02") === "cut" &&
+      /Maintain/i.test(Phases.labelForDay(kindPhase, "2026-08-01")) &&
+      /Cut/i.test(Phases.labelForDay(kindPhase, "2026-08-02")) &&
+      Phases.goalsForDay("2026-08-01", kindTimeline).kcal === Phases.DEFAULT_GOALS.kcal,
+    "revision-dated kind changes leave the previously logged day stable and begin tomorrow");
+  const kindRowsToday = Phases.revisionHistoryRows(kindPhase, "2026-08-01");
+  const kindRowsTomorrow = Phases.revisionHistoryRows(kindPhase, "2026-08-02");
+  ok(kindRowsToday.find((row) => row.current).kind === "maintain" &&
+      kindRowsTomorrow.find((row) => row.current).kind === "cut",
+    "target history marks the revision effective on the viewed day, not a future revision");
+  ok(/^Cut\b/.test(Phases.revisionLabel(
+    { name: "Maintain v1.0", kind: "maintain" },
+    { effectiveFrom: "2026-08-02", kind: "cut", goals: Phases.DEFAULT_GOALS }
+  )), "legacy dated revisions without label/version still display their own kind");
+  const scheduledPhases = [
+    {
+      id: "scheduled-current", name: "Maintain v1.0", kind: "maintain",
+      startDay: "2026-08-01", endDay: "2026-08-01", revisions: [{
+        id: "scheduled-current-rev", effectiveFrom: "2026-08-01", kind: "maintain",
+        goals: Phases.DEFAULT_GOALS, version: "1.0", label: "Maintain v1.0",
+      }],
+    },
+    {
+      id: "scheduled-future", name: "Cut v1.0", kind: "cut",
+      startDay: "2026-08-02", endDay: null, revisions: [{
+        id: "scheduled-future-rev", effectiveFrom: "2026-08-02", kind: "cut",
+        goals: { ...Phases.DEFAULT_GOALS, kcal: 1900 }, version: "1.0", label: "Cut v1.0",
+      }],
+    },
+  ];
+  const scheduledRows = Phases.phaseHistoryRows(
+    { phases: scheduledPhases, weights: {} }, "2026-08-01", () => ({ count: 0 })
+  );
+  ok(Phases.phaseForDay(scheduledPhases, "2026-08-01").id === "scheduled-current" &&
+      scheduledRows.find((row) => row.active).id === "scheduled-current" &&
+      /Maintain/.test(Phases.phaseContext({ phases: scheduledPhases }, "2026-08-01")),
+    "a tomorrow-scheduled phase cannot become today's displayed phase early");
+
   Phases.appendRevision(settings, { ...settings.goals, kcal: 2800, protein: 160 }, "2026-08-01");
   ok(Phases.goalsForDay("2026-07-15", settings).kcal === 2200, "past day unchanged after revision");
   ok(Phases.goalsForDay("2026-08-01", settings).kcal === 2800, "today uses new revision");
@@ -207,20 +638,36 @@ console.log("\n[7] Phases / goalsForDay");
   ok(settings.phases[0].name === "Maintain v2.0", "kcal +600 bumps major to Maintain v2.0");
 
   // same-day second save should replace latest same-day row and bump again
-  Phases.appendRevision(settings, { ...settings.goals, kcal: 2850, protein: 160 }, "2026-08-01");
+  Phases.appendRevision(settings, { ...settings.goals, kcal: 2850, protein: 160, carbs: 260 }, "2026-08-01");
   ok(settings.phases[0].revisions.length === 2, "same-day re-save replaces instead of stacking");
   ok(Phases.goalsForDay("2026-08-01", settings).kcal === 2850, "same-day re-save keeps latest numbers");
   ok(settings.phases[0].name === "Maintain v2.1", "small same-day tweak bumps minor");
 
   settings.dayGoals["2026-08-01"] = { bumps: { kcal: 200, protein: 20 }, updatedAt: 200 };
   ok(Phases.goalsForDay("2026-08-01", settings).kcal === 3050, "day bump adds to phase kcal (2850+200)");
-  ok(Phases.goalsForDay("2026-08-01", settings).protein === 180, "day bump adds to phase protein (160+20)");
+  ok(Phases.goalsForDay("2026-08-01", settings).protein === 160, "legacy day bump cannot move the protein floor");
   ok(Phases.goalsForDay("2026-08-01", settings)._bumps.kcal === 200, "resolved goals expose _bumps");
+  ok(Phases.goalsForDay("2026-08-01", settings)._bumps.protein == null, "resolved one-day bump contains calories only");
 
-  settings.dayGoals["2026-08-02"] = { kcal: 3050, updatedAt: 210 }; // legacy absolute
+  settings.dayGoals["2026-08-02"] = { kcal: 3050, protein: 999, sodium: 9999, updatedAt: 210 }; // legacy absolute
   // phase for 08-02 still 2850/160 from revision
   ok(Phases.goalsForDay("2026-08-02", settings).kcal === 3050, "legacy absolute dayGoals still resolve");
   ok(Phases.goalsForDay("2026-08-02", settings)._bumps.kcal === 200, "legacy absolute converts to bump vs phase");
+  ok(Phases.goalsForDay("2026-08-02", settings).protein === 160 && Phases.goalsForDay("2026-08-02", settings).sodium === 2300,
+    "legacy absolute dayGoals cannot move floor or safety targets");
+
+  const frozenSettings = JSON.parse(JSON.stringify(settings));
+  frozenSettings.dayGoals["2026-08-03"] = {
+    targetKcal: 3100, baseKcal: 2850, plannedAt: 220, updatedAt: 220,
+  };
+  Phases.appendRevision(frozenSettings, {
+    ...Phases.goalsForDay("2026-08-03", { ...frozenSettings, dayGoals: {} }), kcal: 2600,
+  }, "2026-08-03");
+  const frozen = Phases.goalsForDay("2026-08-03", frozenSettings);
+  ok(frozen.kcal === 3100 && frozen._phase.kcal === 2850 && frozen._bumps.kcal === 250,
+    "absolute day plan and its baseline stay frozen across a same-day phase revision");
+  ok(Phases.DEFAULT_GOALS.potassium === 3510,
+    "new installs use the generic WHO adult potassium reference, not a personal prescription");
 
   Phases.startPhase(settings, {
     kind: "bulk",
@@ -250,7 +697,46 @@ console.log("\n[7] Phases / goalsForDay");
   ok(settings.phases[0].revisions.length === 1, "deleteRevision removes one");
   ok(Phases.goalsForDay("2026-08-01", settings).kcal === 2200, "after delete, day falls back to earlier revision");
 
-  Phases.appendRevision(settings, { ...Phases.activePhase(settings.phases).revisions[0].goals, kcal: 3500 }, "2026-08-15", "", { kind: "bulk" });
+  const guardSettings = {
+    goals: { ...settings.goals }, goalsUpdatedAt: 300, dayGoals: {}, weights: {},
+    phases: [{
+      id: "guard-phase", name: "Maintain v1.2", kind: "maintain",
+      startDay: "2026-01-01", endDay: null, createdAt: 1, updatedAt: 30,
+      revisionTombstones: {}, revisions: [
+        { id: "guard-unused", effectiveFrom: "2026-01-01", goals: { ...settings.goals, kcal: 1900, carbs: 150 }, createdAt: 1, updatedAt: 1 },
+        { id: "guard-history", effectiveFrom: "2026-02-01", goals: { ...settings.goals, kcal: 2000, carbs: 175 }, createdAt: 2, updatedAt: 2 },
+        { id: "guard-current", effectiveFrom: "2026-03-01", goals: { ...settings.goals, kcal: 2100, carbs: 200 }, createdAt: 3, updatedAt: 3 },
+      ],
+    }],
+  };
+  const currentAdd = { id: "guard-add-current", ts: 10, day: "2026-03-10", type: "add", entry: { id: "guard-current-entry" } };
+  const removedAdd = { id: "guard-add-removed", ts: 11, day: "2026-02-10", type: "add", entry: { id: "guard-removed-entry" } };
+  const removed = { id: "guard-remove", ts: 12, day: "2026-02-10", type: "remove", target: "guard-removed-entry" };
+  const guardEvents = [currentAdd, removedAdd, removed];
+  const beforeCurrentDelete = JSON.stringify(guardSettings);
+  const currentDelete = Phases.deleteRevision(
+    guardSettings, "guard-phase", "guard-current", "2026-03-10", guardEvents
+  );
+  ok(!currentDelete.ok && currentDelete.reason === "governed" && JSON.stringify(guardSettings) === beforeCurrentDelete,
+    "current target version cannot be deleted after its first immutable add");
+  const beforeHistoricalDelete = JSON.stringify(guardSettings);
+  const historicalDelete = Phases.deleteRevision(
+    guardSettings, "guard-phase", "guard-history", "2026-03-10", guardEvents
+  );
+  ok(!historicalDelete.ok && historicalDelete.reason === "governed" && JSON.stringify(guardSettings) === beforeHistoricalDelete,
+    "historical target version that governed a logged day cannot be deleted");
+  const removedOnly = Phases.revisionDeletionStatus(
+    guardSettings, "guard-phase", "guard-history", [removedAdd, removed]
+  );
+  ok(!removedOnly.ok && removedOnly.reason === "governed",
+    "deleting the last visible entry does not unlock its governing target version");
+  const unusedDelete = Phases.deleteRevision(
+    guardSettings, "guard-phase", "guard-unused", "2026-03-10", guardEvents
+  );
+  ok(unusedDelete.ok && !guardSettings.phases[0].revisions.some((r) => r.id === "guard-unused"),
+    "a target version that never governed an immutable add remains deletable");
+
+  Phases.appendRevision(settings, { ...Phases.activePhase(settings.phases).revisions[0].goals, kcal: 3500, carbs: 400, fat: 80 }, "2026-08-15", "", { kind: "bulk" });
   ok(Phases.activePhase(settings.phases).name === "Bulk v2.0", "large kcal change forces major version");
 
   ok(Phases.normalizeKind("recomp") === "recomp", "recomp is a valid kind");
@@ -265,6 +751,27 @@ console.log("\n[7] Phases / goalsForDay");
   ok(ready.ok && ready.age === 36 && ready.weightKg === 80, "profileReadyForAi when complete");
   ready = Phases.profileReadyForAi({ profile: {}, weights: {} }, { todayKey: "2026-08-15" });
   ok(!ready.ok && ready.missing.length >= 4, "profileReadyForAi lists missing fields");
+  ready = Phases.profileReadyForAi({
+    profile: { dob: "2010-01-01", sex: "female", heightCm: 160, activity: "moderate" },
+    weights: { "2026-08-15": { kg: 55 } },
+  }, { todayKey: "2026-08-15" });
+  ok(!ready.ok && ready.under18, "automated AI targets are blocked for users under 18");
+  const incompleteEligibility = Phases.automatedTargetEligibility(
+    { profile: { dob: "1990-01-01" }, weights: {} }, { todayKey: "2026-08-15" }
+  );
+  ok(incompleteEligibility.status === "review" && !incompleteEligibility.canApply &&
+      /For review only/i.test(incompleteEligibility.message),
+    "incomplete profiles are centralized as review-only with a clear automated-target message");
+  const highRiskEligibility = Phases.automatedTargetEligibility({
+    profile: {
+      dob: "1990-01-01", sex: "female", heightCm: 168, activity: "moderate",
+      notes: "Kidney disease monitored by my clinician",
+    },
+    weights: { "2026-08-15": { kg: 62 } },
+  }, { todayKey: "2026-08-15" });
+  ok(highRiskEligibility.status === "review" && !highRiskEligibility.canApply &&
+      /professional guidance/i.test(highRiskEligibility.message),
+    "high-risk profile notes use the same review-only eligibility gate for TDEE and AI targets");
 
   const scored = Phases.scoreDayTotals(
     { count: 1, kcal: { mean: 2200 }, p: { mean: 100 }, c: { mean: 250 }, f: { mean: 70 }, fb: { mean: 28 }, na: { mean: 2000 } },
@@ -295,6 +802,29 @@ console.log("\n[7] Phases / goalsForDay");
   );
   ok(merged[0].revisions.length === 2, "mergePhases unions revisions by id");
 
+  const tombstoned = Phases.mergePhases(
+    [{ id: "ph-del", updatedAt: 300, startDay: "2026-01-01", revisions: [
+      { id: "keep", effectiveFrom: "2026-01-01", goals: { kcal: 2000 }, createdAt: 100, updatedAt: 100 },
+      { id: "deleted", effectiveFrom: "2026-02-01", goals: { kcal: 2200 }, createdAt: 200, updatedAt: 200 },
+    ] }],
+    [{ id: "ph-del", updatedAt: 500, startDay: "2026-01-01", revisionTombstones: { deleted: 500 }, revisions: [
+      { id: "keep", effectiveFrom: "2026-01-01", goals: { kcal: 2000 }, createdAt: 100, updatedAt: 100 },
+    ] }]
+  );
+  ok(tombstoned[0].revisions.length === 1 && tombstoned[0].revisions[0].id === "keep",
+    "phase revision tombstone prevents stale revision resurrection");
+
+  const revised = Phases.mergePhases(
+    [{ id: "ph-edit", updatedAt: 100, startDay: "2026-01-01", revisions: [
+      { id: "same", effectiveFrom: "2026-01-01", goals: { kcal: 2000 }, createdAt: 50, updatedAt: 100 },
+    ] }],
+    [{ id: "ph-edit", updatedAt: 200, startDay: "2026-01-01", revisions: [
+      { id: "same", effectiveFrom: "2026-01-01", goals: { kcal: 2300 }, createdAt: 50, updatedAt: 200 },
+    ] }]
+  );
+  ok(revised[0].revisions[0].goals.kcal === 2300,
+    "same-id phase revision resolves by revision updatedAt");
+
   const fp1 = require("../js/sync.js").fingerprint({
     resetAt: 0, events: [], personalFoods: [], dayGoals: {}, phases: settings.phases, weights: {}, goals: settings.goals,
   });
@@ -303,6 +833,25 @@ console.log("\n[7] Phases / goalsForDay");
     resetAt: 0, events: [], personalFoods: [], dayGoals: {}, phases: settings.phases, weights: {}, goals: settings.goals,
   });
   ok(fp1 !== fp2, "fingerprint changes when a phase updates");
+  const fpSafetyA = require("../js/sync.js").fingerprint({
+    version: 3, events: [], personalFoods: [], dayGoals: { "2026-08-03": { bumps: { protein: 20, potassium: 0 }, updatedAt: 1 } },
+    phases: [], weights: {}, profile: { notes: "a" }, goals: {},
+  });
+  const fpSafetyB = require("../js/sync.js").fingerprint({
+    version: 3, events: [], personalFoods: [], dayGoals: { "2026-08-03": { bumps: { protein: 200, potassium: 500 }, updatedAt: 1 } },
+    phases: [], weights: {}, profile: { notes: "a" }, goals: {},
+  });
+  ok(fpSafetyA !== fpSafetyB, "fingerprint detects forbidden day bump fields so Drive cleanup is written");
+  const fpCalories = require("../js/sync.js").fingerprint({
+    version: 3, events: [], personalFoods: [], dayGoals: { "2026-08-03": { bumps: { kcal: 500, protein: 200 }, updatedAt: 1 } },
+    phases: [], weights: {}, profile: { notes: "a" }, goals: {},
+  });
+  ok(fpSafetyB !== fpCalories, "fingerprint covers the allowed calorie day bump");
+  const fpProfile = require("../js/sync.js").fingerprint({
+    version: 3, events: [], personalFoods: [], dayGoals: { "2026-08-03": { bumps: { kcal: 500 }, updatedAt: 1 } },
+    phases: [], weights: {}, profile: { notes: "b" }, goals: {},
+  });
+  ok(fpCalories !== fpProfile, "fingerprint covers complete profile fields");
 }
 
 console.log("\n[8] Cloud sync merge (conflict-free by construction)");
@@ -321,6 +870,46 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   ok(merged.length === 3, "event union dedupes shared history");
   ok(merged[0].id === "e1" && merged[1].id === "e3" && merged[2].id === "e2", "merged events re-sort by timestamp (amend lands between adds)");
 
+  const protectedRevision = {
+    id: "sync-governed", effectiveFrom: "2026-02-01",
+    goals: { kcal: 2100, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300, potassium: 3510 },
+    createdAt: 20, updatedAt: 20,
+  };
+  const baseRevision = {
+    id: "sync-base", effectiveFrom: "2026-01-01",
+    goals: { ...protectedRevision.goals, kcal: 2000 }, createdAt: 10, updatedAt: 10,
+  };
+  const livePhase = {
+    id: "sync-phase-guard", name: "Maintain v1.1", kind: "maintain",
+    startDay: "2026-01-01", endDay: null, createdAt: 1, updatedAt: 20,
+    revisionTombstones: {}, revisions: [baseRevision, protectedRevision],
+  };
+  const deletingPhase = {
+    ...livePhase, updatedAt: 500, revisionTombstones: { "sync-governed": 500 },
+    revisions: [baseRevision],
+  };
+  const protectedAdd = {
+    id: "sync-phase-add", ts: 100, day: "2026-02-10", type: "add",
+    entry: { id: "sync-phase-entry", name: "logged under protected revision" },
+  };
+  const phaseDoc = (events, phases) => ({
+    version: 4, resetAt: 0, events, personalFoods: [], dayGoals: {}, dayPlans: {},
+    phases, weights: {}, profile: {}, goals: protectedRevision.goals, goalsUpdatedAt: 20,
+  });
+  const eventShard = phaseDoc([protectedAdd], [livePhase]);
+  const tombstoneShard = phaseDoc([], [deletingPhase]);
+  const guardedForward = Sync.mergeDocs(eventShard, tombstoneShard).doc;
+  const guardedReverse = Sync.mergeDocs(tombstoneShard, eventShard).doc;
+  const guardedPhase = guardedForward.phases[0];
+  ok(guardedPhase.revisions.some((r) => r.id === "sync-governed") &&
+      guardedPhase.revisionTombstones["sync-governed"] == null,
+    "merged immutable add defeats a remote tombstone for its governing target version");
+  ok(Sync.fingerprint(guardedForward) === Sync.fingerprint(guardedReverse),
+    "governing-revision protection converges in both shard orders");
+  const guardedAgain = Sync.mergeDocs(guardedForward, tombstoneShard).doc;
+  ok(Sync.fingerprint(guardedAgain) === Sync.fingerprint(guardedForward),
+    "governing-revision tombstone healing is idempotent and avoids write loops");
+
   // personal foods: newest wins, tombstones propagate deletes
   const pfA = [{ id: "pf1", name: "dal", updatedAt: 100 }, { id: "pf2", name: "smoothie", updatedAt: 500, deleted: true }];
   const pfB = [{ id: "pf1", name: "dal (improved)", updatedAt: 300 }, { id: "pf2", name: "smoothie", updatedAt: 200 }];
@@ -338,6 +927,59 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
 
   const same = Sync.mergeDocs(r.doc, r.doc);
   ok(same.differsFromRemote === false, "idempotent: merging a doc with itself changes nothing");
+
+  const syncPolicyValid = {
+    kcal: 2200, protein: 140, carbs: 250, fat: 70,
+    fiber: 28, sodium: 2300, potassium: 3510,
+  };
+  const syncPolicyLow = { ...syncPolicyValid, kcal: 700 };
+  const syncPolicyMacroInvalid = {
+    kcal: 2200, protein: 400, carbs: 150, fat: 0,
+    fiber: 28, sodium: 2300, potassium: 3510,
+  };
+  const policyShard = (revisions, goals, goalsUpdatedAt, updatedAt) => ({
+    version: 4, resetAt: 0, events: [], personalFoods: [], dayGoals: {}, dayPlans: {}, gapDrafts: {},
+    phases: [{
+      id: "sync-policy-phase", name: "Maintain", kind: "maintain", startDay: "2026-01-01",
+      endDay: null, createdAt: 1, updatedAt, revisionTombstones: {}, revisions,
+    }],
+    weights: {}, profile: {}, goals, goalsUpdatedAt,
+  });
+  const validPolicyShard = policyShard([{
+    id: "sync-policy-valid", effectiveFrom: "2026-01-01", goals: syncPolicyValid,
+    createdAt: 10, updatedAt: 10,
+  }], syncPolicyValid, 10, 10);
+  const invalidPolicyShard = policyShard([{
+    id: "sync-policy-low", effectiveFrom: "2026-02-01", goals: syncPolicyLow,
+    createdAt: 20, updatedAt: 20,
+  }, {
+    id: "sync-policy-macro", effectiveFrom: "2026-03-01", goals: syncPolicyMacroInvalid,
+    createdAt: 30, updatedAt: 30,
+  }], syncPolicyMacroInvalid, 30, 30);
+  const policyForward = Sync.mergeDocs(validPolicyShard, invalidPolicyShard).doc;
+  const policyReverse = Sync.mergeDocs(invalidPolicyShard, validPolicyShard).doc;
+  const policyMergedPhase = policyForward.phases[0];
+  ok(Sync.fingerprint(policyForward) === Sync.fingerprint(policyReverse) &&
+      policyForward.goals.kcal === syncPolicyValid.kcal && policyForward.goals.protein === syncPolicyValid.protein,
+    "Drive merge quarantines unsafe targets and converges on the preceding valid target in either shard order");
+  ok(policyMergedPhase.revisions.find((revision) => revision.id === "sync-policy-low").auditOnly === true &&
+      policyMergedPhase.revisions.find((revision) => revision.id === "sync-policy-macro").auditOnly === true &&
+      Phases.revisionForDay(policyMergedPhase, "2026-04-01").id === "sync-policy-valid",
+    "Drive-retained unsafe revisions are audit-only and cannot become active");
+  ok(Sync.fingerprint(Sync.mergeDocs(policyForward, invalidPolicyShard).doc) === Sync.fingerprint(policyForward),
+    "quarantined Drive target history is idempotent and does not create a write loop");
+  const invalidOnlyForward = Sync.mergeDocs(
+    policyShard([{ id: "only-low", effectiveFrom: "2026-01-01", goals: syncPolicyLow, createdAt: 10, updatedAt: 10 }], syncPolicyLow, 10, 10),
+    policyShard([{ id: "only-macro", effectiveFrom: "2026-02-01", goals: syncPolicyMacroInvalid, createdAt: 20, updatedAt: 20 }], syncPolicyMacroInvalid, 20, 20)
+  ).doc;
+  const invalidOnlyReverse = Sync.mergeDocs(
+    policyShard([{ id: "only-macro", effectiveFrom: "2026-02-01", goals: syncPolicyMacroInvalid, createdAt: 20, updatedAt: 20 }], syncPolicyMacroInvalid, 20, 20),
+    policyShard([{ id: "only-low", effectiveFrom: "2026-01-01", goals: syncPolicyLow, createdAt: 10, updatedAt: 10 }], syncPolicyLow, 10, 10)
+  ).doc;
+  ok(Sync.fingerprint(invalidOnlyForward) === Sync.fingerprint(invalidOnlyReverse) &&
+      invalidOnlyForward.goals.kcal === Phases.DEFAULT_GOALS.kcal &&
+      invalidOnlyForward.phases[0].revisions.every((revision) => revision.auditOnly === true),
+    "invalid-only Drive history converges on the deterministic generic fallback in both shard orders");
 
   // Clear-all resetAt must not resurrect remote history
   const wiped = {
@@ -361,11 +1003,527 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   ok(afterClear.doc.personalFoods.length === 0, "newer resetAt drops pre-reset remote foods");
   ok(afterClear.doc.resetAt === 1000, "resetAt carries forward");
 
-  const dgA = { "2026-08-01": { kcal: 2800, updatedAt: 100 } };
-  const dgB = { "2026-08-01": { kcal: 3000, updatedAt: 200 }, "2026-08-02": { protein: 180, updatedAt: 50 } };
+  const privateCloud = {
+    ...cloud,
+    profile: { dob: "1980-01-01", sex: "female", notes: "private", updatedAt: 900 },
+    goals: { protein: 190 },
+    goalsUpdatedAt: 900,
+  };
+  const privateWipe = {
+    ...wiped,
+    profile: { resetEpoch: 1000 },
+    goals: { protein: 140 },
+    goalsUpdatedAt: 1001,
+    goalsResetEpoch: 1000,
+  };
+  const afterPrivateClear = Sync.mergeDocs(privateWipe, privateCloud);
+  ok(!afterPrivateClear.doc.profile.notes && !afterPrivateClear.doc.profile.dob,
+    "newer reset does not resurrect a stale remote profile");
+  ok(afterPrivateClear.doc.goals.protein === 140,
+    "newer reset keeps reset-era goals instead of stale remote goals");
+  const remotePrivateClear = Sync.mergeDocs(privateCloud, privateWipe);
+  ok(!remotePrivateClear.doc.profile.notes && remotePrivateClear.doc.goals.protein === 140,
+    "remote reset privacy boundary is symmetric");
+
+  const generationGoals = { ...Phases.DEFAULT_GOALS, kcal: 2400, protein: 155 };
+  const oldGenerationRoot = {
+    id: "old-generation-root", ts: 10, day: "2026-07-10", type: "add", resetEpoch: 0,
+    causal: { entryId: "old-generation-entry", seq: 0, parentEventId: null },
+    entry: { id: "old-generation-entry", name: "private old entry", grams: 100 },
+  };
+  const oldGenerationChild = {
+    id: "old-generation-child", ts: 20, day: "2026-07-10", type: "amend", resetEpoch: 0,
+    causal: { entryId: "old-generation-entry", seq: 1, parentEventId: "old-generation-root" },
+    target: "old-generation-entry", patch: { grams: 120 },
+  };
+  const newGenerationRoot = {
+    id: "new-generation-root", ts: 110, day: "2026-08-10", type: "add", resetEpoch: 100,
+    causal: { entryId: "new-generation-entry", seq: 0, parentEventId: null },
+    dayGoalLock: { targetKcal: 2450, baseKcal: 2400, plannedAt: 105 },
+    entry: { id: "new-generation-entry", name: "new entry", grams: 100 },
+  };
+  const newGenerationChild = {
+    id: "new-generation-child", ts: 120, day: "2026-08-10", type: "amend", resetEpoch: 0,
+    causal: { entryId: "new-generation-entry", seq: 1, parentEventId: "new-generation-root" },
+    target: "new-generation-entry", patch: { grams: 130 },
+  };
+  const staleGenerationDoc = {
+    version: 4, resetAt: 0,
+    events: [oldGenerationRoot, oldGenerationChild],
+    personalFoods: [{ id: "food-old", name: "old food", updatedAt: 20 }],
+    dayGoals: { "2026-07-11": { kcal: 2500, updatedAt: 20 } },
+    dayPlans: { "2026-07-12": { items: [{ id: "old-plan" }], updatedAt: 20 } },
+    gapDrafts: { "2026-07-13": { selected: [{ name: "old draft" }], updatedAt: 20 } },
+    phases: [{
+      id: "phase-old", kind: "maintain", startDay: "2026-07-01", endDay: null,
+      createdAt: 10, updatedAt: 20, revisionTombstones: { "old-tomb": 20 },
+      revisions: [{ id: "revision-old", effectiveFrom: "2026-07-01", goals: generationGoals, updatedAt: 20 }],
+    }],
+    weights: { "2026-07-14": { kg: 80, updatedAt: 20 } },
+    profile: { sex: "female", notes: "old private profile", updatedAt: 20 },
+    goals: { ...generationGoals, kcal: 1900 }, goalsUpdatedAt: 20,
+  };
+  const currentGenerationDoc = {
+    version: 4, resetAt: 100,
+    events: [newGenerationRoot, newGenerationChild],
+    personalFoods: [{ id: "food-new", name: "new food", updatedAt: 130, resetEpoch: 100 }],
+    dayGoals: { "2026-08-11": { targetKcal: 2500, baseKcal: 2400, updatedAt: 130, resetEpoch: 100 } },
+    dayPlans: { "2026-08-12": { items: [{ id: "new-plan" }], updatedAt: 130, resetEpoch: 100 } },
+    gapDrafts: { "2026-08-13": { selected: [{ name: "new draft" }], updatedAt: 130, resetEpoch: 100 } },
+    phases: [{
+      id: "phase-new", kind: "maintain", startDay: "2026-08-01", endDay: null,
+      createdAt: 100, updatedAt: 140, resetEpoch: 100,
+      revisionTombstones: { "stale-tomb": 90, "current-tomb": 140 },
+      revisionTombstoneEpochs: { "stale-tomb": 0, "current-tomb": 100 },
+      revisions: [
+        { id: "revision-stale", effectiveFrom: "2026-08-01", goals: { ...generationGoals, kcal: 2300 }, updatedAt: 90, resetEpoch: 0 },
+        { id: "revision-new", effectiveFrom: "2026-08-01", goals: generationGoals, kind: "maintain", updatedAt: 140, resetEpoch: 100 },
+      ],
+    }],
+    weights: { "2026-08-14": { kg: 79, updatedAt: 130, resetEpoch: 100 } },
+    profile: { sex: "male", notes: "new profile", updatedAt: 130, resetEpoch: 100 },
+    goals: generationGoals, goalsUpdatedAt: 140, goalsResetEpoch: 100,
+  };
+  const generationForward = Sync.mergeDocs(currentGenerationDoc, staleGenerationDoc).doc;
+  const generationReverse = Sync.mergeDocs(staleGenerationDoc, currentGenerationDoc).doc;
+  ok(generationForward.events.map((event) => event.id).sort().join(",") ===
+      "new-generation-child,new-generation-root" &&
+      !generationForward.events.some((event) => event.id === "old-generation-child"),
+    "reset filtering drops an entire old-root causal component even when its child claims the new generation");
+  ok(generationForward.events.some((event) => event.id === "new-generation-child"),
+    "a new-root causal component survives as a whole even when a descendant carries stale metadata");
+  ok(generationForward.personalFoods.map((food) => food.id).join(",") === "food-new" &&
+      !generationForward.dayGoals["2026-07-11"] && generationForward.dayGoals["2026-08-11"] &&
+      !generationForward.dayPlans["2026-07-12"] && generationForward.dayPlans["2026-08-12"] &&
+      !generationForward.gapDrafts["2026-07-13"] && generationForward.gapDrafts["2026-08-13"] &&
+      !generationForward.weights["2026-07-14"] && generationForward.weights["2026-08-14"],
+    "reset generation filtering covers foods, day goals, plans, GAP drafts, and weights");
+  ok(generationForward.phases.length === 1 && generationForward.phases[0].id === "phase-new" &&
+      generationForward.phases[0].revisions.length === 1 &&
+      generationForward.phases[0].revisions[0].id === "revision-new" &&
+      !generationForward.phases[0].revisionTombstones["stale-tomb"] &&
+      generationForward.phases[0].revisionTombstones["current-tomb"] === 140,
+    "reset generation filtering covers phases, revisions, and revision tombstones",
+    JSON.stringify(generationForward.phases));
+  ok(generationForward.profile.notes === "new profile" && generationForward.goals.kcal === 2400 &&
+      generationForward.goalsResetEpoch === 100,
+    "reset generation filtering covers profile and goals singletons",
+    JSON.stringify({ profile: generationForward.profile, goals: generationForward.goals,
+      goalsResetEpoch: generationForward.goalsResetEpoch }));
+  ok(Sync.fingerprint(generationForward) === Sync.fingerprint(generationReverse) &&
+      Sync.fingerprint(Sync.mergeDocs(generationForward, generationForward).doc) === Sync.fingerprint(generationForward) &&
+      Sync.fingerprint(Sync.mergeDocs(generationForward, staleGenerationDoc).doc) === Sync.fingerprint(generationForward),
+    "generation filtering converges in either shard order and is idempotent",
+    JSON.stringify({ forward: Sync.fingerprint(generationForward), reverse: Sync.fingerprint(generationReverse),
+      self: Sync.fingerprint(Sync.mergeDocs(generationForward, generationForward).doc),
+      stale: Sync.fingerprint(Sync.mergeDocs(generationForward, staleGenerationDoc).doc) }));
+  const legacyBeforeReset = Sync.mergeDocs(staleGenerationDoc, staleGenerationDoc).doc;
+  ok(legacyBeforeReset.events.length === 2 && legacyBeforeReset.personalFoods.length === 1 &&
+      legacyBeforeReset.profile.notes === "old private profile",
+    "missing generation metadata remains usable only in legacy generation zero before the first reset");
+
+  const upgradeRoot = {
+    id: "upgrade-current-root", ts: 110, day: "2026-08-15", type: "add",
+    causal: { entryId: "upgrade-current-entry", seq: 0, parentEventId: null },
+    entry: { id: "upgrade-current-entry", name: "post-reset meal" },
+  };
+  const upgradeChild = {
+    id: "upgrade-current-child", ts: 120, day: "2026-08-15", type: "amend",
+    causal: { entryId: "upgrade-current-entry", seq: 1, parentEventId: "upgrade-current-root" },
+    target: "upgrade-current-entry", patch: { grams: 125 },
+  };
+  const upgradeStaleRoot = {
+    id: "upgrade-stale-root", ts: 90, day: "2026-07-15", type: "add",
+    causal: { entryId: "upgrade-stale-entry", seq: 0, parentEventId: null },
+    entry: { id: "upgrade-stale-entry", name: "provably pre-reset meal" },
+  };
+  const upgradeStaleChild = {
+    id: "upgrade-stale-child", ts: 130, day: "2026-07-15", type: "amend",
+    causal: { entryId: "upgrade-stale-entry", seq: 1, parentEventId: "upgrade-stale-root" },
+    target: "upgrade-stale-entry", patch: { grams: 999 },
+  };
+  const legacyUpgradeDoc = {
+    version: 4, resetAt: 100,
+    events: [upgradeStaleChild, upgradeRoot, upgradeStaleRoot, upgradeChild],
+    personalFoods: [
+      { id: "upgrade-food-current", name: "current", updatedAt: 110 },
+      { id: "upgrade-food-stale", name: "stale", updatedAt: 90 },
+    ],
+    dayGoals: {
+      "2026-08-16": { targetKcal: 2400, baseKcal: 2200, updatedAt: 110 },
+      "2026-07-16": { targetKcal: 2600, baseKcal: 2200, updatedAt: 90 },
+    },
+    dayPlans: {
+      "2026-08-17": { items: [{ id: "current" }], updatedAt: 110 },
+      "2026-07-17": { items: [{ id: "stale" }], updatedAt: 90 },
+    },
+    gapDrafts: { "2026-08-18": { selected: [{ name: "current" }], updatedAt: 110 } },
+    phases: [
+      {
+        id: "upgrade-phase-current", kind: "maintain", startDay: "2026-08-01",
+        createdAt: 100, updatedAt: 120, revisionTombstones: { gone: 125 },
+        revisions: [{
+          id: "upgrade-revision-current", effectiveFrom: "2026-08-01",
+          goals: generationGoals, createdAt: 105, updatedAt: 105,
+        }],
+      },
+      {
+        id: "upgrade-phase-stale", kind: "maintain", startDay: "2026-07-01",
+        createdAt: 90, updatedAt: 130,
+        revisions: [{
+          id: "upgrade-revision-stale", effectiveFrom: "2026-07-01",
+          goals: { ...generationGoals, kcal: 1800 }, createdAt: 90, updatedAt: 130,
+        }],
+      },
+    ],
+    weights: {
+      "2026-08-19": { kg: 78, updatedAt: 110 },
+      "2026-07-19": { kg: 88, updatedAt: 90 },
+    },
+    profile: { sex: "male", notes: "current profile", updatedAt: 110 },
+    goals: generationGoals, goalsUpdatedAt: 110,
+  };
+  const resetZeroStaleShard = {
+    ...staleGenerationDoc,
+    events: [oldGenerationRoot, oldGenerationChild],
+  };
+  const upgradedForward = Sync.mergeDocs(legacyUpgradeDoc, resetZeroStaleShard).doc;
+  const upgradedReverse = Sync.mergeDocs(resetZeroStaleShard, legacyUpgradeDoc).doc;
+  const upgradedAgain = Sync.mergeDocs(upgradedForward, legacyUpgradeDoc).doc;
+  ok(upgradedForward.generationSchemaVersion === Sync.GENERATION_SCHEMA_VERSION &&
+      upgradedForward.events.map((event) => event.id).sort().join(",") ===
+        "upgrade-current-child,upgrade-current-root" &&
+      upgradedForward.events.every((event) => event.resetEpoch === 100) &&
+      upgradedForward.personalFoods.map((food) => food.id).join(",") === "upgrade-food-current" &&
+      upgradedForward.dayGoals["2026-08-16"].resetEpoch === 100 &&
+      !upgradedForward.dayGoals["2026-07-16"] &&
+      upgradedForward.dayPlans["2026-08-17"].resetEpoch === 100 &&
+      !upgradedForward.dayPlans["2026-07-17"] &&
+      upgradedForward.gapDrafts["2026-08-18"].resetEpoch === 100 &&
+      upgradedForward.weights["2026-08-19"].resetEpoch === 100 &&
+      !upgradedForward.weights["2026-07-19"] &&
+      upgradedForward.phases.length === 1 &&
+      upgradedForward.phases[0].id === "upgrade-phase-current" &&
+      upgradedForward.phases[0].resetEpoch === 100 &&
+      upgradedForward.phases[0].revisions[0].resetEpoch === 100 &&
+      upgradedForward.phases[0].revisionTombstoneEpochs.gone === 100 &&
+      upgradedForward.profile.resetEpoch === 100 &&
+      upgradedForward.goalsResetEpoch === 100 &&
+      upgradedForward.goals.kcal === generationGoals.kcal,
+    "a legacy post-reset v4 snapshot is stamped before filtering while provably pre-reset components stay private");
+  ok(Sync.fingerprint(upgradedForward) === Sync.fingerprint(upgradedReverse) &&
+      Sync.fingerprint(upgradedForward) === Sync.fingerprint(upgradedAgain),
+    "generation rollout migration converges in either order and remains stable on the second sync");
+
+  // legacyUpgradeDoc's phase revision goals happen to equal generationGoals too,
+  // so upgradedForward.goals content alone cannot prove the raw goals singleton
+  // (as opposed to the phase-revision fallback at js/sync.js ~820-835) actually
+  // survived the migration. Use a phase-free legacy doc so the singleton's
+  // content is the only source and is genuinely exercised.
+  const legacyGoalsOnlyDoc = {
+    version: 4, resetAt: 100,
+    events: [], personalFoods: [], dayGoals: {}, dayPlans: {}, gapDrafts: {},
+    phases: [], weights: {},
+    profile: { sex: "male", notes: "goals-only profile", updatedAt: 110 },
+    goals: generationGoals, goalsUpdatedAt: 110,
+  };
+  const legacyGoalsOnlyStaleShard = {
+    version: 4, resetAt: 0,
+    events: [], personalFoods: [], dayGoals: {}, dayPlans: {}, gapDrafts: {},
+    phases: [], weights: {}, profile: null, goals: null, goalsUpdatedAt: 0,
+  };
+  const upgradedGoalsOnly = Sync.mergeDocs(legacyGoalsOnlyDoc, legacyGoalsOnlyStaleShard).doc;
+  ok(upgradedGoalsOnly.goals.kcal === generationGoals.kcal &&
+      upgradedGoalsOnly.goals.protein === generationGoals.protein &&
+      upgradedGoalsOnly.goalsResetEpoch === 100,
+    "a legacy post-reset goals singleton with no active phase survives the generation rollout migration unmasked",
+    JSON.stringify({ goals: upgradedGoalsOnly.goals, goalsResetEpoch: upgradedGoalsOnly.goalsResetEpoch }));
+
+  let futureGenerationError = null, missingGenerationError = null;
+  try {
+    Sync.mergeDocs({
+      version: 4,
+      generationSchemaVersion: 1,
+      resetAt: 0,
+      events: [], personalFoods: [{ id: "impossible", updatedAt: 1, resetEpoch: 100 }],
+      dayGoals: {}, dayPlans: {}, gapDrafts: {}, phases: [], weights: {},
+      profile: { resetEpoch: 0 }, goals: generationGoals, goalsResetEpoch: 0,
+    }, {});
+  } catch (error) { futureGenerationError = error; }
+  try {
+    Sync.validateDocGenerations({
+      version: 4, generationSchemaVersion: 1, resetAt: 100,
+      events: [], personalFoods: [{ id: "missing", updatedAt: 110 }],
+      dayGoals: {}, dayPlans: {}, gapDrafts: {}, phases: [], weights: {},
+      profile: { resetEpoch: 100 }, goals: generationGoals, goalsResetEpoch: 100,
+    });
+  } catch (error) { missingGenerationError = error; }
+  ok(futureGenerationError && futureGenerationError.code === "sync-generation-invalid" &&
+      missingGenerationError && missingGenerationError.code === "sync-generation-invalid",
+    "marked documents reject future or missing record generations before merge");
+
+  let missingProfileGenerationError = null;
+  try {
+    Sync.validateDocGenerations({
+      version: 4, generationSchemaVersion: 1, resetAt: 100,
+      events: [], personalFoods: [], dayGoals: {}, dayPlans: {}, gapDrafts: {}, phases: [], weights: {},
+      profile: { sex: "male", updatedAt: 110 }, goals: generationGoals, goalsResetEpoch: 100,
+    });
+  } catch (error) { missingProfileGenerationError = error; }
+  ok(missingProfileGenerationError && missingProfileGenerationError.code === "sync-generation-invalid" &&
+      missingProfileGenerationError.path === "profile.resetEpoch",
+    "a marked document with a profile singleton missing resetEpoch fails closed at profile.resetEpoch",
+    JSON.stringify({
+      message: missingProfileGenerationError && missingProfileGenerationError.message,
+      path: missingProfileGenerationError && missingProfileGenerationError.path,
+    }));
+
+  // Legacy (unmarked) migration must also fail closed on internally
+  // inconsistent explicit nonzero generation claims, rather than silently
+  // reinterpreting them as trustworthy. See js/sync.js ~513-518 (profile,
+  // via the shared legacyRecordGeneration guard) and ~649-651 (phase
+  // revision tombstone epochs).
+  let profileNonzeroMismatchError = null;
+  try {
+    Sync.migrateLegacyGenerationDoc({
+      version: 4, resetAt: 100,
+      events: [], personalFoods: [], dayGoals: {}, dayPlans: {}, gapDrafts: {},
+      phases: [], weights: {},
+      profile: { sex: "male", updatedAt: 110, resetEpoch: 55 },
+      goals: generationGoals, goalsUpdatedAt: 110,
+    });
+  } catch (error) { profileNonzeroMismatchError = error; }
+  ok(profileNonzeroMismatchError && profileNonzeroMismatchError.code === "sync-generation-invalid",
+    "an unmarked legacy doc with an explicit nonzero profile.resetEpoch that mismatches its own resetAt fails closed",
+    JSON.stringify({ message: profileNonzeroMismatchError && profileNonzeroMismatchError.message }));
+
+  let tombstoneNonzeroMismatchError = null;
+  try {
+    Sync.migrateLegacyGenerationDoc({
+      version: 4, resetAt: 100,
+      events: [], personalFoods: [], dayGoals: {}, dayPlans: {}, gapDrafts: {},
+      phases: [{
+        id: "legacy-tomb-phase", kind: "maintain", startDay: "2026-08-01", endDay: null,
+        createdAt: 100, updatedAt: 100,
+        revisionTombstones: { someKey: 100 },
+        revisionTombstoneEpochs: { someKey: 55 },
+        revisions: [],
+      }],
+      weights: {},
+      profile: { sex: "male", updatedAt: 110 },
+      goals: generationGoals, goalsUpdatedAt: 110,
+    });
+  } catch (error) { tombstoneNonzeroMismatchError = error; }
+  ok(tombstoneNonzeroMismatchError && tombstoneNonzeroMismatchError.code === "sync-generation-invalid",
+    "an unmarked legacy doc with an explicit nonzero revisionTombstoneEpochs claim that mismatches its own resetAt fails closed",
+    JSON.stringify({ message: tombstoneNonzeroMismatchError && tombstoneNonzeroMismatchError.message }));
+
+  const lockGoals = { ...Phases.DEFAULT_GOALS, kcal: 2200 };
+  const lockDoc = (extra) => ({
+    version: 4, resetAt: 0, events: [], personalFoods: [], dayGoals: {}, dayPlans: {}, gapDrafts: {},
+    phases: [], weights: {}, profile: {}, goals: lockGoals, goalsUpdatedAt: 1, goalsResetEpoch: 0,
+    ...(extra || {}),
+  });
+  const lockedRoot = {
+    id: "locked-root", ts: 100, day: "2026-08-20", type: "add", resetEpoch: 0,
+    causal: { entryId: "locked-entry", seq: 0, parentEventId: null },
+    dayGoalLock: {
+      targetKcal: 2500, baseKcal: 2200, plannedAt: 90, veryLowCalorieAcknowledged: true,
+    },
+    entry: { id: "locked-entry", name: "logged then removed" },
+  };
+  const lockedRemove = {
+    id: "locked-remove", ts: 110, day: "2026-08-20", type: "remove", target: "locked-entry", resetEpoch: 0,
+    causal: { entryId: "locked-entry", seq: 1, parentEventId: "locked-root" },
+  };
+  const staleChangedPlan = lockDoc({
+    dayGoals: { "2026-08-20": { targetKcal: 3100, baseKcal: 2200, plannedAt: 900, updatedAt: 900 } },
+  });
+  const lockSource = lockDoc({ events: [lockedRoot, lockedRemove] });
+  const lockedForward = Sync.mergeDocs(lockSource, staleChangedPlan).doc;
+  const lockedReverse = Sync.mergeDocs(staleChangedPlan, lockSource).doc;
+  const lockedDay = lockedForward.dayGoals["2026-08-20"];
+  ok(lockedDay.targetKcal === 2500 && lockedDay.baseKcal === 2200 && lockedDay.locked &&
+      lockedDay.lockedByEventId === "locked-root" && lockedDay.veryLowCalorieAcknowledged &&
+      Ledger.replayEvents(lockedForward.events).length === 0,
+    "the first immutable add snapshot survives stale plan changes and removal of the last visible entry");
+  ok(Sync.fingerprint(lockedForward) === Sync.fingerprint(lockedReverse),
+    "logged-day target healing converges under reversed shard order");
+  const staleClear = lockDoc({ dayGoals: { "2026-08-20": { cleared: true, updatedAt: 1000 } } });
+  const lockedRoundTrip = JSON.parse(JSON.stringify(lockedForward));
+  const afterStaleClear = Sync.mergeDocs(lockedRoundTrip, staleClear).doc;
+  ok(afterStaleClear.dayGoals["2026-08-20"].targetKcal === 2500 &&
+      afterStaleClear.dayGoals["2026-08-20"].lockedByEventId === "locked-root",
+    "a JSON export/import round-trip and later clear tombstone cannot alter a logged-day lock");
+
+  const mixedLegacyRoot = {
+    id: "mixed-legacy-root", ts: 100, day: "2026-08-23", type: "add", resetEpoch: 0,
+    causal: { entryId: "mixed-legacy-entry", seq: 0, parentEventId: null },
+    entry: { id: "mixed-legacy-entry", name: "legacy first meal" },
+  };
+  const mixedLegacyRemove = {
+    id: "mixed-legacy-remove", ts: 180, day: "2026-08-23", type: "remove",
+    target: "mixed-legacy-entry", resetEpoch: 0,
+    causal: { entryId: "mixed-legacy-entry", seq: 1, parentEventId: "mixed-legacy-root" },
+  };
+  const mixedModernRoot = {
+    id: "mixed-modern-root", ts: 200, day: "2026-08-23", type: "add", resetEpoch: 0,
+    causal: { entryId: "mixed-modern-entry", seq: 0, parentEventId: null },
+    dayGoalLock: { targetKcal: 3000, baseKcal: 2800 },
+    entry: { id: "mixed-modern-entry", name: "later offline meal" },
+  };
+  const mixedModernRemove = {
+    id: "mixed-modern-remove", ts: 220, day: "2026-08-23", type: "remove",
+    target: "mixed-modern-entry", resetEpoch: 0,
+    causal: { entryId: "mixed-modern-entry", seq: 1, parentEventId: "mixed-modern-root" },
+  };
+  const historicalLockPhase = {
+    id: "mixed-lock-phase", kind: "maintain", startDay: "2026-08-01", endDay: null,
+    createdAt: 50, updatedAt: 150, resetEpoch: 0, revisionTombstones: {},
+    revisions: [
+      {
+        id: "mixed-lock-early", effectiveFrom: "2026-08-01",
+        goals: { ...lockGoals, kcal: 2300 }, createdAt: 50, updatedAt: 50, resetEpoch: 0,
+      },
+      {
+        id: "mixed-lock-late", effectiveFrom: "2026-08-01",
+        goals: { ...lockGoals, kcal: 2800 }, createdAt: 150, updatedAt: 150, resetEpoch: 0,
+      },
+    ],
+  };
+  const mixedLegacyShard = lockDoc({
+    events: [mixedLegacyRoot, mixedLegacyRemove], phases: [historicalLockPhase],
+  });
+  const mixedModernShard = lockDoc({ events: [mixedModernRoot, mixedModernRemove] });
+  const mixedForward = Sync.mergeDocs(mixedLegacyShard, mixedModernShard).doc;
+  const mixedReverse = Sync.mergeDocs(mixedModernShard, mixedLegacyShard).doc;
+  const mixedAgain = Sync.mergeDocs(mixedForward, mixedModernShard).doc;
+  ok(mixedForward.dayGoals["2026-08-23"].lockedByEventId === "mixed-legacy-root" &&
+      mixedForward.dayGoals["2026-08-23"].targetKcal === 2300 &&
+      mixedForward.dayGoals["2026-08-23"].targetKcal !== 3000 &&
+      Ledger.replayEvents(mixedForward.events).length === 0,
+    "a later new-client snapshot cannot replace the removed canonical legacy first root or its historical target");
+  ok(Sync.fingerprint(mixedForward) === Sync.fingerprint(mixedReverse) &&
+      Sync.fingerprint(mixedForward) === Sync.fingerprint(mixedAgain),
+    "mixed-version first-root healing converges in both shard orders and is idempotent");
+
+  const tieLegacyRoot = {
+    id: "a-tie-legacy-root", ts: 300, day: "2026-08-24", type: "add", resetEpoch: 0,
+    causal: { entryId: "tie-legacy-entry", seq: 0, parentEventId: null },
+    entry: { id: "tie-legacy-entry", name: "canonical tie meal" },
+  };
+  const tieLegacyRemove = {
+    id: "tie-legacy-remove", ts: 330, day: "2026-08-24", type: "remove",
+    target: "tie-legacy-entry", resetEpoch: 0,
+    causal: { entryId: "tie-legacy-entry", seq: 1, parentEventId: "a-tie-legacy-root" },
+  };
+  const tieModernRoot = {
+    id: "z-tie-modern-root", ts: 300, day: "2026-08-24", type: "add", resetEpoch: 0,
+    causal: { entryId: "tie-modern-entry", seq: 0, parentEventId: null },
+    dayGoalLock: { targetKcal: 3000, baseKcal: 2800 },
+    entry: { id: "tie-modern-entry", name: "later canonical tie" },
+  };
+  const tieModernRemove = {
+    id: "tie-modern-remove", ts: 340, day: "2026-08-24", type: "remove",
+    target: "tie-modern-entry", resetEpoch: 0,
+    causal: { entryId: "tie-modern-entry", seq: 1, parentEventId: "z-tie-modern-root" },
+  };
+  const tieLegacyShard = lockDoc({
+    events: [tieLegacyRemove, tieLegacyRoot],
+    dayGoals: {
+      "2026-08-24": { targetKcal: 2500, baseKcal: 2200, plannedAt: 299, updatedAt: 299 },
+    },
+  });
+  const tieModernShard = lockDoc({ events: [tieModernRemove, tieModernRoot] });
+  const tieForward = Sync.mergeDocs(tieLegacyShard, tieModernShard).doc;
+  const tieReverse = Sync.mergeDocs(tieModernShard, tieLegacyShard).doc;
+  ok(tieForward.dayGoals["2026-08-24"].lockedByEventId === "a-tie-legacy-root" &&
+      tieForward.dayGoals["2026-08-24"].targetKcal === 2500 &&
+      tieForward.dayGoals["2026-08-24"].targetKcal !== 3000 &&
+      Sync.fingerprint(tieForward) === Sync.fingerprint(tieReverse),
+    "equal-clock roots use deterministic id ordering before snapshot inspection and retain the pre-log plan");
+
+  const skewedFirst = {
+    id: "skewed-first", ts: 50, day: "2026-08-21", type: "add", resetEpoch: 0,
+    causal: { entryId: "skewed-entry", seq: 0, parentEventId: null },
+    dayGoalLock: { targetKcal: 2600, baseKcal: 2200 },
+    entry: { id: "skewed-entry", name: "skewed" },
+  };
+  const otherFirst = {
+    id: "other-first", ts: 100, day: "2026-08-21", type: "add", resetEpoch: 0,
+    causal: { entryId: "other-entry", seq: 0, parentEventId: null },
+    dayGoalLock: { targetKcal: 2400, baseKcal: 2200 },
+    entry: { id: "other-entry", name: "other" },
+  };
+  const skewAB = Sync.mergeDocs(lockDoc({ events: [otherFirst] }), lockDoc({ events: [skewedFirst] })).doc;
+  const skewBA = Sync.mergeDocs(lockDoc({ events: [skewedFirst] }), lockDoc({ events: [otherFirst] })).doc;
+  ok(skewAB.dayGoals["2026-08-21"].targetKcal === 2600 &&
+      Sync.fingerprint(skewAB) === Sync.fingerprint(skewBA),
+    "competing first-add snapshots resolve deterministically despite clock skew and shard order");
+
+  const legacyRoot = {
+    id: "legacy-lock-root", ts: 100, day: "2026-08-22", type: "add", resetEpoch: 0,
+    causal: { entryId: "legacy-lock-entry", seq: 0, parentEventId: null },
+    entry: { id: "legacy-lock-entry", name: "legacy logged day" },
+  };
+  const legacyPlan = lockDoc({
+    events: [legacyRoot], dayGoals: { "2026-08-22": { kcal: 2500, plannedAt: 90, updatedAt: 90 } },
+  });
+  const legacyLateClear = lockDoc({ dayGoals: { "2026-08-22": { cleared: true, updatedAt: 200 } } });
+  const legacyLocked = Sync.mergeDocs(legacyPlan, legacyLateClear).doc;
+  ok(legacyLocked.dayGoals["2026-08-22"].targetKcal === 2500 &&
+      legacyLocked.dayGoals["2026-08-22"].baseKcal === 2200 &&
+      legacyLocked.dayGoals["2026-08-22"].locked,
+    "a valid pre-log legacy absolute target freezes before a stale post-log clear is considered");
+  const changedBase = Sync.mergeDocs(legacyLocked, lockDoc({
+    goals: { ...lockGoals, kcal: 2800 }, goalsUpdatedAt: 500,
+  })).doc;
+  ok(changedBase.dayGoals["2026-08-22"].targetKcal === 2500 &&
+      changedBase.dayGoals["2026-08-22"].baseKcal === 2200,
+    "a healed legacy absolute target stays frozen when the later phase baseline changes");
+  ok(!Sync.normalizeDayGoal({ kcal: 800, updatedAt: 1 }).cleared &&
+      !Sync.normalizeDayGoal({ kcal: 6000, updatedAt: 1 }).cleared &&
+      Sync.normalizeDayGoal({ kcal: 799, updatedAt: 1 }).cleared &&
+      Sync.normalizeDayGoal({ kcal: 6001, updatedAt: 1 }).cleared,
+    "legacy absolute overrides accept exactly 800–6000 kcal and reject values outside it");
+
+  const dgA = { "2026-08-01": { kcal: 2800, protein: 180, updatedAt: 100 } };
+  const dgB = {
+    "2026-08-01": { bumps: { kcal: 200, protein: 20, sodium: 500 }, updatedAt: 200 },
+    "2026-08-02": { bumps: { protein: 180, potassium: 500 }, updatedAt: 50 },
+    "2026-08-03": { kcal: 3000, sodium: 9000, updatedAt: 75 },
+  };
   const dg = Sync.mergeDayGoals(dgA, dgB);
-  ok(dg["2026-08-01"].kcal === 3000, "dayGoals: newer override wins");
-  ok(dg["2026-08-02"].protein === 180, "dayGoals: unique days union");
+  ok(dg["2026-08-01"].bumps.kcal === 200 && Object.keys(dg["2026-08-01"].bumps).length === 1,
+    "dayGoals: newer calorie bump wins and non-calorie fields are stripped");
+  ok(dg["2026-08-02"].cleared === true && dg["2026-08-02"].protein == null,
+    "dayGoals: non-calorie-only legacy bump becomes a clear tombstone");
+  ok(dg["2026-08-03"].kcal === 3000 && dg["2026-08-03"].sodium == null,
+    "dayGoals: legacy absolute kcal is preserved but safety targets are stripped");
+  const activeDg = Sync.activeDayGoals(dg);
+  ok(activeDg["2026-08-01"].bumps.kcal === 200 && !activeDg["2026-08-02"],
+    "active dayGoals expose only non-cleared calorie overrides");
+  const frozenPlan = Sync.normalizeDayGoal({
+    targetKcal: 2500, baseKcal: 2200, plannedAt: 10, updatedAt: 11,
+    protein: 999, sodium: 9999, privateNote: "drop me",
+  });
+  ok(frozenPlan.targetKcal === 2500 && frozenPlan.baseKcal === 2200 && frozenPlan.plannedAt === 10 &&
+      Object.keys(frozenPlan).sort().join(",") === "baseKcal,plannedAt,targetKcal,updatedAt",
+    "sync preserves only safe frozen calorie-plan fields");
+  ok(Sync.normalizeDayGoal({ targetKcal: 700, baseKcal: 2200, updatedAt: 12 }).cleared,
+    "sync rejects an out-of-range frozen calorie target");
+
+  const unsafeDoc = {
+    version: 2, resetAt: 0, events: [], personalFoods: [],
+    dayGoals: { "2026-08-04": { bumps: { kcal: 150, protein: 50, sodium: -1000 }, updatedAt: 80 } },
+    phases: [], weights: {}, profile: {}, goals: { kcal: 2200 }, goalsUpdatedAt: 1,
+  };
+  const cleanup = Sync.mergeDocs(unsafeDoc, unsafeDoc);
+  ok(cleanup.doc.version === 4 && cleanup.doc.dayGoals["2026-08-04"].bumps.kcal === 150 &&
+    Object.keys(cleanup.doc.dayGoals["2026-08-04"].bumps).length === 1,
+  "v2 sync document migrates to the calorie-only v4 schema");
+  ok(cleanup.differsFromRemote === true,
+    "unsafe remote dayGoal fields force a sanitized Drive write");
 
   const clearedLocal = { "2026-08-01": { cleared: true, updatedAt: 500 } };
   const stillOnDrive = { "2026-08-01": { kcal: 2800, updatedAt: 100 } };
@@ -391,7 +1549,7 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   const mergedPh = Sync.mergeDocs(localPh, remotePh);
   ok(mergedPh.doc.phases[0].revisions.length === 2, "doc merge unions phase revisions");
   ok(mergedPh.doc.weights["2026-08-01"].kg === 79.5, "doc merge: newer weight wins");
-  ok(mergedPh.doc.version === 2, "doc version is 2");
+  ok(mergedPh.doc.version === 4, "doc version is 4");
 }
 
 console.log("\n[9] Recipe sharing (untrusted input validation)");
@@ -431,6 +1589,51 @@ console.log("\n[9] Recipe sharing (untrusted input validation)");
   const rObj = Share.unpack(withObjIngs);
   ok(rObj.ok && rObj.food.recipe.ingredients[0].text === "lentils (100 g)", "pack accepts { text } ingredients");
 
+  const exact = {
+    name: "shared dumplings",
+    per100: { kcal: 212.3, p: 8.2, c: 31.4, f: 6.1, fb: 2.7, na: null, k: null },
+    units: { serving: 187.25, piece: 42.75, bowl: 311.5 },
+    logAs: "piece",
+    countLabel: "dumpling",
+    batch: { grams: 987.65, servings: 13.5, weighed: true },
+    recipe: { ingredients: ["flour", "vegetables"] },
+  };
+  const exactResult = Share.unpack(Share.pack(exact));
+  ok(exactResult.ok && exactResult.food.per100.na === null && exactResult.food.per100.k === null,
+    "share v4 preserves unknown sodium and potassium");
+  ok(exactResult.food.units.serving === 187.25 && exactResult.food.units.piece === 42.75 && exactResult.food.units.bowl === 311.5,
+    "share v4 preserves exact serving-unit weights");
+  ok(exactResult.food.logAs === "piece" && exactResult.food.countLabel === "dumpling",
+    "share v4 preserves count logging semantics");
+  ok(exactResult.food.batch.grams === 987.65 && exactResult.food.batch.servings === 13.5 && exactResult.food.batch.weighed === true,
+    "share v4 preserves exact batch semantics");
+
+  const encodePayload = (value) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  const legacyV3 = `NCR1.${encodePayload({
+    v: 3, n: "legacy soup", m: [80, 3, 9, 2, 1, 340, null], g: 180,
+    u: { s: 180 }, l: "grams", c: "ignored",
+  })}`;
+  const legacyResult = Share.unpack(legacyV3);
+  ok(legacyResult.ok && legacyResult.food.units.serving === 180 && legacyResult.food.per100.k === null,
+    "legacy v3 share codes remain readable");
+
+  ok(!Share.unpack(`NCR1.${"a".repeat(16385)}`).ok, "oversized encoded share payload is rejected before decoding");
+  const nullRequired = `NCR1.${encodePayload({ v: 4, n: "bad", m: [null, 1, 1, 1, 1, null, null], g: 100 })}`;
+  ok(!Share.unpack(nullRequired).ok, "v4 rejects null required nutrition values");
+  const hugeMineral = `NCR1.${encodePayload({ v: 4, n: "salt", m: [0, 0, 0, 0, 0, 100001, null], g: 100 })}`;
+  ok(!Share.unpack(hugeMineral).ok, "v4 rejects implausible mineral values");
+  const nonFiniteJson = `NCR1.${Buffer.from('{"v":4,"n":"bad","m":[1e309,0,0,0,0,null,null],"g":100}', "utf8").toString("base64url")}`;
+  ok(!Share.unpack(nonFiniteJson).ok, "v4 rejects non-finite JSON number results");
+  const invalidPackedMineral = Share.pack({
+    name: "bad mineral", per100: { kcal: 1, p: 0, c: 0, f: 0, fb: 0, na: Infinity, k: null }, units: {},
+  });
+  ok(!Share.unpack(invalidPackedMineral).ok, "v4 does not turn a non-finite mineral into unknown");
+  const invalidPackedBatch = Share.pack({
+    name: "bad batch", per100: { kcal: 1, p: 0, c: 0, f: 0, fb: 0, na: null, k: null }, units: {},
+    batch: { grams: Infinity, servings: 1, weighed: true },
+  });
+  ok(!Share.unpack(invalidPackedBatch).ok, "v4 rejects a non-finite shared batch instead of dropping it");
+
   ok(Share.unpack("NCR1.deadbeef").ok === false, "corrupted payload is rejected");
   ok(Share.unpack("hello there").ok === false, "non-code text is rejected");
 
@@ -445,6 +1648,7 @@ console.log("\n[10] PHASE AI target prompt parse");
 {
   globalThis.Phases = require("../js/phases.js");
   const PhasePrompt = require("../js/phase-prompt.js");
+  const currentPhaseGoals = { fiber: 29, sodium: 2200, potassium: 3400 };
   const prompt = PhasePrompt.buildTargetPrompt({
     kind: "recomp",
     age: 36,
@@ -453,6 +1657,9 @@ console.log("\n[10] PHASE AI target prompt parse");
   });
   ok(/Kind: recomp/.test(prompt) || /Recomp/.test(prompt), "prompt includes recomp goal");
   ok(!/not medical advice/i.test(prompt), "prompt omits medical disclaimer (token savings)");
+  ok(/Do not infer pregnancy, kidney\/renal status, or medication use/.test(prompt) &&
+      /clinician\/dietitian review/.test(prompt),
+    "prompt explicitly warns about medical context without pretending the app detects it");
   ok(/PHASE v1/.test(prompt), "prompt asks for PHASE v1 format");
 
   const block = `PHASE v1
@@ -485,11 +1692,15 @@ Sodium: 2200
 Reason: Mild deficit with elevated protein.
 Sources: ISSN
 END`;
-  const parsed = PhasePrompt.parsePhaseBlock(block);
+  ok(!PhasePrompt.parsePhaseBlock(block).ok,
+    "an omitted safety target fails when no current target is available");
+  const parsed = PhasePrompt.parsePhaseBlock(block, currentPhaseGoals);
   ok(parsed.ok, "parses PHASE block");
   ok(parsed.kind === "recomp", "parsed kind is recomp");
   ok(parsed.options.length === 3, "three options parsed");
   ok(parsed.options[1].goals.kcal === 2200 && parsed.options[1].label === "Balanced", "option 2 macros and label");
+  ok(parsed.options.every((o) => o.goals.potassium === currentPhaseGoals.potassium),
+    "omitted potassium preserves the current target instead of becoming zero");
   ok(!PhasePrompt.parsePhaseBlock("hello").ok, "rejects non-PHASE text");
 
   const commaBlock = `PHASE v1
@@ -504,7 +1715,7 @@ Sodium: 2,300
 Reason: ok
 Sources: ISSN
 END`;
-  const commaParsed = PhasePrompt.parsePhaseBlock(commaBlock);
+  const commaParsed = PhasePrompt.parsePhaseBlock(commaBlock, currentPhaseGoals);
   ok(commaParsed.ok && commaParsed.options[0].goals.kcal === 2100, "comma thousands in Kcal parse to 2100");
   ok(commaParsed.options[0].goals.sodium === 2300, "comma thousands in Sodium parse to 2300");
 
@@ -514,7 +1725,7 @@ END`;
     weightKg: 80,
     profile: { sex: "male", heightCm: 175, activity: "moderate" },
   }) + "\n\n" + block;
-  const echoParsed = PhasePrompt.parsePhaseBlock(echo);
+  const echoParsed = PhasePrompt.parsePhaseBlock(echo, currentPhaseGoals);
   ok(echoParsed.ok && echoParsed.options.length === 3 && echoParsed.kind === "recomp", "prompt echo prefers last complete PHASE reply");
 
   const noKind = `PHASE v1
@@ -528,7 +1739,7 @@ Sodium: 2300
 Reason: ok
 Sources: ISSN
 END`;
-  const nk = PhasePrompt.parsePhaseBlock(noKind);
+  const nk = PhasePrompt.parsePhaseBlock(noKind, currentPhaseGoals);
   ok(nk.ok && nk.kind == null, "missing Kind: leaves kind null");
 
   const dropOpt = `PHASE v1
@@ -552,7 +1763,7 @@ Sodium: 2300
 Reason: ok
 Sources: ISSN
 END`;
-  const dropped = PhasePrompt.parsePhaseBlock(dropOpt);
+  const dropped = PhasePrompt.parsePhaseBlock(dropOpt, currentPhaseGoals);
   ok(dropped.ok && dropped.options.length === 1 && dropped.options[0].label === "Good", "keeps complete options only");
   ok((dropped.warnings || []).some((w) => /Dropped Option 1/i.test(w) && /protein/i.test(w)), "warns about dropped incomplete option");
 
@@ -569,6 +1780,151 @@ Reason: no
 Sources: x
 END`;
   ok(!PhasePrompt.parsePhaseBlock(outOfRange).ok, "rejects out-of-range PHASE goals");
+
+  const omittedSafety = `PHASE v1
+Kind: maintain
+Option: 1 | Preserve
+Kcal: 2200
+Protein: 160
+Carbs: 220
+Fat: 70
+Reason: keep safety targets
+Sources: ISSN
+END`;
+  const preserved = PhasePrompt.parsePhaseBlock(omittedSafety, currentPhaseGoals);
+  ok(preserved.ok && preserved.options[0].goals.fiber === 29 &&
+      preserved.options[0].goals.sodium === 2200 && preserved.options[0].goals.potassium === 3400,
+    "omitted fiber, sodium, and potassium all preserve current values");
+  ok((preserved.warnings || []).filter((w) => /kept current target/i.test(w)).length === 3,
+    "preserved PHASE fields are disclosed in warnings");
+
+  const explicitZero = `PHASE v1
+Kind: maintain
+Option: 1 | Disable optional scoring
+Kcal: 2200
+Protein: 160
+Carbs: 220
+Fat: 70
+Fiber: 0
+Sodium: 0
+Potassium: 0
+Reason: explicit
+Sources: user choice
+END`;
+  const zeroParsed = PhasePrompt.parsePhaseBlock(explicitZero, currentPhaseGoals);
+  ok(zeroParsed.ok && zeroParsed.options[0].goals.fiber === 0 &&
+      zeroParsed.options[0].goals.sodium === 0 && zeroParsed.options[0].goals.potassium === 0,
+    "explicit zero remains an intentional zero rather than being overwritten");
+  const zeroScore = Phases.scoreDayTotals({
+    count: 1,
+    kcal: { mean: 2200 }, p: { mean: 160 }, c: { mean: 220 }, f: { mean: 70 }, fb: { mean: 0 },
+    na: { mean: 0 }, naCoverage: 1, k: { mean: 0 }, kCoverage: 1,
+  }, zeroParsed.options[0].goals);
+  ok(zeroScore.fiber.status === "skip" && zeroScore.sodium.status === "skip" && zeroScore.potassium.status === "skip",
+    "explicit zero is consistent with disabled nutrient scoring");
+
+  const boundedBlock = (overrides) => {
+    const fields = Object.assign({
+      option: "Option: 1 | Safe",
+      kcal: "2200", protein: "160", carbs: "220", fat: "70",
+      fiber: "29", sodium: "2200", potassium: "3400",
+      reason: "bounded reason", sources: "bounded source",
+    }, overrides || {});
+    return [
+      "PHASE v1", "Kind: maintain", fields.option,
+      "Kcal: " + fields.kcal, "Protein: " + fields.protein,
+      "Carbs: " + fields.carbs, "Fat: " + fields.fat,
+      "Fiber: " + fields.fiber, "Sodium: " + fields.sodium,
+      "Potassium: " + fields.potassium, "Reason: " + fields.reason,
+      "Sources: " + fields.sources, "END",
+    ].join("\n");
+  };
+  const truncatedPhase = boundedBlock().replace(/\nEND$/, "");
+  const truncatedResult = PhasePrompt.parsePhaseBlock(truncatedPhase, currentPhaseGoals);
+  ok(!truncatedResult.ok && truncatedResult.complete === false && /standalone END/i.test(truncatedResult.error),
+    "truncated PHASE block fails closed without a standalone END");
+  const borrowedEnd = truncatedPhase + "\nGAP v1\nOption: 1 | unrelated\nEND";
+  ok(!PhasePrompt.parsePhaseBlock(borrowedEnd, currentPhaseGoals).ok,
+    "a later protocol block cannot lend END to a truncated PHASE block");
+
+  ok(PhasePrompt.LIMITS.rawChars === 12000 && PhasePrompt.LIMITS.bodyChars === 12000 &&
+      PhasePrompt.LIMITS.lines === 200 && PhasePrompt.LIMITS.lineChars === 2000 &&
+      PhasePrompt.LIMITS.options === 10 && PhasePrompt.LIMITS.labelChars === 160 &&
+      PhasePrompt.LIMITS.reasonChars === 1000 && PhasePrompt.LIMITS.sourceChars === 1000,
+    "PHASE parser exports its storage-aligned structural limits");
+  ok(PhasePrompt.BOUNDS.kcal[0] === 1200 && PhasePrompt.BOUNDS.kcal[1] === 6000 &&
+      PhasePrompt.BOUNDS.protein[1] === 400 && PhasePrompt.BOUNDS.sodium[1] === 10000,
+    "PHASE parser exports its canonical nutrient bounds");
+  ok(PhasePrompt.ENERGY_POLICY.atwaterTolerance === 0.20 &&
+      PhasePrompt.ENERGY_POLICY.maxProteinShare === 0.40 &&
+      PhasePrompt.ENERGY_POLICY.minFatShare === 0.20 &&
+      PhasePrompt.ENERGY_POLICY.maxFatShare === 0.45,
+    "PHASE parser exports the persistent-target energy policy");
+  ok(!PhasePrompt.parsePhaseBlock("X".repeat(PhasePrompt.LIMITS.rawChars + 1)).ok,
+    "PHASE parser rejects an oversized raw paste");
+  const tooManyLines = "PHASE v1\n" + Array(PhasePrompt.LIMITS.lines + 1).fill("Note").join("\n") + "\nEND";
+  const tooManyLinesResult = PhasePrompt.parsePhaseBlock(tooManyLines, currentPhaseGoals);
+  ok(!tooManyLinesResult.ok && /lines/i.test(tooManyLinesResult.error),
+    "PHASE parser rejects too many physical lines");
+  const longLine = boundedBlock({ reason: "r".repeat(PhasePrompt.LIMITS.lineChars + 1) });
+  const longLineResult = PhasePrompt.parsePhaseBlock(longLine, currentPhaseGoals);
+  ok(!longLineResult.ok && /line exceeds/i.test(longLineResult.error),
+    "PHASE parser rejects an oversized physical line");
+
+  const optionText = (i) => boundedBlock({ option: "Option: " + i + " | Safe " + i })
+    .replace(/^PHASE v1\nKind: maintain\n/, "").replace(/\nEND$/, "");
+  const tooManyOptions = "PHASE v1\nKind: maintain\n" +
+    Array.from({ length: 11 }, (_, i) => optionText((i % 10) + 1)).join("\n") + "\nEND";
+  const tooManyOptionsResult = PhasePrompt.parsePhaseBlock(tooManyOptions, currentPhaseGoals);
+  ok(!tooManyOptionsResult.ok && /options/i.test(tooManyOptionsResult.error),
+    "PHASE parser rejects more than ten options");
+  ok(!PhasePrompt.parsePhaseBlock(boundedBlock({ option: "Option: 1 | " + "L".repeat(161) }), currentPhaseGoals).ok,
+    "PHASE parser rejects an option label beyond the stored label limit");
+  ok(!PhasePrompt.parsePhaseBlock(boundedBlock({ reason: "R".repeat(1001) }), currentPhaseGoals).ok,
+    "PHASE parser rejects a reason beyond the stored note-like limit");
+  ok(!PhasePrompt.parsePhaseBlock(boundedBlock({ sources: "S".repeat(1001) }), currentPhaseGoals).ok,
+    "PHASE parser rejects sources beyond the stored note-like limit");
+  const maxTextFields = PhasePrompt.parsePhaseBlock(boundedBlock({
+    option: "Option: 1 | " + "L".repeat(160),
+    reason: "R".repeat(1000),
+    sources: "S".repeat(1000),
+  }), currentPhaseGoals);
+  ok(maxTextFields.ok && maxTextFields.options[0].label.length === 160 &&
+      maxTextFields.options[0].reason.length === 1000 && maxTextFields.options[0].sources.length === 1000,
+    "PHASE parser accepts label, reason, and sources exactly at their limits");
+
+  for (const pair of [
+    ["160 grams", "numeric suffix"], ["160-180", "numeric range"],
+    ["1e309", "non-finite exponent"], ["NaN", "NaN"],
+  ]) {
+    ok(!PhasePrompt.parsePhaseBlock(boundedBlock({ protein: pair[0] }), currentPhaseGoals).ok,
+      "PHASE parser rejects " + pair[1]);
+  }
+  ok(!PhasePrompt.parsePhaseBlock(boundedBlock({
+    kcal: "1100", protein: "80", carbs: "130", fat: "30",
+  }), currentPhaseGoals).ok, "PHASE parser rejects a persistent target below 1200 kcal");
+  ok(!PhasePrompt.parsePhaseBlock(boundedBlock({ carbs: "20" }), currentPhaseGoals).ok,
+    "PHASE parser rejects macros whose Atwater energy contradicts stated calories");
+  ok(!PhasePrompt.parsePhaseBlock(boundedBlock({
+    kcal: "2000", protein: "210", carbs: "155", fat: "60",
+  }), currentPhaseGoals).ok, "PHASE parser rejects protein above 40% of stated calories");
+  ok(!PhasePrompt.parsePhaseBlock(boundedBlock({
+    kcal: "2000", protein: "150", carbs: "260", fat: "40",
+  }), currentPhaseGoals).ok, "PHASE parser rejects fat below 20% of stated calories");
+  ok(!PhasePrompt.parsePhaseBlock(boundedBlock({
+    kcal: "2000", protein: "100", carbs: "143", fat: "115",
+  }), currentPhaseGoals).ok, "PHASE parser rejects fat above 45% of stated calories");
+  const boundaryGoals = {
+    kcal: 1800, protein: 180, carbs: 180, fat: 40,
+    fiber: 29, sodium: 2200, potassium: 3400,
+  };
+  const boundaryValidation = PhasePrompt.validateGoals(boundaryGoals);
+  ok(boundaryValidation.ok && boundaryValidation.macroKcal === 1800 &&
+      boundaryValidation.proteinShare === 0.4 && boundaryValidation.fatShare === 0.2,
+    "shared PHASE validator accepts exact Atwater and protein/fat boundaries");
+  ok(!PhasePrompt.validateGoals({ ...boundaryGoals, protein: null }).ok &&
+      !PhasePrompt.validateGoals({ ...boundaryGoals, fat: "" }).ok,
+    "shared PHASE validator rejects null or blank persistent nutrients instead of coercing them to zero");
 }
 
 console.log("\n[11] GAP AI close-the-gap prompt parse");
@@ -582,7 +1938,7 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
     {
       id: "pf-rice",
       name: "rice (cooked)",
-      per100: { kcal: 130, p: 2.7, c: 28, f: 0.3, fb: 0.4, na: 1 },
+      per100: { kcal: 130, p: 2.7, c: 28, f: 0.3, fb: 0.4, na: 1, k: 35 },
       portion: { n: 8, median: 120, p25: 100, p75: 140, last: 110 },
       pieceGrams: null,
       provenance: "ref",
@@ -590,7 +1946,7 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
     {
       id: "pf-chicken",
       name: "chicken breast (cooked)",
-      per100: { kcal: 165, p: 31, c: 0, f: 3.6, fb: 0, na: 74 },
+      per100: { kcal: 165, p: 31, c: 0, f: 3.6, fb: 0, na: 74, k: 256 },
       portion: { n: 5, median: 150, p25: 120, p75: 180, last: 160 },
       pieceGrams: null,
       provenance: "yours",
@@ -626,6 +1982,25 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
   ok(/Protect protein/i.test(prompt) && /Lowest sodium/i.test(prompt), "option labels prioritize protein / lowest sodium");
   ok(/Options 2–3 MAY omit|may omit foods/i.test(prompt), "options 2–3 may omit foods");
 
+  const incompleteNaPrompt = GapPrompt.buildGapPrompt({
+    day: "2026-08-02",
+    totals: {
+      count: 2,
+      kcal: { mean: 1000 }, p: { mean: 80 }, c: { mean: 100 }, f: { mean: 30 }, fb: { mean: 10 },
+      na: { mean: 500 }, naCoverage: 0.5,
+      k: { mean: 1800 }, kCoverage: 1,
+    },
+    goals: { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300, potassium: 3510 },
+    candidates,
+  });
+  ok(/sodium 500 mg known subtotal; coverage is 50%/i.test(incompleteNaPrompt),
+    "incomplete sodium is labeled as a known subtotal");
+  ok(!/sodium headroom \+/i.test(incompleteNaPrompt) && /Do NOT calculate sodium headroom or overshoot/i.test(incompleteNaPrompt),
+    "GAP does not calculate sodium headroom from insufficient coverage");
+  ok(/Reachable: yes means projected protein meets the floor\./i.test(incompleteNaPrompt) &&
+      /use sodium to decide Reachable/i.test(incompleteNaPrompt),
+    "GAP excludes incomplete sodium from reachability");
+
   const block = `GAP v1
 Day: 2026-08-02
 Reachable: no
@@ -640,13 +2015,16 @@ END`;
   const parsed = GapPrompt.parseGapBlock(block, candidates, scorer);
   ok(parsed.ok, "parses GAP block");
   ok(parsed.options && parsed.options.length === 1, "legacy single plan becomes one option");
-  ok(parsed.reachable === false, "Reachable: no preserved");
+  ok(parsed.aiReachable === false, "reported Reachable: no is retained separately");
   ok(/Protein still short/.test(parsed.note || ""), "note preserved");
   ok(parsed.items.length === 2, "only candidate foods kept");
   ok(parsed.items[0].name === "rice (cooked)" && parsed.items[0].grams === 130, "rice qty parsed");
   ok(parsed.items[1].meal === "dinner" && parsed.items[1].foodId === "pf-chicken", "chicken matched to candidate id");
   ok((parsed.warnings || []).some((w) => /mystery smoothie/i.test(w)), "unknown food dropped with warning");
-  ok(parsed.projected && parsed.projected.kcal === 900 && parsed.projected.protein === 60, "projected macros parsed");
+  ok(parsed.aiProjected && parsed.aiProjected.kcal === 900 && parsed.aiProjected.protein === 60,
+    "reported Projected macros are retained as untrusted data");
+  ok(parsed.projected === null && parsed.autoApply === false,
+    "without trusted logged totals, AI projection cannot become an actionable local projection");
   ok(!GapPrompt.parseGapBlock("hello").ok, "rejects non-GAP text");
 
   const multi = `GAP v1
@@ -670,9 +2048,12 @@ Projected: 130 kcal | P 3 | C 28 | F 0 | Fiber 0 | Sodium 1
 END`;
   const multiParsed = GapPrompt.parseGapBlock(multi, candidates, scorer);
   ok(multiParsed.ok && multiParsed.options.length === 3, "parses three options");
-  ok(multiParsed.options[0].label === "Balanced" && multiParsed.options[0].reachable === false, "option 1 label + reachable");
+  ok(multiParsed.options[0].label === "Balanced" && multiParsed.options[0].aiReachable === false,
+    "option 1 label + reported reachable");
   ok(multiParsed.options[1].items[0].foodId === "pf-chicken" && multiParsed.options[1].items[0].grams === 220, "option 2 items");
-  ok(multiParsed.options[2].reachable === true && multiParsed.options[2].items.length === 1, "option 3 respects ceilings");
+  ok(multiParsed.options[2].aiReachable === true && multiParsed.options[2].reachable === false &&
+      multiParsed.options[2].items.length === 1,
+    "reported Reachable cannot bypass missing local context");
 
   const reachAnno = `GAP v1
 Day: 2026-08-02
@@ -680,7 +2061,7 @@ Reachable: no — protein still short
 Note: try again
 Item: rice (cooked) | 120 g | dinner
 END`;
-  ok(GapPrompt.parseGapBlock(reachAnno, candidates, scorer).reachable === false, "Reachable: no with annotation");
+  ok(GapPrompt.parseGapBlock(reachAnno, candidates, scorer).aiReachable === false, "Reachable: no with annotation");
 
   const twoBlocks = `GAP v1
 Day: 2026-08-02
@@ -698,7 +2079,7 @@ Item: chicken breast (cooked) | 150 g | dinner
 END`;
   const last = GapPrompt.parseGapBlock(twoBlocks, candidates, scorer);
   ok(last.ok && last.items.length === 2 && last.items[0].grams === 120, "uses last GAP block, not draft");
-  ok(last.reachable === true && /final/.test(last.note || ""), "last block reachable/note win");
+  ok(last.aiReachable === true && /final/.test(last.note || ""), "last block reported reachable/note win");
 
   const fuzzy = `GAP v1
 Day: 2026-08-02
@@ -784,7 +2165,7 @@ Projected: 2,100 kcal | P 60 | C 120 | F 20 | Fiber 8 | Sodium 400
 END`;
   const cg = GapPrompt.parseGapBlock(commaGap, candidates, scorer);
   ok(cg.ok && cg.items[0].grams === 1000, "comma thousands in Item qty → 1000 g");
-  ok(cg.projected && cg.projected.kcal === 2100, "comma thousands in Projected kcal → 2100");
+  ok(cg.aiProjected && cg.aiProjected.kcal === 2100, "comma thousands in reported Projected kcal → 2100");
 
   const reachMaybe = `GAP v1
 Day: 2026-08-02
@@ -792,7 +2173,9 @@ Reachable: maybe
 Note: unsure
 Item: rice (cooked) | 120 g | dinner
 END`;
-  ok(GapPrompt.parseGapBlock(reachMaybe, candidates, scorer).reachable === false, "Reachable: maybe → not reachable");
+  const maybeParsed = GapPrompt.parseGapBlock(reachMaybe, candidates, scorer);
+  ok(!maybeParsed.ok && (maybeParsed.flags || []).includes("unrecognized-reachable"),
+    "Reachable: maybe fails the explicit yes/no protocol");
 
   const reachBold = `GAP v1
 Day: 2026-08-02
@@ -800,7 +2183,8 @@ Reachable: **yes**
 Note: ok
 Item: rice (cooked) | 120 g | dinner
 END`;
-  ok(GapPrompt.parseGapBlock(reachBold, candidates, scorer).reachable === true, "Reachable: **yes** strips markdown");
+  ok(GapPrompt.parseGapBlock(reachBold, candidates, scorer).aiReachable === true,
+    "Reachable: **yes** strips markdown while remaining a reported field");
 
   const dashOpt = `GAP v1
 Day: 2026-08-02
@@ -856,6 +2240,241 @@ END`;
   ok(bp.ok && bp.items[0].unit === "piece" && bp.items[0].grams === 100, "bare qty on piece food → 2 piece");
   ok((bp.warnings || []).some((w) => /Assumed 2 piece/i.test(w)), "warns when assuming piece unit");
 
+  const trustedTotals = {
+    count: 1,
+    kcal: { mean: 1000 }, p: { mean: 90 }, c: { mean: 100 }, f: { mean: 35 }, fb: { mean: 10 },
+    na: { mean: 500 }, k: { mean: 1500 }, naCoverage: 1, kCoverage: 1,
+  };
+  const trustedCtx = {
+    totals: trustedTotals,
+    goals: { kcal: 2200, protein: 140, carbs: 250, fat: 70, fiber: 28, sodium: 2300, potassium: 3510 },
+  };
+  const dishonestSafe = `GAP v1
+Day: 2026-08-02
+Option: 1 | All selected
+Reachable: no
+Respects: nothing; unsafe
+Note: Deliberately dishonest report fields.
+Item: rice (cooked) | 100 g | dinner
+Item: chicken breast (cooked) | 160 g | dinner
+Projected: 9999 kcal | P 1 | C 999 | F 999 | Fiber 0 | Sodium 9999 | Potassium 0
+END`;
+  const locallySafe = GapPrompt.parseGapBlock(dishonestSafe, candidates, scorer, trustedCtx);
+  const safeOpt = locallySafe.options && locallySafe.options[0];
+  ok(locallySafe.ok && locallySafe.autoApply && safeOpt.complete && safeOpt.safe,
+    "complete option can auto-apply only after trusted local verification");
+  ok(safeOpt.reachable === true && safeOpt.aiReachable === false,
+    "local reachability ignores the AI Reachable claim");
+  ok(safeOpt.projected.kcal === 1394 && Math.abs(safeOpt.projected.protein - 142.3) < 0.01 &&
+      safeOpt.projected.sodium === 619,
+    "end-of-day projection is recalculated from logged totals plus selected foods");
+  ok(safeOpt.aiProjected.kcal === 9999 && safeOpt.projected.kcal !== safeOpt.aiProjected.kcal,
+    "dishonest AI Projected values remain quarantined in aiProjected");
+  ok(safeOpt.items.every((item) => GapPrompt.GOAL_KEYS.every((key) => item.nutrients[key] != null)),
+    "every applied item has all seven nutrients calculated locally");
+
+  const highNa = GapPrompt.parseGapBlock(dishonestSafe, candidates, scorer, {
+    totals: trustedTotals,
+    goals: { protein: 140, sodium: 600 },
+  });
+  ok(highNa.ok && !highNa.options[0].safe && !highNa.options[0].autoApply &&
+      highNa.options[0].flags.includes("high-sodium"),
+    "locally high sodium forces manual confirmation despite AI claims");
+
+  const lowProtein = GapPrompt.parseGapBlock(dishonestSafe, candidates, scorer, {
+    totals: trustedTotals,
+    goals: { protein: 180, sodium: 2300 },
+  });
+  ok(!lowProtein.options[0].reachable && lowProtein.options[0].flags.includes("low-protein") &&
+      lowProtein.options[0].requiresManualConfirm,
+    "local protein shortfall is unreachable and never auto-applies");
+
+  const lowMinerals = GapPrompt.parseGapBlock(dishonestSafe, candidates, scorer, {
+    totals: { ...trustedTotals, kCoverage: 0.2 },
+    goals: { protein: 140, sodium: 2300 },
+  });
+  ok(lowMinerals.options[0].flags.includes("low-mineral-coverage") &&
+      !lowMinerals.options[0].complete && !lowMinerals.options[0].autoApply,
+    "low local mineral coverage is explicitly manual-confirm only");
+
+  const unresolvedText = dishonestSafe.replace(
+    "Item: chicken breast (cooked) | 160 g | dinner",
+    "Item: chicken breast (cooked) | 160 g | dinner\nItem: invented powder | 1 g | snack"
+  );
+  const unresolved = GapPrompt.parseGapBlock(unresolvedText, candidates, scorer, trustedCtx);
+  ok(unresolved.ok && unresolved.options[0].flags.includes("unresolved-food") &&
+      !unresolved.options[0].autoApply,
+    "an unresolved food cannot disappear into an otherwise auto-applicable option");
+
+  const unsupportedUnit = `GAP v1
+Day: 2026-08-02
+Reachable: yes
+Note: unsupported
+Item: rice (cooked) | 1 serving | dinner
+Projected: 130 kcal | P 3 | C 28 | F 0 | Fiber 0 | Sodium 1 | Potassium 35
+END`;
+  const unsupported = GapPrompt.parseGapBlock(unsupportedUnit, candidates, scorer, trustedCtx);
+  ok(!unsupported.ok && (unsupported.flags || []).includes("unsupported-unit"),
+    "serving is rejected when the selected food has no serving conversion");
+
+  const partiallyRejected = GapPrompt.parseGapBlock(
+    dishonestSafe.replace("\nEND", `
+Option: 2 | Unsupported
+Reachable: yes
+Note: cannot resolve
+Item: rice (cooked) | 1 serving | dinner
+Projected: 130 kcal | P 3 | C 28 | F 0 | Fiber 0 | Sodium 1 | Potassium 35
+END`),
+    candidates,
+    scorer,
+    trustedCtx
+  );
+  ok(partiallyRejected.ok && partiallyRejected.options.length === 1 &&
+      partiallyRejected.rejectedOptions.length === 1 && !partiallyRejected.autoApply &&
+      partiallyRejected.flags.includes("unsupported-unit"),
+    "a rejected sibling option keeps the whole reply out of the automatic path");
+
+  const riceByCup = [{ ...candidates[0], units: { cup: 195 } }];
+  const supportedUnit = `GAP v1
+Day: 2026-08-02
+Reachable: yes
+Note: candidate-defined unit
+Item: rice (cooked) | 1 cup | dinner
+Projected: 254 kcal | P 5 | C 55 | F 1 | Fiber 1 | Sodium 2 | Potassium 68
+END`;
+  const cupParsed = GapPrompt.parseGapBlock(supportedUnit, riceByCup, scorer, {
+    totals: {
+      count: 0, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 },
+      na: { mean: 0 }, k: { mean: 0 }, naCoverage: 1, kCoverage: 1,
+    },
+    goals: { sodium: 2300 },
+  });
+  ok(cupParsed.ok && cupParsed.items[0].grams === 195 && cupParsed.options[0].autoApply,
+    "candidate-defined units resolve to local grams and nutrients");
+
+  const truncated = GapPrompt.parseGapBlock(dishonestSafe.replace(/\nEND$/, ""), candidates, scorer, trustedCtx);
+  ok(!truncated.ok && truncated.flags.includes("truncated") && !truncated.autoApply,
+    "truncated GAP block requires END and fails closed");
+  const borrowedEnd = GapPrompt.parseGapBlock(`GAP v1
+Day: 2026-08-02
+Reachable: yes
+Item: rice (cooked) | 100 g | dinner
+NUTRI v1
+Name: unrelated
+END`, candidates, scorer, trustedCtx);
+  ok(!borrowedEnd.ok && borrowedEnd.flags.includes("truncated"),
+    "a later protocol block cannot lend its END to a truncated GAP block");
+
+  const missingReachable = GapPrompt.parseGapBlock(
+    dishonestSafe.replace("Reachable: no\n", ""), candidates, scorer, trustedCtx
+  );
+  ok(!missingReachable.ok && missingReachable.flags.includes("missing-reachable"),
+    "missing explicit Reachable rejects the GAP protocol");
+
+  const missingProjected = GapPrompt.parseGapBlock(
+    dishonestSafe.replace(/^Projected:.*\n?/m, ""), candidates, scorer, trustedCtx
+  );
+  ok(missingProjected.ok && missingProjected.options[0].flags.includes("missing-projected") &&
+      !missingProjected.options[0].autoApply,
+    "incomplete option fields remain visible but cannot auto-apply");
+
+  const zeroCandidate = [{
+    id: "gap-zero",
+    name: "z".repeat(GapPrompt.LIMITS.nameChars),
+    per100: { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: 0, k: 0 },
+    units: {}, logAs: "grams",
+  }];
+  const boundedGap = ({ label, note, qty, name, options } = {}) => {
+    const rows = ["GAP v1", "Day: 2026-08-02"];
+    const count = options || 1;
+    for (let i = 1; i <= count; i++) {
+      rows.push(`Option: ${i} | ${label == null ? "Safe" : label}`);
+      rows.push("Reachable: yes");
+      rows.push(`Note: ${note == null ? "bounded" : note}`);
+      rows.push(`Item: ${name == null ? zeroCandidate[0].name : name} | ${qty == null ? 100 : qty} g | snack`);
+      rows.push("Projected: 0 kcal | P 0 | C 0 | F 0 | Fiber 0 | Sodium 0 | Potassium 0");
+    }
+    rows.push("END");
+    return rows.join("\n");
+  };
+  const gapBoundary = GapPrompt.parseGapBlock(boundedGap({
+    label: "L".repeat(GapPrompt.LIMITS.labelChars),
+    note: "N".repeat(GapPrompt.LIMITS.noteChars),
+    qty: GapPrompt.LIMITS.quantity,
+  }), zeroCandidate, scorer, {
+    means: { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sodium: 0, potassium: 0 },
+    goals: {},
+  });
+  ok(gapBoundary.ok && gapBoundary.items[0].qty === 1e9 && gapBoundary.items[0].grams === 1e9 &&
+      gapBoundary.options[0].label.length === 160 && gapBoundary.options[0].note.length === 2000,
+    "GAP accepts exact persisted label, note, name, quantity, and gram boundaries");
+  ok(!GapPrompt.parseGapBlock(boundedGap({ label: "L".repeat(161) }), zeroCandidate, scorer).ok &&
+      !GapPrompt.parseGapBlock(boundedGap({ note: "N".repeat(2001) }), zeroCandidate, scorer).ok &&
+      !GapPrompt.parseGapBlock(boundedGap({ qty: 1000000001 }), zeroCandidate, scorer).ok,
+    "GAP rejects fields one unit beyond persisted label, note, and amount bounds");
+  ok(!GapPrompt.parseGapBlock(boundedGap({ name: "z".repeat(161) }), zeroCandidate, scorer).ok &&
+      !GapPrompt.parseGapBlock(boundedGap({ qty: "1e6" }), zeroCandidate, scorer).ok,
+    "GAP rejects overlong names and non-protocol quantity syntax instead of coercing them");
+  const aggregateGapText = `GAP v1
+Day: 2026-08-02
+Option: 1 | Aggregate boundary
+Reachable: yes
+Note: locally summed
+Item: aggregate one | 100 g | snack
+Item: aggregate two | 100 g | snack
+Projected: 0 kcal | P 0 | C 0 | F 0 | Fiber 0 | Sodium 0 | Potassium 0
+END`;
+  const aggregateCandidate = (id, name, sodium) => ({
+    id, name, per100: { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: sodium, k: 0 },
+    units: {}, logAs: "grams",
+  });
+  const exactAggregateGap = GapPrompt.parseGapBlock(aggregateGapText, [
+    aggregateCandidate("aggregate-one", "aggregate one", 500000000),
+    aggregateCandidate("aggregate-two", "aggregate two", 500000000),
+  ], scorer, {
+    means: { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sodium: 0, potassium: 0 },
+    goals: {},
+  });
+  const overAggregateGap = GapPrompt.parseGapBlock(aggregateGapText, [
+    aggregateCandidate("aggregate-one", "aggregate one", 500000000),
+    aggregateCandidate("aggregate-two", "aggregate two", 500000001),
+  ], scorer, {
+    means: { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sodium: 0, potassium: 0 },
+    goals: {},
+  });
+  ok(exactAggregateGap.ok && exactAggregateGap.options[0].localProjected.sodium === 1e9 &&
+      !exactAggregateGap.options[0].flags.includes("aggregate-out-of-range"),
+    "GAP local projection accepts the exact persisted aggregate nutrient boundary");
+  ok(overAggregateGap.ok &&
+      overAggregateGap.options[0].flags.includes("aggregate-out-of-range") &&
+      overAggregateGap.options[0].localProjected == null &&
+      !overAggregateGap.options[0].autoApply,
+    "GAP rejects a locally summed nutrient one unit above the persisted boundary and omits the derived projection");
+  ok(GapPrompt.parseGapBlock(boundedGap({ options: 10 }), zeroCandidate, scorer).ok &&
+      !GapPrompt.parseGapBlock(boundedGap({ options: 11 }), zeroCandidate, scorer).ok,
+    "GAP accepts ten options and rejects eleven");
+  const paddedGap = (target) => {
+    const marker = "\nEND";
+    let base = boundedGap().slice(0, -marker.length);
+    let remaining = target - base.length - marker.length;
+    const padding = [];
+    while (remaining > 0) {
+      if (remaining === 1 && padding.length) {
+        padding[padding.length - 1] += "x";
+        remaining = 0;
+      } else {
+        const size = Math.min(4000, remaining - 1);
+        padding.push("x".repeat(size));
+        remaining -= size + 1;
+      }
+    }
+    return base + padding.map((line) => `\n${line}`).join("") + marker;
+  };
+  ok(paddedGap(12000).length === 12000 &&
+      GapPrompt.parseGapBlock(paddedGap(12000), zeroCandidate, scorer).ok &&
+      !GapPrompt.parseGapBlock(paddedGap(12001), zeroCandidate, scorer).ok,
+    "GAP accepts the exact raw-size boundary and rejects one character beyond it");
+
   const zeroGoalsPrompt = GapPrompt.buildGapPrompt({
     day: "2026-08-02",
     means: { kcal: 500, protein: 20, carbs: 40, fat: 10, fiber: 5, sodium: 400 },
@@ -865,5 +2484,782 @@ END`;
   ok(/no target set/i.test(zeroGoalsPrompt), "gap prompt avoids fake overshoot when no targets");
 }
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
-process.exit(fail ? 1 : 0);
+// Async sync-cycle regressions live last so the legacy synchronous test file
+// can keep its simple counter/reporting structure.
+(async () => {
+  console.log("\n[12] Sharded Drive sync");
+  const Sync = require("../js/sync.js");
+  globalThis.Ledger = Ledger;
+  const localStore = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => localStore.has(key) ? localStore.get(key) : null,
+    setItem: (key, value) => localStore.set(key, String(value)),
+    removeItem: (key) => localStore.delete(key),
+  };
+
+  const localEvent = { id: "local", ts: 100, day: "2026-08-03", type: "add", resetEpoch: 0, entry: { id: "local-entry", name: "local" } };
+  const remoteEvent = { id: "remote", ts: 110, day: "2026-08-03", type: "add", resetEpoch: 0, entry: { id: "remote-entry", name: "remote" } };
+  const racedEvent = { id: "raced", ts: 120, day: "2026-08-03", type: "add", resetEpoch: 0, entry: { id: "raced-entry", name: "raced" } };
+  Ledger.replaceAll([localEvent]);
+  let personal = [], goals = { protein: 140 }, goalAt = 1;
+  Sync.init({
+    getPersonal: () => personal,
+    setPersonal: (x) => { personal = x; },
+    getGoals: () => goals,
+    getGoalsUpdatedAt: () => goalAt,
+    setGoals: (x, at) => { goals = x; goalAt = at; },
+    getDayGoals: () => ({}), setDayGoals: () => {},
+    getDayPlans: () => ({}), setDayPlans: () => {},
+    getPhases: () => [], setPhases: () => {},
+    getWeights: () => ({}), setWeights: () => {},
+    getProfile: () => ({ resetEpoch: 0 }), setProfile: () => {},
+  });
+  const doc = (events, version = 4) => ({
+    version, resetAt: 0, events, personalFoods: [], dayGoals: {}, dayPlans: {},
+    phases: [], weights: {}, profile: {}, goals: { protein: 140 }, goalsUpdatedAt: 1,
+  });
+  const shardDocs = new Map();
+  let currentWriter = "writer-a", lockDepth = 0, lockCalls = 0;
+  globalThis.GDrive = {
+    NEEDS_AUTH: "needs-auth",
+    withWriterLock: async (callback) => {
+      lockCalls += 1; lockDepth += 1;
+      try { return await callback(currentWriter); } finally { lockDepth -= 1; }
+    },
+    readShards: async () => ({
+      docs: [...shardDocs.entries()].map(([id, value]) => ({ id, name: id, doc: value })),
+      ownFileId: shardDocs.has(currentWriter) ? currentWriter : null,
+    }),
+    writeOwnShard: async (_own, next) => {
+      ok(lockDepth === 1, "same-writer lock spans read, merge, and write");
+      shardDocs.set(currentWriter, next);
+    },
+  };
+  shardDocs.clear();
+  Ledger.replaceAll([localEvent]);
+  const first = await Sync.fullSync(false);
+  currentWriter = "writer-b";
+  Ledger.replaceAll([remoteEvent]); // device B's stale local view
+  const second = await Sync.fullSync(false);
+  ok(first.ok && second.ok && shardDocs.has("writer-a") && shardDocs.has("writer-b"),
+    "two devices create distinct writer shard file ids");
+  currentWriter = "writer-a";
+  Ledger.replaceAll([]);
+  const aggregate = await Sync.fullSync(false);
+  ok(aggregate.ok && Ledger.allEvents().map((e) => e.id).sort().join(",") === "local,remote",
+    "aggregate merge recovers both events after concurrent stale reads");
+  ok(lockCalls === 3, "every sync cycle uses the writer lock");
+
+  const clearedPlan = { cleared: true, updatedAt: 20 };
+  const stalePlan = { items: [{ id: "old" }], updatedAt: 10 };
+  const planMerge = Sync.mergeDayPlans({ "2026-08-01": clearedPlan }, { "2026-08-01": stalePlan });
+  ok(planMerge["2026-08-01"].cleared, "day-plan tombstone prevents stale shard resurrection");
+
+  const equalA = { updatedAt: 50, items: [{ id: "a" }] };
+  const equalB = { updatedAt: 50, items: [{ id: "b" }] };
+  ok(JSON.stringify(Sync.mergeDayPlans({ d: equalA }, { d: equalB })) ===
+     JSON.stringify(Sync.mergeDayPlans({ d: equalB }, { d: equalA })),
+    "equal-clock LWW merge has a deterministic tie-break");
+  const collisionA = { id: "same", ts: 1, type: "remove", target: "a", day: "2026-08-01" };
+  const collisionB = { id: "same", ts: 1, type: "remove", target: "b", day: "2026-08-01" };
+  ok(JSON.stringify(Sync.mergeEvents([collisionA], [collisionB])) ===
+     JSON.stringify(Sync.mergeEvents([collisionB], [collisionA])),
+    "duplicate event-id payloads converge deterministically");
+  const causalMergeLeft = [{
+    id: "merge-root", ts: 50, day: "2026-08-06", type: "add",
+    causal: { entryId: "merge-entry", seq: 0, parentEventId: null },
+    entry: { id: "merge-entry", name: "root", grams: 100, meal: "breakfast" },
+  }, {
+    id: "merge-a", ts: 50, day: "2026-08-06", type: "amend", target: "merge-entry",
+    causal: { entryId: "merge-entry", seq: 1, parentEventId: "merge-root" },
+    patch: { grams: 120 },
+  }];
+  const causalMergeRight = [{
+    patch: { meal: "lunch" }, target: "merge-entry", type: "amend", day: "2026-08-06", ts: 50,
+    id: "merge-b", causal: { seq: 1, parentEventId: "merge-root", entryId: "merge-entry" },
+  }, { ...causalMergeLeft[0] }];
+  const causalAB = Sync.mergeEvents(causalMergeLeft, causalMergeRight);
+  const causalBA = Sync.mergeEvents(causalMergeRight, causalMergeLeft);
+  ok(JSON.stringify(causalAB) === JSON.stringify(causalBA) &&
+      JSON.stringify(Sync.mergeEvents(causalAB, causalAB)) === JSON.stringify(causalAB),
+    "causal event union is commutative and idempotent under reversed shard order");
+  const causalMergedEntry = Ledger.replayEvents(causalAB)[0];
+  ok(causalMergedEntry.grams === 120 && causalMergedEntry.meal === "lunch" &&
+      causalAB.every((event) => event.causal && event.causal.entryId === "merge-entry"),
+    "merge preserves causal metadata and compatible sibling edits");
+  const profileA = { updatedAt: 5, sex: "female" }, profileB = { updatedAt: 5, sex: "male" };
+  ok(JSON.stringify(Sync.mergeProfiles(profileA, profileB)) === JSON.stringify(Sync.mergeProfiles(profileB, profileA)),
+    "real phase profile merge is commutative at equal clocks");
+
+  const invalidRootA = {
+    id: "invalid-root-a", ts: 1, day: "2026-08-01", type: "add",
+    causal: { entryId: "same-entry", seq: 0, parentEventId: null },
+    entry: { id: "same-entry", name: "A" },
+  };
+  const invalidRootB = {
+    id: "invalid-root-b", ts: 2, day: "2026-08-02", type: "add",
+    causal: { entryId: "same-entry", seq: 0, parentEventId: null },
+    entry: { id: "same-entry", name: "B" },
+  };
+  let invalidAggregateWrites = 0, invalidAggregateApplies = 0;
+  const beforeInvalidAggregate = JSON.stringify(Ledger.allEvents());
+  globalThis.GDrive.readShards = async () => ({
+    docs: [{ id: "invalid-a", doc: doc([invalidRootA]) }, { id: "invalid-b", doc: doc([invalidRootB]) }],
+    ownFileId: null,
+  });
+  globalThis.GDrive.writeOwnShard = async () => { invalidAggregateWrites += 1; };
+  Sync.init({
+    normalizeRemoteDoc: (value) => value,
+    getPersonal: () => personal, setPersonal: () => { invalidAggregateApplies += 1; },
+    getGoals: () => goals, getGoalsUpdatedAt: () => goalAt,
+    setGoals: () => { invalidAggregateApplies += 1; },
+  });
+  const invalidAggregate = await Sync.fullSync(false);
+  ok(!invalidAggregate.ok && invalidAggregate.error &&
+      invalidAggregate.error.code === "ledger-causal-cross-day" &&
+      invalidAggregateWrites === 0 && invalidAggregateApplies === 0 &&
+      JSON.stringify(Ledger.allEvents()) === beforeInvalidAggregate,
+    "invalid cross-shard causal aggregate causes zero local mutation and zero Drive writes");
+
+  let detachedApplied = 0, detachedWrites = 0;
+  const beforeDetached = Ledger.allEvents().map((e) => e.id).join(",");
+  globalThis.GDrive.readShards = async () => ({ docs: [{ id: "bad", doc: doc([racedEvent]) }], ownFileId: null });
+  globalThis.GDrive.writeOwnShard = async () => { detachedWrites += 1; };
+  Sync.init({
+    normalizeRemoteDoc: () => { throw new Error("invalid later field"); },
+    getPersonal: () => personal, setPersonal: () => { detachedApplied += 1; },
+    getGoals: () => goals, getGoalsUpdatedAt: () => goalAt, setGoals: () => { detachedApplied += 1; },
+  });
+  const detached = await Sync.fullSync(false);
+  ok(!detached.ok && detachedApplied === 0 && detachedWrites === 0 &&
+     Ledger.allEvents().map((e) => e.id).join(",") === beforeDetached,
+    "detached remote normalization failure causes zero local mutation and zero Drive writes");
+
+  const resetDoc = { ...doc([racedEvent]), resetAt: 999 };
+  let resetFailureWrites = 0;
+  localStore.delete("nd_reset_at");
+  globalThis.GDrive.readShards = async () => ({ docs: [{ id: "reset", doc: resetDoc }], ownFileId: null });
+  globalThis.GDrive.writeOwnShard = async () => { resetFailureWrites += 1; };
+  Sync.init({
+    normalizeRemoteDoc: (value) => value,
+    getPersonal: () => personal,
+    setPersonal: () => { throw new Error("quota"); },
+    getGoals: () => goals,
+    getGoalsUpdatedAt: () => goalAt,
+    setGoals: () => {},
+  });
+  const resetFailure = await Sync.fullSync(false);
+  ok(!resetFailure.ok && !localStore.has("nd_reset_at") && resetFailureWrites === 0,
+    "failed state apply cannot commit a newer reset epoch or write a shard");
+  Ledger.replaceAll(beforeDetached.split(",").filter(Boolean).map((id) =>
+    id === "local" ? localEvent : id === "remote" ? remoteEvent : racedEvent
+  ));
+
+  // Every apply stage can mutate the shared in-memory settings object before
+  // its durable write fails. The transaction adapter must restore both views,
+  // retain the old privacy epoch, and prevent the subsequent Drive write.
+  const savedAtomicLocalStorage = globalThis.localStorage;
+  const savedAtomicGDrive = globalThis.GDrive;
+  const savedAtomicEvents = Ledger.allEvents();
+  const cloneAtomic = (value) => JSON.parse(JSON.stringify(value));
+  const atomicStages = ["ledger", "personal", "goals", "dayGoals", "dayPlans", "gapDrafts", "phases", "weights", "profile", "generationSchema", "reset"];
+  for (const failureStage of atomicStages) {
+    const baseEvents = [{ id: "atomic-local", ts: 20, day: "2026-08-01", type: "add", entry: { id: "atomic-local-entry", name: "local" } }];
+    const remoteEvents = [{ id: "atomic-remote", ts: 200, day: "2026-08-02", type: "add", entry: { id: "atomic-remote-entry", name: "remote" } }];
+    let memory = {
+      personalFoods: [{ id: "food-local", updatedAt: 20, name: "local" }],
+      settings: {
+        goals: { kcal: 2100, protein: 120 }, goalsUpdatedAt: 20,
+        dayGoals: { "2026-08-01": { bumps: { kcal: 100 }, updatedAt: 20 } },
+        dayPlans: { "2026-08-01": { items: [{ id: "local" }], updatedAt: 20 } },
+        gapDrafts: { "2026-08-01": { selected: [{ name: "local" }], updatedAt: 20 } },
+        phases: [{
+          id: "phase-local", startDay: "2026-08-01", createdAt: 20, updatedAt: 20,
+          revisions: [{ id: "rev-local", effectiveFrom: "2026-08-01", createdAt: 20, goals: { kcal: 2100, protein: 120 } }],
+        }],
+        weights: { "2026-08-01": { kg: 80, updatedAt: 20 } },
+        profile: { sex: "female", updatedAt: 20 },
+      },
+    };
+    const initialMemory = cloneAtomic(memory);
+    const durable = new Map([
+      ["nd_reset_at", "10"],
+      ["app-settings", JSON.stringify(memory.settings)],
+      ["app-personal", JSON.stringify(memory.personalFoods)],
+    ]);
+    let ledgerRaw = JSON.stringify(baseEvents);
+    let injectionArmed = false;
+    let injected = false;
+    const maybeFail = (stage) => {
+      if (injectionArmed && !injected && stage === failureStage) {
+        injected = true;
+        throw new Error(`injected ${stage} failure`);
+      }
+    };
+    const ledgerStore = {
+      getItem: () => ledgerRaw,
+      setItem: (_key, value) => { maybeFail("ledger"); ledgerRaw = String(value); },
+      removeItem: () => { maybeFail("ledger"); ledgerRaw = null; },
+    };
+    Ledger._setStoreForTests(ledgerStore);
+    Ledger.allEvents();
+    globalThis.localStorage = {
+      getItem: (key) => durable.has(key) ? durable.get(key) : null,
+      setItem: (key, value) => {
+        if (key === "nd_generation_schema_version") maybeFail("generationSchema");
+        if (key === "nd_reset_at") maybeFail("reset");
+        durable.set(key, String(value));
+      },
+      removeItem: (key) => durable.delete(key),
+    };
+    const persistSettings = (stage) => {
+      maybeFail(stage);
+      durable.set("app-settings", JSON.stringify(memory.settings));
+    };
+    const persistPersonal = () => {
+      maybeFail("personal");
+      durable.set("app-personal", JSON.stringify(memory.personalFoods));
+    };
+    let driveWrites = 0;
+    globalThis.GDrive = {
+      NEEDS_AUTH: "needs-auth",
+      withWriterLock: async (callback) => callback(),
+      readShards: async () => ({
+        docs: [{ id: "atomic-remote-shard", doc: {
+          version: 4, resetAt: 100, events: remoteEvents,
+          personalFoods: [{ id: "food-remote", updatedAt: 200, name: "remote" }],
+          goals: { kcal: 2400, protein: 160 }, goalsUpdatedAt: 200,
+          dayGoals: { "2026-08-02": { bumps: { kcal: 300 }, updatedAt: 200 } },
+          dayPlans: { "2026-08-02": { items: [{ id: "remote" }], updatedAt: 200 } },
+          gapDrafts: { "2026-08-02": { selected: [{ name: "remote" }], updatedAt: 200 } },
+          phases: [{
+            id: "phase-remote", startDay: "2026-08-02", createdAt: 200, updatedAt: 200,
+            revisions: [{ id: "rev-remote", effectiveFrom: "2026-08-02", createdAt: 200, goals: { kcal: 2400, protein: 160 } }],
+          }],
+          weights: { "2026-08-02": { kg: 79, updatedAt: 200 } },
+          profile: { sex: "male", updatedAt: 200 },
+        } }],
+        ownFileId: null,
+      }),
+      writeOwnShard: async () => { driveWrites += 1; },
+    };
+    Sync.init({
+      normalizeRemoteDoc: (value) => value,
+      beginApplyTransaction: () => {
+        const beforeMemory = cloneAtomic(memory);
+        const beforeDurable = new Map(durable);
+        const beforeLedgerRaw = ledgerRaw;
+        return {
+          commit() {},
+          rollback() {
+            memory = cloneAtomic(beforeMemory);
+            durable.clear();
+            for (const [key, value] of beforeDurable) durable.set(key, value);
+            ledgerRaw = beforeLedgerRaw;
+            Ledger._resetCacheForTests();
+          },
+        };
+      },
+      getPersonal: () => memory.personalFoods,
+      setPersonal: (value) => { memory.personalFoods = value; persistPersonal(); },
+      getGoals: () => memory.settings.goals,
+      getGoalsUpdatedAt: () => memory.settings.goalsUpdatedAt,
+      setGoals: (value, at) => {
+        memory.settings.goals = value; memory.settings.goalsUpdatedAt = at; persistSettings("goals");
+      },
+      getDayGoals: () => memory.settings.dayGoals,
+      setDayGoals: (value) => { memory.settings.dayGoals = value; persistSettings("dayGoals"); },
+      getDayPlans: () => memory.settings.dayPlans,
+      setDayPlans: (value) => { memory.settings.dayPlans = value; persistSettings("dayPlans"); },
+      getGapDrafts: () => memory.settings.gapDrafts,
+      setGapDrafts: (value) => { memory.settings.gapDrafts = value; persistSettings("gapDrafts"); },
+      getPhases: () => memory.settings.phases,
+      setPhases: (value) => { memory.settings.phases = value; persistSettings("phases"); },
+      getWeights: () => memory.settings.weights,
+      setWeights: (value) => { memory.settings.weights = value; persistSettings("weights"); },
+      getProfile: () => memory.settings.profile,
+      setProfile: (value) => { memory.settings.profile = value; persistSettings("profile"); },
+    });
+    const initialDurable = JSON.stringify([...durable]);
+    const initialLedgerRaw = ledgerRaw;
+    injectionArmed = true;
+    const atomicResult = await Sync.fullSync(false);
+    ok(!atomicResult.ok && injected && driveWrites === 0
+      && JSON.stringify(memory) === JSON.stringify(initialMemory)
+      && JSON.stringify([...durable]) === initialDurable
+      && ledgerRaw === initialLedgerRaw
+      && JSON.stringify(Ledger.allEvents()) === JSON.stringify(baseEvents),
+    `applyDoc ${failureStage} failure rolls memory and durable state back before Drive write`);
+  }
+  globalThis.localStorage = savedAtomicLocalStorage;
+  globalThis.GDrive = savedAtomicGDrive;
+  let restoredAtomicRaw = JSON.stringify(savedAtomicEvents);
+  Ledger._setStoreForTests({
+    getItem: () => restoredAtomicRaw,
+    setItem: (_key, value) => { restoredAtomicRaw = String(value); },
+    removeItem: () => { restoredAtomicRaw = "[]"; },
+  });
+
+  let malformedGenerationWrites = 0, malformedGenerationApplies = 0;
+  globalThis.GDrive.readShards = async () => ({
+    docs: [{ id: "malformed-generation", doc: {
+      ...doc([]),
+      generationSchemaVersion: 1,
+      personalFoods: [{ id: "future-generation", updatedAt: 1, resetEpoch: 100 }],
+      profile: { resetEpoch: 0 },
+      goalsResetEpoch: 0,
+    } }],
+    ownFileId: null,
+  });
+  globalThis.GDrive.writeOwnShard = async () => { malformedGenerationWrites += 1; };
+  Sync.init({
+    normalizeRemoteDoc: (value) => value,
+    getPersonal: () => personal,
+    setPersonal: () => { malformedGenerationApplies += 1; },
+    getGoals: () => goals,
+    getGoalsUpdatedAt: () => goalAt,
+    setGoals: () => { malformedGenerationApplies += 1; },
+  });
+  const malformedGeneration = await Sync.fullSync(false);
+  ok(!malformedGeneration.ok && malformedGeneration.error &&
+      malformedGeneration.error.code === "sync-generation-invalid" &&
+      malformedGenerationWrites === 0 && malformedGenerationApplies === 0,
+    "a shard that claims a future record generation is rejected before local apply or Drive write");
+
+  const fixedClockNow = Date.now();
+  let exactSkewAccepted = false, futureResetError = null, futureRecordError = null;
+  try {
+    exactSkewAccepted = Sync.validateDocClocks(
+      { resetAt: fixedClockNow + Sync.MAX_FUTURE_SKEW_MS }, { now: fixedClockNow }
+    );
+  } catch (error) { exactSkewAccepted = false; }
+  try {
+    Sync.validateDocClocks(
+      { resetAt: fixedClockNow + Sync.MAX_FUTURE_SKEW_MS + 1 }, { now: fixedClockNow }
+    );
+  } catch (error) { futureResetError = error; }
+  try {
+    Sync.validateDocClocks({
+      resetAt: 100,
+      personalFoods: [{ id: "future-record", resetEpoch: 0, updatedAt: fixedClockNow + Sync.MAX_FUTURE_SKEW_MS + 1 }],
+    }, { now: fixedClockNow });
+  } catch (error) { futureRecordError = error; }
+  ok(exactSkewAccepted === true && futureResetError && futureResetError.code === "sync-future-clock" &&
+      futureRecordError && futureRecordError.code === "sync-future-clock",
+    "sync accepts the exact skew allowance and rejects reset or per-record clocks one millisecond beyond it");
+
+  const beforeClockReject = JSON.stringify(Ledger.allEvents());
+  let clockRejectWrites = 0, clockRejectApplies = 0;
+  const futureStamp = Date.now() + Sync.MAX_FUTURE_SKEW_MS + 60000;
+  localStore.set("nd_reset_at", "100");
+  globalThis.GDrive.readShards = async () => ({
+    docs: [{ id: "future-record-shard", doc: {
+      ...doc([]), resetAt: 0,
+      // This old-generation record would be discarded by the winning local
+      // reset. The clock guard must still reject it before filtering can hide it.
+      personalFoods: [{ id: "hidden-future", name: "hidden", resetEpoch: 0, updatedAt: futureStamp }],
+    } }],
+    ownFileId: null,
+  });
+  globalThis.GDrive.writeOwnShard = async () => { clockRejectWrites += 1; };
+  Sync.init({
+    normalizeRemoteDoc: (value) => value,
+    getPersonal: () => personal,
+    setPersonal: () => { clockRejectApplies += 1; },
+    getGoals: () => goals,
+    getGoalsUpdatedAt: () => goalAt,
+    setGoals: () => { clockRejectApplies += 1; },
+  });
+  const rejectedFutureRecord = await Sync.fullSync(false);
+  ok(!rejectedFutureRecord.ok && rejectedFutureRecord.error &&
+      rejectedFutureRecord.error.code === "sync-future-clock" &&
+      clockRejectWrites === 0 && clockRejectApplies === 0 &&
+      JSON.stringify(Ledger.allEvents()) === beforeClockReject && Sync.state().status === "error",
+    "a far-future clock hidden in a discardable generation pauses sync with zero mutations and zero writes");
+
+  globalThis.GDrive.readShards = async () => ({
+    docs: [{ id: "future-reset-shard", doc: { ...doc([]), resetAt: futureStamp } }],
+    ownFileId: null,
+  });
+  const rejectedFutureReset = await Sync.fullSync(false);
+  ok(!rejectedFutureReset.ok && rejectedFutureReset.error &&
+      rejectedFutureReset.error.code === "sync-future-clock" &&
+      clockRejectWrites === 0 && clockRejectApplies === 0 &&
+      JSON.stringify(Ledger.allEvents()) === beforeClockReject && Sync.state().status === "error" &&
+      /date and time/i.test(Sync.state().detail),
+    "a far-future reset clock is rejected pre-apply/pre-write and leaves the writer visibly paused");
+
+  let corruptOutboundWrites = 0, corruptOutboundApplies = 0;
+  localStore.delete("nd_generation_schema_version");
+  const corruptLocalDayGoals = {
+    // This is a current post-reset candidate; generation rollout must stamp it
+    // and still let the strict inbound normalizer reject its bad target.
+    "2026-08-24": { targetKcal: 700, baseKcal: 2200, updatedAt: 101, resetEpoch: 100 },
+  };
+  globalThis.GDrive.readShards = async () => ({ docs: [], ownFileId: null });
+  globalThis.GDrive.writeOwnShard = async () => { corruptOutboundWrites += 1; };
+  Sync.init({
+    normalizeRemoteDoc: (value) => {
+      for (const record of Object.values(value.dayGoals || {})) {
+        if (record && record.targetKcal != null &&
+            (Number(record.targetKcal) < 800 || Number(record.targetKcal) > 6000)) {
+          const error = new Error("day goal target must be 800–6000 kcal");
+          error.code = "sync-schema-invalid";
+          throw error;
+        }
+      }
+      return value;
+    },
+    getPersonal: () => personal,
+    setPersonal: () => { corruptOutboundApplies += 1; },
+    getGoals: () => goals,
+    getGoalsUpdatedAt: () => goalAt,
+    setGoals: () => { corruptOutboundApplies += 1; },
+    getDayGoals: () => corruptLocalDayGoals,
+    setDayGoals: () => { corruptOutboundApplies += 1; },
+  });
+  const corruptOutbound = await Sync.fullSync(false);
+  ok(!corruptOutbound.ok && corruptOutbound.error &&
+      corruptOutbound.error.code === "sync-schema-invalid" &&
+      corruptOutboundWrites === 0 && corruptOutboundApplies === 0 &&
+      JSON.stringify(Ledger.allEvents()) === beforeClockReject,
+    "corrupt local outbound state must pass the inbound range normalizer and causes zero apply/write",
+    JSON.stringify({ corruptOutbound, corruptOutboundWrites, corruptOutboundApplies }));
+
+  let aggregateRejectWrites = 0, aggregateRejectApplies = 0;
+  localStore.set("nd_reset_at", "0");
+  const aggregateLocalFood = {
+    id: "aggregate-local", name: "local half", updatedAt: 110, resetEpoch: 0,
+  };
+  const aggregateRemoteFood = {
+    id: "aggregate-remote", name: "remote half", updatedAt: 120, resetEpoch: 0,
+  };
+  globalThis.GDrive.readShards = async () => ({
+    docs: [{ id: "aggregate-shard", doc: {
+      ...doc([]), resetAt: 0, personalFoods: [aggregateRemoteFood],
+    } }],
+    ownFileId: null,
+  });
+  globalThis.GDrive.writeOwnShard = async () => { aggregateRejectWrites += 1; };
+  Sync.init({
+    normalizeRemoteDoc: (value) => {
+      const ids = new Set((value.personalFoods || []).map((food) => food.id));
+      if (ids.has("aggregate-local") && ids.has("aggregate-remote")) {
+        const error = new Error("invalid aggregate food set");
+        error.code = "sync-schema-invalid";
+        throw error;
+      }
+      return value;
+    },
+    getPersonal: () => [aggregateLocalFood],
+    setPersonal: () => { aggregateRejectApplies += 1; },
+    getGoals: () => goals,
+    getGoalsUpdatedAt: () => goalAt,
+    setGoals: () => { aggregateRejectApplies += 1; },
+  });
+  const aggregateReject = await Sync.fullSync(false);
+  ok(!aggregateReject.ok && aggregateReject.error &&
+      aggregateReject.error.code === "sync-schema-invalid" &&
+      aggregateRejectWrites === 0 && aggregateRejectApplies === 0 &&
+      JSON.stringify(Ledger.allEvents()) === beforeClockReject,
+    "the merged aggregate is normalized again before apply or write");
+  localStore.delete("nd_reset_at");
+
+  // A future schema must not be applied to or mark clean this older build.
+  const beforeFuture = Ledger.allEvents().map((e) => e.id).join(",");
+  let futureWrites = 0, futureApplied = false;
+  globalThis.GDrive.readShards = async () => {
+    const err = new Error("newer"); err.code = "drive-newer-schema"; throw err;
+  };
+  globalThis.GDrive.writeOwnShard = async () => { futureWrites += 1; };
+  Sync.init({
+    getPersonal: () => personal, setPersonal: () => { futureApplied = true; },
+    getGoals: () => goals, getGoalsUpdatedAt: () => goalAt, setGoals: () => { futureApplied = true; },
+  });
+  const future = await Sync.fullSync(false);
+  ok(future.ok && future.upgrade && future.preservedLocal,
+    "newer remote schema returns an explicit preserved-local upgrade result");
+  ok(!futureApplied && futureWrites === 0 && Ledger.allEvents().map((e) => e.id).join(",") === beforeFuture,
+    "newer remote schema neither applies nor overwrites local data");
+  ok(Sync.state().status === "warn", "newer remote schema remains visibly unsynced");
+
+  const savedDisconnectDrive = globalThis.GDrive;
+  const savedDisconnectStorage = globalThis.localStorage;
+  let credentialsClearedFirst = false;
+  globalThis.GDrive = {
+    signOut: async () => { credentialsClearedFirst = true; return true; },
+  };
+  globalThis.localStorage = {
+    getItem: (key) => localStore.has(key) ? localStore.get(key) : null,
+    setItem: (key, value) => {
+      if (key === "nd_sync_enabled") throw new Error("blocked preference write");
+      localStore.set(key, String(value));
+    },
+    removeItem: (key) => localStore.delete(key),
+  };
+  const failedPreferenceDisconnect = await Sync.disconnect();
+  ok(credentialsClearedFirst && failedPreferenceDisconnect.serverCleared === true &&
+      failedPreferenceDisconnect.localCleared === false,
+    "disconnect clears credentials even when the local disabled preference cannot be written");
+  globalThis.GDrive = savedDisconnectDrive;
+  globalThis.localStorage = savedDisconnectStorage;
+
+  console.log("\n[13] Direct sharded Drive boundary");
+  const savedFetch = globalThis.fetch;
+  const savedSessionStorage = globalThis.sessionStorage;
+  const tokenStore = new Map();
+  globalThis.sessionStorage = {
+    getItem: (key) => tokenStore.has(key) ? tokenStore.get(key) : null,
+    setItem: (key, value) => tokenStore.set(key, String(value)),
+    removeItem: (key) => tokenStore.delete(key),
+  };
+  tokenStore.set("nd_gtoken_v1", JSON.stringify({ token: "browser-token", exp: Date.now() + 60000 }));
+  const savedNavigator = globalThis.navigator;
+  const savedCrypto = globalThis.crypto;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { locks: { request: async (_name, options, callback) => {
+      ok(options.mode === "exclusive", "writer lock requests exclusive mode");
+      return callback();
+    } } },
+  });
+  Object.defineProperty(globalThis, "crypto", {
+    configurable: true,
+    value: { randomUUID: () => "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+  });
+  const RealGDrive = require("../js/gdrive.js");
+  const writerName = "nutridaily-shard-v4-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json";
+  const meta = (id, name, writer) => ({
+    id, name, mimeType: "application/json", trashed: false, size: "100",
+    parents: ["folder-1"], isAppAuthorized: true,
+    appProperties: writer ? { nutridailySchema: "4", nutridailyWriter: writer } : undefined,
+  });
+  let calls = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), opts });
+    ok(String(url).startsWith("https://www.googleapis.com/"), "shard data uses the direct Google Drive API");
+    ok(opts.headers && opts.headers.Authorization === "Bearer browser-token",
+      "direct Drive requests keep the access token in the Authorization header");
+    if (String(url).includes("pageToken=p2")) {
+      return new Response(JSON.stringify({ files: [
+        meta("shard-a", writerName, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+      ] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (String(url).includes("/files?q=")) {
+      return new Response(JSON.stringify({
+        nextPageToken: "p2",
+        files: [
+          meta("legacy-id", "nutridaily-data.json"),
+          meta("ignored-id", "nutridaily-shard-v4-not-allowlisted.json"),
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (String(url).includes("legacy-id") && String(url).includes("alt=media")) {
+      return new Response(JSON.stringify(doc([remoteEvent], 3)), { status: 200 });
+    }
+    if (String(url).includes("shard-a") && String(url).includes("alt=media")) {
+      return new Response(JSON.stringify(doc([localEvent], 4)), { status: 200 });
+    }
+    throw new Error("unexpected Drive request " + url);
+  };
+  const snapshot = await RealGDrive.readShards(false);
+  ok(snapshot.docs.length === 2 && snapshot.docs[0].name === "nutridaily-data.json" &&
+     snapshot.docs[1].name === writerName, "pagination, exact filename allowlist, and deterministic sort work");
+  ok(snapshot.ownFileId === "shard-a" && !calls.some((call) => call.url.includes("/api/drive-sync")),
+    "static/GIS mode has full direct read support with no data endpoint dependency");
+
+  let patchedIds = [], storedDoc = doc([localEvent, remoteEvent], 4);
+  globalThis.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), opts });
+    if (String(url).includes("uploadType=media")) {
+      patchedIds.push(String(url));
+      return new Response(JSON.stringify({ id: "shard-a" }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (String(url).includes("alt=media")) {
+      return new Response(JSON.stringify(storedDoc), { status: 200 });
+    }
+    if (String(url).includes("/files/shard-a?fields=")) {
+      return new Response(JSON.stringify(meta("shard-a", writerName, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error("unexpected write request " + url);
+  };
+  await RealGDrive.writeOwnShard(snapshot.docs[1], storedDoc, false);
+  ok(patchedIds.length === 1 && patchedIds[0].includes("shard-a") && !patchedIds[0].includes("legacy-id"),
+    "only the current writer shard is updated; legacy input is never PATCHed");
+  ok(calls.find((call) => call.url.includes("uploadType=media")).opts.method === "PATCH",
+    "static/GIS mode has full direct write support for the owned shard");
+
+  const assertReadFails = async (label, listBody, mediaText, expectedCode) => {
+    let writes = 0;
+    globalThis.fetch = async (url, opts = {}) => {
+      if (opts.method === "PATCH" || opts.method === "POST") writes += 1;
+      if (String(url).includes("/files?q=")) {
+        return new Response(JSON.stringify(listBody), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (String(url).includes("alt=media")) return new Response(mediaText, { status: 200 });
+      throw new Error("unexpected malformed request " + url);
+    };
+    let err = null;
+    try { await RealGDrive.readShards(false); } catch (e) { err = e; }
+    ok(err && err.code === expectedCode && writes === 0, label);
+  };
+  await assertReadFails(
+    "malformed shards fail closed before any write",
+    { files: [meta("bad-id", writerName, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")] },
+    '{"version":4,"resetAt":1e309,"events":[],"personalFoods":[],"dayGoals":{},"dayPlans":{},"phases":[],"weights":{},"profile":{},"goals":{}}',
+    "drive-malformed-shard"
+  );
+  await assertReadFails(
+    "dangerous object keys fail closed before merge",
+    { files: [meta("bad-id", writerName, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")] },
+    '{"version":4,"events":[],"profile":{"__proto__":{"polluted":true}}}',
+    "drive-malformed-shard"
+  );
+  await assertReadFails(
+    "newer shard schemas fail closed before any write",
+    { files: [meta("future-id", writerName, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")] },
+    JSON.stringify(doc([], 99)),
+    "drive-newer-schema"
+  );
+  await assertReadFails(
+    "incomplete Drive searches fail closed",
+    { incompleteSearch: true, files: [] },
+    "{}",
+    "drive-incomplete-search"
+  );
+  const oversized = meta("large-id", writerName, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  oversized.size = String(RealGDrive._internals.MAX_DOC_BYTES + 1);
+  await assertReadFails(
+    "per-document byte cap rejects before buffering",
+    { files: [oversized] },
+    "{}",
+    "drive-document-too-large"
+  );
+  const tooMany = Array.from({ length: RealGDrive._internals.MAX_SHARDS + 1 }, (_, i) => {
+    const id = i.toString(16).padStart(32, "0");
+    return meta(`many-${i}`, `nutridaily-shard-v4-${id}.json`, id);
+  });
+  await assertReadFails(
+    "shard-count cap fails closed before reading documents",
+    { files: tooMany },
+    "{}",
+    "drive-shard-limit"
+  );
+
+  let pageReads = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/files?q=")) {
+      pageReads += 1;
+      return new Response(JSON.stringify({ nextPageToken: `page-${pageReads}`, files: [] }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error("unexpected pagination-cap request");
+  };
+  let pageErr = null;
+  try { await RealGDrive.readShards(false); } catch (e) { pageErr = e; }
+  ok(pageErr && pageErr.code === "drive-shard-limit" && pageReads === RealGDrive._internals.MAX_LIST_PAGES,
+    "pagination-page cap fails closed");
+
+  const aggregateFiles = Array.from({ length: 5 }, (_, i) => {
+    const id = (i + 100).toString(16).padStart(32, "0");
+    return meta(`aggregate-${i}`, `nutridaily-shard-v4-${id}.json`, id);
+  });
+  const paddedDoc = JSON.stringify({ ...doc([], 4), padding: "x".repeat(2600000) });
+  await assertReadFails(
+    "aggregate byte cap fails closed across individually valid shards",
+    { files: aggregateFiles },
+    paddedDoc,
+    "drive-document-too-large"
+  );
+
+  globalThis.fetch = async (url) => {
+    if (String(url) === "/api/auth/logout") throw new Error("offline");
+    throw new Error("unexpected logout request");
+  };
+  const offlineLogout = await RealGDrive.signOut();
+  ok(offlineLogout === false && RealGDrive.logoutPending() && !RealGDrive.cachedToken(),
+    "offline sign-out clears cached credentials and records a durable server-logout retry");
+
+  // A stale enabled preference can survive an offline logout (for example if
+  // its local write was blocked). Resume and the app's online sequence
+  // (retryPendingLogout followed immediately by schedulePush) must not race a
+  // silent token refresh or Drive cycle while the cookie logout is unresolved.
+  const driveBeforeLogoutRace = globalThis.GDrive;
+  const enabledBeforeLogoutRace = localStore.has("nd_sync_enabled")
+    ? localStore.get("nd_sync_enabled") : null;
+  const originalSilentBoot = RealGDrive.silentBoot;
+  const originalReadShards = RealGDrive.readShards;
+  const originalWriteOwnShard = RealGDrive.writeOwnShard;
+  let logoutRaceSilentBoots = 0;
+  let logoutRaceReads = 0;
+  let logoutRaceWrites = 0;
+  RealGDrive.silentBoot = async () => {
+    logoutRaceSilentBoots += 1;
+    throw new Error(RealGDrive.NEEDS_AUTH);
+  };
+  RealGDrive.readShards = async () => {
+    logoutRaceReads += 1;
+    return { docs: [], ownFileId: null };
+  };
+  RealGDrive.writeOwnShard = async () => { logoutRaceWrites += 1; };
+  globalThis.GDrive = RealGDrive;
+  localStore.set("nd_sync_enabled", "1");
+
+  await Sync.resume(); // offline retry fails and the durable marker remains.
+  ok(RealGDrive.logoutPending() && logoutRaceSilentBoots === 0 &&
+      logoutRaceReads === 0 && logoutRaceWrites === 0,
+    "pending offline logout makes background resume stop before silent refresh or sync");
+
+  let logoutRetries = 0;
+  let finishLogoutRetry = null;
+  globalThis.fetch = (url, opts) => {
+    if (String(url) === "/api/auth/logout" && opts && opts.method === "POST") {
+      logoutRetries += 1;
+      return new Promise((resolve) => {
+        finishLogoutRetry = () => resolve(new Response(null, { status: 204 }));
+      });
+    }
+    return Promise.reject(new Error("unexpected logout retry request"));
+  };
+  const onlineLogoutRetry = RealGDrive.retryPendingLogout();
+  Sync.schedulePush(); // mirrors App's online listener before retry resolves.
+  await new Promise((resolve) => setImmediate(resolve));
+  const onlineRaceBlocked = RealGDrive.logoutPending() && logoutRaceSilentBoots === 0 &&
+    logoutRaceReads === 0 && logoutRaceWrites === 0;
+  finishLogoutRetry();
+  const retriedLogout = await onlineLogoutRetry;
+  ok(onlineRaceBlocked && retriedLogout === true && logoutRetries === 1 &&
+      !RealGDrive.logoutPending(),
+    "online logout retry blocks schedulePush refresh/sync until /api/auth/logout succeeds",
+    `silent=${logoutRaceSilentBoots}, reads=${logoutRaceReads}, writes=${logoutRaceWrites}`);
+
+  const silentBeforeSuccessfulLogout = logoutRaceSilentBoots;
+  Sync.schedulePush();
+  await new Promise((resolve) => setImmediate(resolve));
+  ok(logoutRaceSilentBoots === silentBeforeSuccessfulLogout + 1 &&
+      logoutRaceReads === 0 && logoutRaceWrites === 0,
+    "background authentication may be attempted again only after the logout retry succeeds");
+
+  RealGDrive.silentBoot = originalSilentBoot;
+  RealGDrive.readShards = originalReadShards;
+  RealGDrive.writeOwnShard = originalWriteOwnShard;
+  globalThis.GDrive = driveBeforeLogoutRace;
+  if (enabledBeforeLogoutRace == null) localStore.delete("nd_sync_enabled");
+  else localStore.set("nd_sync_enabled", enabledBeforeLogoutRace);
+
+  globalThis.fetch = savedFetch;
+  globalThis.sessionStorage = savedSessionStorage;
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: savedNavigator });
+  Object.defineProperty(globalThis, "crypto", { configurable: true, value: savedCrypto });
+
+  console.log(`\n${pass} passed, ${fail} failed\n`);
+  process.exit(fail ? 1 : 0);
+})().catch((err) => {
+  fail += 1;
+  console.error("  ✗ async sync regression crashed — " + (err && err.stack || err));
+  console.log(`\n${pass} passed, ${fail} failed\n`);
+  process.exit(1);
+});
