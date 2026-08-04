@@ -124,18 +124,40 @@ header { display: flex; justify-content: space-between; align-items: flex-start;
 .hud-nut:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 .kcal-block.hud-nut { padding: 2px 4px; margin: -2px -4px; }
 .macro.hud-nut { padding: 2px 4px; margin: -2px -4px; }
-.m-top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
-.m-val { color: var(--muted); }
+.m-top { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; margin-bottom: 3px; }
+.m-top > span:first-child { flex: 0 1 auto; white-space: nowrap; }
+.m-val {
+  color: var(--muted);
+  flex: 1 1 auto;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .m-val.near { color: var(--near); }
 .m-val.over { color: var(--warn); }
-.bar { height: 7px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.bar { position: relative; height: 7px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .bar.big { height: 9px; }
+.bar.warn { overflow: visible; }
+.bar.warn::after {
+  content: "!";
+  position: absolute;
+  right: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
 .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; }
 .fill.p { background: #4a7dbd; } .fill.c { background: #c99a3a; } .fill.f { background: #b56aa2; } .fill.fb { background: #6a9e48; }
 .fill.na { background: #8a7a5c; }
 .fill.near { background: var(--near); }
 .fill.over { background: var(--warn); }
-.hud-footnote { width: 100%; margin-top: 4px; line-height: 1.4; }
+.hud-footnote { flex: 0 0 100%; width: 100%; margin-top: 4px; line-height: 1.4; }
 
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 10px 0 12px; }
 .view { display: none; flex-direction: column; flex: 1; min-height: 0; position: relative; }
@@ -1032,7 +1054,12 @@ body.has-info-banner #toast { bottom: calc(var(--tab-h) + 96px); }
 
 /* Potassium + Na:K ratio */
 .fill.k { background: #5b8fa8; }
-.nak-line { margin-top: 6px; font-weight: 600; }
+.nak-line {
+  flex: 0 0 100%;
+  width: 100%;
+  margin-top: 2px;
+  font-weight: 600;
+}
 .nak-line[hidden] { display: none; }
 .nak-line.ok { color: var(--accent-ink); }
 .nak-line.over { color: var(--warn); }

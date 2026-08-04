@@ -223,22 +223,29 @@ const UI = (() => {
     const set = (id, mean, goal, key, unit) => {
       const fill = $(`#f-${id}`), val = $(`#v-${id}`);
       if (!fill || !val) return;
+      const bar = fill.parentElement;
       const g = Number(goal) || 0;
       const pct = g ? Math.min(100, (mean / g) * 100) : 0;
       fill.style.width = pct + "%";
       // Today stays strict — it flags the moment you pass your number. But it
       // now names which side of the scoring band you are on, so a day that
       // reads amber here and green in Insights explains itself rather than
-      // looking like the two tabs disagree.
+      // looking like the two tabs disagree. Status is a "!" on the bar (not
+      // "over" in the value) so long mg figures don't wrap the card.
       const st = Phases.hudState(mean, g, Phases.BANDS[key]);
       fill.classList.toggle("near", st === "near");
       fill.classList.toggle("over", st === "over");
       val.classList.toggle("near", st === "near");
       val.classList.toggle("over", st === "over");
-      const note = st === "near" ? " · slightly over" : st === "over" ? " · over" : "";
+      if (bar && bar.classList.contains("bar")) {
+        bar.classList.toggle("warn", st === "near" || st === "over");
+        bar.classList.toggle("warn-near", st === "near");
+        bar.classList.toggle("warn-over", st === "over");
+        bar.title = st === "near" ? "Slightly over target" : st === "over" ? "Over target" : "";
+      }
       const right = goalLabel(goal, key, unit);
-      if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${right}${note}` : `${fmt(mean)}`;
-      else val.textContent = g ? `${fmt(mean)} / ${right}${note}` : unit ? `${fmt(mean)} ${unit}` : `${fmt(mean)}`;
+      if (id === "kcal") val.textContent = g ? `${fmt(mean)} / ${right}` : `${fmt(mean)}`;
+      else val.textContent = g ? `${fmt(mean)} / ${right}` : unit ? `${fmt(mean)} ${unit}` : `${fmt(mean)}`;
     };
     $("#v-kcal-big").textContent = fmt(totals.kcal.mean);
     const lo = Math.max(0, Math.round(totals.kcal.mean - totals.kcal.sd));
@@ -261,9 +268,14 @@ const UI = (() => {
     const incompleteMineral = (id, total, coverage) => {
       const fill = $(`#f-${id}`), val = $(`#v-${id}`);
       if (!fill || !val) return null;
+      const bar = fill.parentElement;
       fill.style.width = "0%";
       fill.classList.remove("near", "over");
       val.classList.remove("near", "over");
+      if (bar && bar.classList.contains("bar")) {
+        bar.classList.remove("warn", "warn-near", "warn-over");
+        bar.title = "";
+      }
       if (!totals.count) { val.textContent = "—"; return null; }
       val.textContent = `${fmt(total)} mg*`;
       return Number.isFinite(coverage) ? Math.round(coverage * 100) : null;

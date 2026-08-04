@@ -1014,7 +1014,7 @@ const Phases = (() => {
    * The "near" level exists to reconcile the two tabs. Today stays strict — it
    * flags the moment you pass your number, because that is a useful live nudge.
    * Insights is banded, so the same day can read green there. "near" is exactly
-   * that zone, so the HUD can say "slightly over" instead of silently
+   * that zone, so the HUD can mark it with "!" instead of silently
    * contradicting the other tab.
    *
    * "under" is deliberately not a state. Mid-morning every total is under, so
