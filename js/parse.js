@@ -64,13 +64,37 @@ const NutriParse = (() => {
   }
 
   /**
-   * Prompt for refining a saved food (catalog/reference or personal) when no prior NUTRI paste exists.
-   * Prefer this over updatePrompt("") for default/catalog foods.
+   * Keep only the NUTRI v1 block that belongs to this food.
+   * Older saves sometimes stored the whole clipboard (prompt echo, GAP replies,
+   * sibling foods). Improve-with-AI must never re-echo that junk.
    */
-  function foodUpdatePrompt(food) {
-    const f = food || {};
-    const raw = f.raw && String(f.raw).trim();
-    if (raw) return updatePrompt(raw);
+  function sanitizeFoodRaw(raw, foodName) {
+    const text = String(raw || "").trim();
+    if (!text) return "";
+    const blocks = extractBlocks(text);
+    if (!blocks.length) return "";
+    const want = String(foodName || "").trim().toLowerCase();
+    const nameOf = (b) => {
+      const m = String(b.body || "").match(/^\s*Name:\s*(.+)$/im);
+      return m ? m[1].trim().toLowerCase() : "";
+    };
+    let best = null;
+    if (want) {
+      best = blocks.find((b) => !b.truncated && nameOf(b) === want) || null;
+      if (!best) {
+        best = blocks.find((b) => {
+          if (b.truncated) return false;
+          const n = nameOf(b);
+          return n && (n === want || n.includes(want) || want.includes(n));
+        }) || null;
+      }
+    }
+    if (!best) best = [...blocks].reverse().find((b) => !b.truncated) || null;
+    if (!best) best = blocks[blocks.length - 1];
+    return String((best && best.rawBlock) || "").trim();
+  }
+
+  function fieldBasedFoodPrompt(f) {
     const p = f.per100 || {};
     const units = f.units || {};
     const unitBits = Object.keys(units)
@@ -102,6 +126,17 @@ const NutriParse = (() => {
       "\nMy dish:\n" +
       String(f.name || "") + "\n"
     );
+  }
+
+  /**
+   * Prompt for refining a saved food (catalog/reference or personal) when no prior NUTRI paste exists.
+   * Prefer this over updatePrompt("") for default/catalog foods.
+   */
+  function foodUpdatePrompt(food) {
+    const f = food || {};
+    const cleaned = sanitizeFoodRaw(f.raw, f.name);
+    if (cleaned) return updatePrompt(cleaned);
+    return fieldBasedFoodPrompt(f);
   }
 
   function preprocess(text) {
@@ -287,7 +322,7 @@ const NutriParse = (() => {
     return 0.12;
   }
 
-  function parseBlock(block, originalPaste) {
+  function parseBlock(block) {
     const warnings = [];
     const rejects = [];
     const unknownLines = [];
@@ -564,7 +599,9 @@ const NutriParse = (() => {
       rejects,
       unknownLines,
       truncated: block.truncated,
-      raw: originalPaste || block.rawBlock,
+      // Store only this block — never the whole clipboard (GAP replies, prompt
+      // echo, sibling foods). foodUpdatePrompt sanitizes older polluted saves.
+      raw: block.rawBlock,
       found: true,
     };
   }
@@ -580,11 +617,14 @@ const NutriParse = (() => {
         error: "I couldn't find a NUTRI v1 block in that. The AI may have replied in its own format; ask it to use NUTRI v1 … END.",
       };
     }
-    const results = blocks.map((b) => parseBlock(b, original));
+    const results = blocks.map((b) => parseBlock(b));
     return { found: true, results };
   }
 
-  return { PROMPT, updatePrompt, foodUpdatePrompt, parse, preprocess, extractBlocks, parseMacros, parseBatch };
+  return {
+    PROMPT, updatePrompt, foodUpdatePrompt, sanitizeFoodRaw,
+    parse, preprocess, extractBlocks, parseMacros, parseBatch,
+  };
 })();
 
 if (typeof module !== "undefined") module.exports = NutriParse;

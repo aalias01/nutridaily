@@ -2215,7 +2215,7 @@ const App = (() => {
     const result = pickPasteResult(parsed);
     if (!result || !result.food) { UI.toast("No usable NUTRI block"); return; }
     const saved = state.updateFoodId ? findFood(state.updateFoodId) : null;
-    result.food.raw = text.slice(0, 12000);
+    result.food.raw = String(result.raw || text).slice(0, 12000);
     state.reviewParsed = result;
     UI.showReview(result, {
       updateId: state.updateFoodId,
@@ -2265,7 +2265,7 @@ const App = (() => {
     if ((parsed.results || []).length > 1) {
       UI.toast(`Found ${parsed.results.length} blocks — using the last complete one.`);
     }
-    result.food.raw = text.slice(0, 12000);
+    result.food.raw = String(result.raw || text).slice(0, 12000);
     state.reviewParsed = result;
     state.editFoodDirect = false;
     const dup = !state.updateFoodId ? Foods.findByName(state.personalFoods, result.food.name) : null;

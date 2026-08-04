@@ -181,6 +181,73 @@ console.log("\n[parse] catalog refine prompt");
   };
   ok(/Log as|Piece/i.test(NutriParse.foodUpdatePrompt(pieceFood)), "refine prompt carries countable units");
   ok(!NutriParse.foodUpdatePrompt({ ...food, raw: "" }).includes("current saved version"), "empty raw falls back to field-based refine");
+
+  // Polluted raw: GAP day-plan + sibling NUTRI blocks must not poison Improve with AI
+  const polluted = `GAP v1
+Day: 2026-08-02
+Option: 1 | All selected
+Item: almonds | 15 g | snack
+Item: raisins | 80 g | snack
+Projected: 2583 kcal | P 150.9 | C 319.7 | F 88.7 | Fiber 47.6 | Sodium 2756 mg
+END
+
+NUTRI v1
+Name: almonds
+Aliases: raw almonds
+Category: nuts
+Batch: 100 g total, 1 servings
+Totals: 579 kcal | P 21.2 | C 21.6 | F 49.9 | Fiber 12.5 | Sodium 1
+Per 100 g: 579 kcal | P 21.2 | C 21.6 | F 49.9 | Fiber 12.5 | Sodium 1
+Confidence: high
+END
+
+NUTRI v1
+Name: raisins
+Aliases: seedless raisins
+Category: fruit
+Batch: 100 g total, 1 servings
+Totals: 299 kcal | P 3.1 | C 79.2 | F 0.5 | Fiber 3.7 | Sodium 11
+Per 100 g: 299 kcal | P 3.1 | C 79.2 | F 0.5 | Fiber 3.7 | Sodium 11
+Confidence: high
+END`;
+  const pollutedPrompt = NutriParse.foodUpdatePrompt({ ...food, name: "almonds", raw: polluted });
+  ok(pollutedPrompt.includes("current saved version"), "polluted raw still uses update path");
+  ok(/Name:\s*almonds/i.test(pollutedPrompt), "polluted raw keeps matching almond block");
+  ok(!/GAP v1/i.test(pollutedPrompt), "polluted raw drops GAP day-plan from refine prompt");
+  ok(!/Name:\s*raisins/i.test(pollutedPrompt), "polluted raw drops sibling NUTRI blocks");
+  ok(!/Option:\s*1/i.test(pollutedPrompt), "polluted raw drops GAP option lines");
+
+  const gapOnly = NutriParse.foodUpdatePrompt({
+    ...food,
+    name: "almonds",
+    raw: "GAP v1\nDay: 2026-08-02\nOption: 1 | junk\nEND",
+  });
+  ok(!/GAP v1/i.test(gapOnly), "GAP-only raw falls back instead of echoing GAP");
+  ok(/Current saved values/i.test(gapOnly), "GAP-only raw uses field-based refine");
+  ok(NutriParse.sanitizeFoodRaw(polluted, "raisins").includes("Name: raisins"), "sanitize picks named sibling block");
+  ok(!NutriParse.sanitizeFoodRaw(polluted, "raisins").includes("GAP v1"), "sanitize strips GAP from named block");
+}
+
+console.log("\n[parse] stored raw is single block");
+{
+  const multi = `prompt echo junk
+NUTRI v1
+Name: First
+Per 100 g: 100 kcal | P 1 | C 2 | F 3 | Fiber 0 | Sodium 0
+Confidence: high
+END
+
+NUTRI v1
+Name: Second
+Per 100 g: 200 kcal | P 4 | C 5 | F 6 | Fiber 1 | Sodium 10
+Confidence: high
+END`;
+  const multiParsed = NutriParse.parse(multi);
+  ok(multiParsed.results.length === 2, "multi paste yields two results");
+  ok(/^NUTRI v1/i.test(multiParsed.results[0].raw.trim()), "result.raw starts at NUTRI");
+  ok(!multiParsed.results[1].raw.includes("Name: First"), "second result.raw excludes first block");
+  ok(multiParsed.results[1].raw.includes("Name: Second"), "second result.raw is its own block");
+  ok(!multiParsed.results[1].raw.includes("prompt echo"), "result.raw excludes clipboard preamble");
 }
 
 console.log("\n[parse] robustness regressions");
