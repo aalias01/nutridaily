@@ -24,6 +24,7 @@ const App = (() => {
       dayGoals: {},
       dayPlans: {},
       gapDrafts: {}, // day -> { selected: [{foodId,catalogId,name}], step, updatedAt }
+      dayPlanPresets: [], // Slice 6 §12 — max 5 active; LWW merge like personalFoods
       phases: [],
       weights: {},
       profile: {},
@@ -143,6 +144,7 @@ const App = (() => {
       dayGoals: settings.dayGoals || {},
       dayPlans: settings.dayPlans || {},
       gapDrafts: settings.gapDrafts || {},
+      dayPlanPresets: settings.dayPlanPresets || [],
       phases: settings.phases || [],
       weights: settings.weights || {},
       profile: settings.profile || {},
@@ -204,22 +206,47 @@ const App = (() => {
   function refreshDayGoalsLink() {
     const btn = UI.$("#btn-day-goals");
     if (!btn) return;
-    const ov = dayGoalOverride(state.viewDay);
     const resolved = Phases.goalsForDay(state.viewDay, state.settings);
-    const kcal = Number(resolved && resolved._bumps && resolved._bumps.kcal);
-    const hasAdjustment = Number.isFinite(kcal) && kcal !== 0;
-    const locked = state.viewDay !== Ledger.todayKey() || Ledger.hasEverAdded(state.viewDay);
-    const summary = hasAdjustment ? `${Math.round(resolved.kcal)} kcal` : "";
-    btn.classList.toggle("has-override", hasAdjustment);
+    const bumps = resolved && resolved._bumps;
+    const isFast = !!(bumps && bumps.intent === "fast");
+    const kcal = Number(bumps && bumps.kcal);
+    const hasPlan = isFast || (Number.isFinite(kcal) && kcal !== 0);
+    const reducedWin = Phases.dayIntentWindow(state.viewDay, {
+      todayKey: Ledger.todayKey(),
+      intent: "reduced",
+      hasEverAdded: (day) => Ledger.hasEverAdded(day),
+    });
+    const fastWin = Phases.dayIntentWindow(state.viewDay, {
+      todayKey: Ledger.todayKey(),
+      intent: "fast",
+      hasEverAdded: (day) => Ledger.hasEverAdded(day),
+    });
+    // Locked labels follow the plan already on the day. An existing reduced
+    // plan that locked after the first food must read locked even though a
+    // never-started day could still declare a Fast in its grace window.
+    const locked = isFast
+      ? !fastWin.ok
+      : hasPlan
+        ? !reducedWin.ok
+        : !(reducedWin.ok || fastWin.ok);
+    const lockReason = isFast
+      ? (fastWin.reason || "")
+      : hasPlan
+        ? (reducedWin.reason || "")
+        : (reducedWin.reason || fastWin.reason || "");
+    let label = "Day plan";
+    if (isFast) label = "Fast · declared";
+    else if (hasPlan) label = `Planned calories · ${Math.round(resolved.kcal)} kcal`;
+    btn.classList.toggle("has-override", hasPlan);
     btn.classList.toggle("is-locked", locked);
-    btn.textContent = hasAdjustment
-      ? `Planned calories · ${summary}${locked ? " · locked" : ""}`
-      : `Energy adjustment${locked ? " · locked" : ""}`;
+    btn.textContent = `${label}${locked ? " · locked" : ""}`;
     btn.title = locked
-      ? (state.viewDay !== Ledger.todayKey()
-        ? "Energy adjustments can only be planned for today"
-        : "Energy adjustments stay locked after the first food is logged, even if it is deleted")
-      : "Plan today's calorie target before logging your first food";
+      ? (lockReason || reducedWin.reason || fastWin.reason || "This day plan cannot be changed right now.")
+      : (isFast
+        ? "Declared fast for this day"
+        : (hasPlan
+          ? "Edit or clear this day's calorie plan"
+          : "Plan a reduced-energy day or declare a fast"));
   }
 
   let deferredInstall = null;
@@ -270,6 +297,8 @@ const App = (() => {
     if (!state.settings.dayGoals || typeof state.settings.dayGoals !== "object") state.settings.dayGoals = {};
     if (!state.settings.dayPlans || typeof state.settings.dayPlans !== "object") state.settings.dayPlans = {};
     if (!state.settings.gapDrafts || typeof state.settings.gapDrafts !== "object") state.settings.gapDrafts = {};
+    if (!Array.isArray(state.settings.dayPlanPresets)) state.settings.dayPlanPresets = [];
+    state.settings.dayPlanPresets = Sync.normalizeDayPlanPresets(state.settings.dayPlanPresets);
     if (!state.settings.weights || typeof state.settings.weights !== "object") state.settings.weights = {};
     Phases.ensureProfile(state.settings);
     try { state.personalFoods = JSON.parse(localStorage.getItem(PERSONAL_KEY) || "[]"); }
@@ -514,6 +543,17 @@ const App = (() => {
     const prev = previous || {};
     for (const key of ["dayGoals", "dayPlans", "gapDrafts", "weights"]) {
       next[key] = stampRecordMap(next[key], prev[key], epoch, rebase);
+    }
+    // Presets are an array keyed by id (like personalFoods), not a day map.
+    const priorPresets = new Map(
+      (prev.dayPlanPresets || []).filter(Boolean).map((preset) => [preset.id, preset])
+    );
+    for (const preset of next.dayPlanPresets || []) {
+      if (!preset || typeof preset !== "object") continue;
+      const old = priorPresets.get(preset.id);
+      preset.resetEpoch = rebase
+        ? epoch
+        : (old ? safeResetEpoch(old.resetEpoch) : epoch);
     }
     const priorPhases = new Map((prev.phases || []).filter(Boolean).map((phase) => [phase.id, phase]));
     for (const phase of next.phases || []) {
@@ -792,9 +832,21 @@ const App = (() => {
     return Ledger.todayKey(d);
   }
 
+  /** Calendar day after `from` (defaults to today) — the §10 plan-ahead horizon. */
+  function dayAfter(from) {
+    const d = new Date((from || Ledger.todayKey()) + "T12:00:00");
+    d.setDate(d.getDate() + 1);
+    return Ledger.todayKey(d);
+  }
+
   function refreshHUD() {
-    UI.updateHUD(Ledger.totalsFor(state.viewDay), goalsForView());
-    UI.setDayLabel(state.viewDay, isToday());
+    UI.updateHUD(Ledger.totalsFor(state.viewDay), goalsForView(), {
+      viewDay: state.viewDay,
+      todayKey: Ledger.todayKey(),
+    });
+    UI.setDayLabel(state.viewDay, isToday(), {
+      disableNext: state.viewDay >= dayAfter(Ledger.todayKey()),
+    });
   }
 
   function refreshTodayContrib() {
@@ -1094,7 +1146,7 @@ const App = (() => {
     const totals = Ledger.totalsFor(day);
     const goals = goalsForView();
     const means = GapPrompt.totalsMeans(totals);
-    const remaining = GapPrompt.remainingFrom(means, goals);
+    const remaining = GapPrompt.remainingFrom(means, goals, totals);
     const candidates = buildGapCandidatesFromSelection().map(({ food, ...rest }) => rest);
     return GapPrompt.buildGapPrompt({
       day,
@@ -1117,8 +1169,14 @@ const App = (() => {
     if (!el) return;
     const totals = Ledger.totalsFor(state.viewDay);
     const goals = goalsForView();
-    const remaining = GapPrompt.remainingFrom(GapPrompt.totalsMeans(totals), goals);
-    el.textContent = UI.formatGapRemaining(remaining, goals, totals);
+    const resolved = typeof Phases !== "undefined" ? Phases.effectiveGoals(totals, goals) : goals;
+    // An honoured fast has nothing to close — do not print P150 against 0 kcal.
+    if (resolved && resolved._bumps && resolved._bumps.intent === "fast" && resolved._unscored) {
+      el.textContent = "Declared fast — targets for this day are not scored, so Close the Gap has nothing to fill.";
+      return;
+    }
+    const remaining = GapPrompt.remainingFrom(GapPrompt.totalsMeans(totals), goals, totals);
+    el.textContent = UI.formatGapRemaining(remaining, resolved || goals, totals);
   }
 
   function gapPortionFor(foodId) {
@@ -1363,6 +1421,14 @@ const App = (() => {
     const preferPlan = opts && opts.plan;
     const plan = dayPlan(state.viewDay);
     state.gapPortionCache = null;
+
+    const totals = Ledger.totalsFor(state.viewDay);
+    const goals = goalsForView();
+    const resolved = Phases.effectiveGoals(totals, goals);
+    if (resolved && resolved._bumps && resolved._bumps.intent === "fast" && resolved._unscored) {
+      UI.toast("Declared fast — Close the Gap has nothing to fill while the day stays unscored.");
+      return;
+    }
 
     // Resume paste step after leaving for an LLM (selection is persisted)
     if (!preferPlan) {
@@ -1810,7 +1876,9 @@ const App = (() => {
     const d = new Date(state.viewDay + "T12:00:00");
     d.setDate(d.getDate() + delta);
     const key = Ledger.todayKey(d);
-    if (key > Ledger.todayKey()) return;
+    // One day ahead is allowed so §10 reduced plan-ahead is reachable
+    // (today → tomorrow's sheet → set tomorrow's plan before tomorrow arrives).
+    if (key > dayAfter(Ledger.todayKey())) return;
     state.viewDay = key;
     refreshDay();
   }
@@ -2535,7 +2603,7 @@ const App = (() => {
           : "An imported current/future target is audit-only because it failed the persistent safety policy. The nearest earlier valid version is active; review and save a replacement.");
     }
     // The phase editor sets the PERSISTENT phase target, not today's live
-    // number. When an Energy adjustment is active, g.kcal is today's frozen
+    // number. When a day plan is active, g.kcal is today's frozen
     // override — g._phase.kcal is always the real, unadjusted phase value
     // (goalsForDay guarantees _phase is populated either way). Using g.kcal
     // here would let an unrelated today-only adjustment silently overwrite
@@ -3021,6 +3089,21 @@ const App = (() => {
     return n;
   }
 
+  /**
+   * A planned day's calories cannot be expressed as one min/max pair:
+   * {0} ∪ [200, 6000]. 0 is a declared fast; nothing between 1 and 199 is a
+   * real protocol, it is a typo (see MIN_PLANNED_KCAL in phases.js).
+   */
+  function importedPlannedKcal(value, label, intent) {
+    const n = importedNumber(value, label, { min: 0, max: 6000 });
+    if (intent === "fast") {
+      if (n !== 0) throw new Error(`${label} must be 0 on a declared fast`);
+      return 0;
+    }
+    if (n < 200) throw new Error(`${label} must be 0 for a fast or at least 200 kcal`);
+    return n;
+  }
+
   function importedTimestamp(value, label) {
     if (value == null || value === "") return 0;
     return importedNumber(value, label, { min: 0, max: Number.MAX_SAFE_INTEGER });
@@ -3149,8 +3232,32 @@ const App = (() => {
         out.entry = normalizeImportedEntry(raw.entry, `${label}.entry`, true);
         if (raw.dayGoalLock != null) {
           const lock = importedObject(raw.dayGoalLock, `${label}.dayGoalLock`);
+          // targetKcal is a planned day ({0} ∪ [200, 6000]); baseKcal is a
+          // frozen phase target and keeps its own unrelated [800, 6000] floor.
+          const lockTargetKcal = importedNumber(lock.targetKcal, `${label}.dayGoalLock.targetKcal`, { min: 0, max: 6000 });
+          // A 0 target is only ever a real declaration, never bare arithmetic
+          // — an event lock that recorded targetKcal 0 with no intent/
+          // fastAcknowledged of its own is the one shape the rest of the
+          // system refuses to honour (Part VIII.1), and this site was the
+          // fifth one still capable of writing it: rebuilding the lock from a
+          // fixed field list that dropped intent/fastAcknowledged, exactly
+          // mirroring Ledger._normalizedDayGoalLock now (Part IX.1). The
+          // reverse combination — intent "fast" riding along on a nonzero
+          // target — is equally incoherent (Part IX.2) and must not survive
+          // either; requiring targetKcal 0 here keeps this site in exact
+          // agreement with the ledger's own validator instead of writing a
+          // lock none of the other three validators would accept.
+          const lockDeclaredFast = lock.intent === "fast" && lock.fastAcknowledged === true &&
+            lockTargetKcal === 0;
+          if (lockTargetKcal === 0) {
+            if (!lockDeclaredFast) {
+              throw new Error(`${label}.dayGoalLock.targetKcal of 0 requires intent "fast" and fastAcknowledged`);
+            }
+          } else if (lockTargetKcal < 200) {
+            throw new Error(`${label}.dayGoalLock.targetKcal must be 0 or at least 200`);
+          }
           out.dayGoalLock = {
-            targetKcal: importedNumber(lock.targetKcal, `${label}.dayGoalLock.targetKcal`, { min: 800, max: 6000 }),
+            targetKcal: lockTargetKcal,
             baseKcal: importedNumber(lock.baseKcal, `${label}.dayGoalLock.baseKcal`, { min: 800, max: 6000 }),
           };
           if (lock.plannedAt != null) {
@@ -3158,6 +3265,11 @@ const App = (() => {
           }
           if (lock.veryLowCalorieAcknowledged === true) {
             out.dayGoalLock.veryLowCalorieAcknowledged = true;
+          }
+          if (lockDeclaredFast) {
+            out.dayGoalLock.intent = "fast";
+            out.dayGoalLock.fastAcknowledged = true;
+            if (lock.declaredAfterDay === true) out.dayGoalLock.declaredAfterDay = true;
           }
         }
       }
@@ -3465,6 +3577,43 @@ const App = (() => {
     return out;
   }
 
+  function normalizeImportedDayPlanPresets(value) {
+    if (value == null) return [];
+    if (!Array.isArray(value)) throw new Error("settings.dayPlanPresets must be an array");
+    // Cap-overage degrades via Sync.enforceDayPlanPresetCap (tombstone losers)
+    // rather than throwing — presets must never brick Drive sync / import.
+    // Tombstones omit targetKcal/intent by design (Sync.normalizeDayPlanPreset);
+    // accept that shape before reading active-only fields, or delete/sync round-trips throw.
+    return Sync.normalizeDayPlanPresets(value.map((item, i) => {
+      const row = importedObject(item, `settings.dayPlanPresets[${i}]`);
+      const id = importedString(row.id, `settings.dayPlanPresets[${i}].id`, { required: true, max: 160 });
+      const createdAt = importedTimestamp(row.createdAt, `settings.dayPlanPresets[${i}].createdAt`);
+      const updatedAt = importedTimestamp(row.updatedAt, `settings.dayPlanPresets[${i}].updatedAt`);
+      const resetEpoch = importedGeneration(row.resetEpoch, `settings.dayPlanPresets[${i}].resetEpoch`);
+      if (row.deleted === true) {
+        return { id, deleted: true, createdAt, updatedAt, resetEpoch };
+      }
+      const label = row.label == null ? "" : importedString(row.label, `settings.dayPlanPresets[${i}].label`, { max: 80 });
+      const intent = row.intent === "fast" ? "fast" : "reduced";
+      const targetKcal = importedNumber(row.targetKcal, `settings.dayPlanPresets[${i}].targetKcal`);
+      const out = {
+        id,
+        label,
+        intent,
+        targetKcal,
+        createdAt,
+        updatedAt,
+        resetEpoch,
+      };
+      if (intent === "fast" && row.fastAcknowledged === true) out.fastAcknowledged = true;
+      if (row.veryLowCalorieAcknowledged === true) out.veryLowCalorieAcknowledged = true;
+      if (row.lastUsedAt != null) {
+        out.lastUsedAt = importedTimestamp(row.lastUsedAt, `settings.dayPlanPresets[${i}].lastUsedAt`);
+      }
+      return out;
+    }));
+  }
+
   function normalizeImportedDayGoals(value, settings) {
     if (value == null) return {};
     const raw = importedObject(value, "settings.dayGoals");
@@ -3482,17 +3631,43 @@ const App = (() => {
         out[day] = { cleared: true, ...common };
         continue;
       }
+
+      // Absent on every record generation that predates this feature; a
+      // missing intent is an ordinary planned day, not a fast nobody
+      // declared. A record naming intent "fast" without a coherent zero
+      // target is not a fast either — it's an ordinary planned day with a
+      // stray label. Downgrading it here (drop intent, keep whatever numeric
+      // plan the record actually has) mirrors Ledger._normalizedDayGoalLock
+      // and normalizeImportedEvent's event-lock path: both already do this,
+      // and rejecting the entire import over one mismatched record fails a
+      // whole backup restore for no reason (Part X.5). An explicit zero with
+      // no acknowledgement still falls through to importedPlannedKcal below,
+      // which rejects 0 under intent "reduced" — the undeclared-zero
+      // protection (Part VIII.1) survives as a consequence of the ordinary
+      // range check, not a special case here.
+      const rawTargetKcal = record.targetKcal == null ? NaN : Number(record.targetKcal);
+      const declaredFast = record.intent === "fast" && record.fastAcknowledged === true &&
+        rawTargetKcal === 0;
+      const intent = declaredFast ? "fast" : "reduced";
+
       if (record.targetKcal != null || record.baseKcal != null) {
-        const targetKcal = importedNumber(record.targetKcal, `${label}.targetKcal`, { min: 800, max: 6000 });
+        const targetKcal = importedPlannedKcal(record.targetKcal, `${label}.targetKcal`, intent);
         const baseKcal = importedNumber(record.baseKcal, `${label}.baseKcal`, { min: 800, max: 6000 });
         const locked = record.locked === true || record.lockedByEventId != null;
         if (targetKcal === baseKcal && !locked) {
           out[day] = { cleared: true, ...common };
         } else {
-          if (targetKcal < 1200 && !common.veryLowCalorieAcknowledged) {
+          if (targetKcal > 0 && targetKcal < 1200 && !common.veryLowCalorieAcknowledged) {
             throw new Error(`${label}.targetKcal is below 1200 and requires veryLowCalorieAcknowledged`);
           }
           out[day] = { targetKcal, baseKcal, ...common };
+          if (intent === "fast") {
+            out[day].intent = "fast";
+            out[day].fastAcknowledged = true;
+            // Modern branch only (Part VII) — never into `common`, so a clear
+            // tombstone or legacy absolute never carries a late-fast stamp.
+            if (record.declaredAfterDay === true) out[day].declaredAfterDay = true;
+          }
           if (locked) {
             out[day].locked = true;
             if (record.lockedByEventId != null) {
@@ -3503,6 +3678,11 @@ const App = (() => {
           }
         }
         continue;
+      }
+      // A fast only ever takes the frozen modern shape above — a delta bump or
+      // a legacy absolute target cannot express a zero-calorie day explicitly.
+      if (intent === "fast") {
+        throw new Error(`${label}.intent is "fast" but no targetKcal was provided`);
       }
       const base = Phases.goalsForDay(day, { ...settings, dayGoals: {} });
       const baseKcal = Number(base && base.kcal);
@@ -3517,15 +3697,21 @@ const App = (() => {
         }
         const kcal = importedNumber(bumps.kcal, `${label}.bumps.kcal`, { min: -5200, max: 5200 });
         const targetKcal = baseKcal + kcal;
-        if (targetKcal < 800 || targetKcal > 6000) {
-          throw new Error(`${label} resolves outside the supported 800–6000 kcal range`);
+        // A delta can coincidentally land on 0, but intent must always be
+        // explicit — a fast is only ever declared via the frozen modern shape.
+        if (targetKcal === 0) {
+          throw new Error(`${label} resolves to 0 kcal — declare a fast explicitly instead of a calorie delta`);
+        }
+        if (targetKcal < 200 || targetKcal > 6000) {
+          throw new Error(`${label} resolves outside the supported 200–6000 kcal range`);
         }
         if (kcal !== 0 && targetKcal < 1200 && !common.veryLowCalorieAcknowledged) {
           throw new Error(`${label}.targetKcal is below 1200 and requires veryLowCalorieAcknowledged`);
         }
         out[day] = kcal === 0 ? { cleared: true, ...common } : { bumps: { kcal }, ...common };
       } else if (record.kcal != null && record.kcal !== "") {
-        const absolute = importedNumber(record.kcal, `${label}.kcal`, { min: 800, max: 6000 });
+        // Legacy absolute overrides predate the fast concept and can never be 0.
+        const absolute = importedNumber(record.kcal, `${label}.kcal`, { min: 200, max: 6000 });
         if (absolute !== baseKcal && absolute < 1200 && !common.veryLowCalorieAcknowledged) {
           throw new Error(`${label}.targetKcal is below 1200 and requires veryLowCalorieAcknowledged`);
         }
@@ -3568,6 +3754,7 @@ const App = (() => {
       dayGoals: {},
       dayPlans: normalizeImportedDayPlans(input.dayPlans),
       gapDrafts: normalizeImportedGapDrafts(input.gapDrafts),
+      dayPlanPresets: normalizeImportedDayPlanPresets(input.dayPlanPresets),
     };
     Phases.ensureMigrated(settings, Phases.earliestDayFromEvents(events), Ledger.todayKey());
     settings.dayGoals = normalizeImportedDayGoals(input.dayGoals, settings);
@@ -3594,6 +3781,7 @@ const App = (() => {
       profile: hasProfile ? Phases.normalizeProfile(clean.profile) : null,
       dayPlans: normalizeImportedDayPlans(clean.dayPlans),
       gapDrafts: normalizeImportedGapDrafts(clean.gapDrafts),
+      dayPlanPresets: normalizeImportedDayPlanPresets(clean.dayPlanPresets),
       dayGoals: {},
     };
     // Legacy settings become a deterministic phase before any shard merge, so
@@ -3624,6 +3812,7 @@ const App = (() => {
       dayGoals: settings.dayGoals,
       dayPlans: settings.dayPlans,
       gapDrafts: settings.gapDrafts,
+      dayPlanPresets: settings.dayPlanPresets,
       phases: settings.phases,
       weights: settings.weights,
       profile: settings.profile,
@@ -4217,102 +4406,497 @@ const App = (() => {
       });
     });
     UI.$("#day-label").addEventListener("click", jumpToToday);
-    const energyAdjustmentLockedMessage = () => {
-      if (state.viewDay !== Ledger.todayKey()) {
-        return "Energy adjustments can only be planned for today, before logging.";
-      }
-      if (Ledger.hasEverAdded(state.viewDay)) {
-        return "Planned calories lock after the first food is logged.";
-      }
-      return "";
+    const guardDayIntent = (intent) => {
+      const win = Phases.dayIntentWindow(state.viewDay, {
+        todayKey: Ledger.todayKey(),
+        intent: intent === "fast" ? "fast" : "reduced",
+        hasEverAdded: (day) => Ledger.hasEverAdded(day),
+      });
+      if (win.ok) return win;
+      return win;
     };
-    const guardEnergyAdjustment = () => {
-      const message = energyAdjustmentLockedMessage();
-      if (!message) return true;
+    const toastIfBlocked = (intent) => {
+      const win = guardDayIntent(intent);
+      if (win.ok) return true;
       UI.closeSheet("sheet-day-goals");
       refreshDayGoalsLink();
-      UI.toast(message);
+      UI.toast(win.reason || "This day plan cannot be changed right now.");
       return false;
+    };
+    const canAuthorAnyIntent = () =>
+      guardDayIntent("reduced").ok || guardDayIntent("fast").ok;
+    const escHtml = (s) => String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+    // Round to the nearest 10 (Analytics.retargetForKcal's own precision) and
+    // clamp at the ceiling: 6004 already rounds down to 6000, but 6005 sits
+    // exactly on the tie and Math.round breaks ties up, landing on 6010 and
+    // getting rejected as over budget when it was, at most, a rounding
+    // artifact away from the max — the one boundary a symmetric value on the
+    // low side does not hit, since a typed 195 rounds up into the 200 floor
+    // instead of being rejected for landing on the wrong side of its own tie.
+    // Shared by the preview and the save handler so neither can disagree with
+    // the other about what a typed value becomes.
+    const roundPlannedKcal = (typed) => {
+      if (!Number.isFinite(typed)) return typed;
+      let rounded = Math.round(typed / 10) * 10;
+      if (rounded > 6000 && typed <= 6005) rounded = 6000;
+      return rounded;
+    };
+    const selectedDayIntent = () => {
+      const on = UI.$("#dg-intent-seg button.on");
+      const v = on && on.dataset.dgIntent;
+      return v === "fast" || v === "reduced" || v === "normal" ? v : "normal";
+    };
+    const setDayIntentSeg = (intent) => {
+      const want = intent === "fast" || intent === "reduced" || intent === "normal" ? intent : "normal";
+      UI.$$("#dg-intent-seg button").forEach((b) => {
+        const on = b.dataset.dgIntent === want;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
+      const showReduced = want === "reduced";
+      const showFast = want === "fast";
+      const showNormal = want === "normal";
+      const panelN = UI.$("#dg-panel-normal");
+      const panelR = UI.$("#dg-panel-reduced");
+      const panelF = UI.$("#dg-panel-fast");
+      if (panelN) panelN.hidden = !showNormal;
+      if (panelR) panelR.hidden = !showReduced;
+      if (panelF) panelF.hidden = !showFast;
+      if (showFast) {
+        const copy = UI.$("#dg-fast-copy");
+        if (copy) copy.textContent = Phases.FAST_DECLARATION_COPY;
+      }
+      if (showReduced) refreshBumpPreview();
+      // Presets sit outside the intent panels so Reduced and Fast both see them.
+      refreshPresetChips();
+    };
+    const refreshPlanDisclosure = () => {
+      const el = UI.$("#dg-plan-disclosure");
+      if (!el) return;
+      const phaseBase = Phases.goalsForDay(state.viewDay, { ...state.settings, dayGoals: {} });
+      const raw = UI.$("#dg-kcal").value.trim();
+      const target = roundPlannedKcal(raw === "" ? null : parseAmount(raw));
+      if (!Number.isFinite(target) || target < 200 || target > 6000) {
+        el.textContent = "";
+        return;
+      }
+      const lines = [];
+      if (!Phases.proteinScorableOnPlan(target, phaseBase.protein)) {
+        const share = Math.round((4 * Number(phaseBase.protein) / target) * 100);
+        lines.push(
+          `At ${target} kcal your ${Math.round(phaseBase.protein)} g protein floor would need ${share}% of the day, so protein won't be scored. The target itself doesn't change.`
+        );
+      }
+      const retarget = typeof Analytics !== "undefined" && typeof Analytics.retargetForKcal === "function"
+        ? Analytics.retargetForKcal(phaseBase, target)
+        : null;
+      if (!retarget) {
+        lines.push("Carbs and fat aren't scored at this energy.");
+      }
+      el.textContent = lines.join(" ");
     };
     const refreshBumpPreview = () => {
       const phaseBase = Phases.goalsForDay(state.viewDay, { ...state.settings, dayGoals: {} });
       const raw = UI.$("#dg-kcal").value.trim();
-      const target = raw === "" ? null : parseAmount(raw);
+      const typed = raw === "" ? null : parseAmount(raw);
+      const target = roundPlannedKcal(typed);
       const prev = UI.$("#energy-adjustment-preview");
       const input = UI.$("#dg-kcal");
       if (prev) {
         if (raw === "") {
           input.removeAttribute("aria-invalid");
-          prev.textContent = `Phase calorie target: ${phaseBase.kcal} kcal. Blank clears the plan.`;
-        } else if (!Number.isFinite(target) || target < 800 || target > 6000) {
+          prev.textContent = `Phase calorie target: ${phaseBase.kcal} kcal.`;
+        } else if (!Number.isFinite(target) || target < 200 || target > 6000) {
           input.setAttribute("aria-invalid", "true");
-          prev.textContent = "Target must be 800–6000 kcal.";
+          prev.textContent = "Target must be 200–6000 kcal.";
         } else {
           input.removeAttribute("aria-invalid");
           const delta = target - phaseBase.kcal;
           const caution = target < 1200
             ? " Very-low-calorie targets require clinician supervision."
             : "";
-          prev.textContent = `Planned target: ${Math.round(target)} kcal (current phase ${phaseBase.kcal}${delta ? ` ${delta > 0 ? "+" : "−"}${Math.abs(Math.round(delta))}` : ""}).${caution}`;
+          prev.textContent = `Planned target: ${target} kcal (current phase ${phaseBase.kcal}${delta ? ` ${delta > 0 ? "+" : "−"}${Math.abs(delta)}` : ""}).${caution}`;
         }
       }
+      refreshPlanDisclosure();
     };
-    UI.$("#btn-day-goals").addEventListener("click", () => {
-      if (!guardEnergyAdjustment()) return;
+    const activePresets = () => Sync.activeDayPlanPresets(state.settings.dayPlanPresets || []);
+    const refreshPresetChips = () => {
+      const root = UI.$("#dg-presets");
+      const chips = UI.$("#dg-preset-chips");
+      if (!root || !chips) return;
+      const intent = selectedDayIntent();
+      const list = activePresets().slice().sort((a, b) =>
+        (Number(b.lastUsedAt) || 0) - (Number(a.lastUsedAt) || 0) ||
+        String(a.label).localeCompare(String(b.label))
+      );
+      // Hide on Normal (clear-only); show on Reduced/Fast even when empty so
+      // "Save as preset" stays reachable for Fast.
+      root.hidden = intent === "normal";
+      const newest = list[0];
+      chips.innerHTML = list.map((p) => {
+        const label = escHtml(p.label || (p.intent === "fast" ? "Fast" : `${Math.round(p.targetKcal)} kcal`));
+        const def = newest && newest.id === p.id ? " is-default" : "";
+        // Two sibling buttons inside a non-interactive chip shell — nested
+        // <button> markup is invalid and made delete mouse-only.
+        return `<span class="uchip${def}">` +
+          `<button type="button" class="uchip-apply" data-preset-id="${escHtml(p.id)}">${label}</button>` +
+          `<button type="button" class="uchip-x" data-preset-delete="${escHtml(p.id)}" aria-label="Remove preset ${label}" title="Remove">×</button>` +
+          `</span>`;
+      }).join("");
+      const hint = UI.$("#dg-preset-hint");
+      if (hint) hint.hidden = list.length === 0;
+    };
+    const applyPresetToSheet = (preset) => {
+      if (!preset || preset.deleted) return;
+      if (preset.intent === "fast") {
+        setDayIntentSeg("fast");
+        const ack = UI.$("#dg-fast-ack");
+        if (ack) ack.checked = true;
+        return;
+      }
+      setDayIntentSeg("reduced");
+      UI.$("#dg-kcal").value = String(Math.round(preset.targetKcal));
+      refreshBumpPreview();
+    };
+    const touchPresetUsed = (id) => {
+      const now = Date.now();
+      const next = cloneLocalData(state.settings);
+      // lastUsedAt is usage telemetry only — never bump updatedAt, or an
+      // apply on one device would LWW-defeat a delete/edit on another.
+      next.dayPlanPresets = (next.dayPlanPresets || []).map((p) =>
+        p && p.id === id && !p.deleted ? { ...p, lastUsedAt: now } : p
+      );
+      next.dayPlanPresets = Sync.normalizeDayPlanPresets(next.dayPlanPresets);
+      try {
+        commitSettingsCandidate(next);
+        Sync.schedulePush();
+      } catch (_) { /* non-fatal for apply chip */ }
+    };
+    const deletePreset = (id) => {
+      if (!id) return;
+      const preset = activePresets().find((p) => p.id === id);
+      const label = (preset && preset.label) || "this preset";
+      if (!confirm(`Remove preset “${label}”?`)) return;
+      const now = Date.now();
+      const next = cloneLocalData(state.settings);
+      const list = Sync.normalizeDayPlanPresets(next.dayPlanPresets || []);
+      const found = list.some((p) => p.id === id);
+      next.dayPlanPresets = found
+        ? list.map((p) => p.id === id
+          ? {
+            id: p.id,
+            deleted: true,
+            updatedAt: Math.max(Number(p.updatedAt) || 0, now),
+            createdAt: Number(p.createdAt) || now,
+            ...(Object.prototype.hasOwnProperty.call(p, "resetEpoch")
+              ? { resetEpoch: p.resetEpoch }
+              : { resetEpoch: Sync.getResetAt() }),
+          }
+          : p)
+        : list;
+      try { commitSettingsCandidate(next); }
+      catch (error) { UI.toast("Couldn’t remove this preset — nothing changed"); return; }
+      Sync.schedulePush();
+      refreshPresetChips();
+      UI.toast("Preset removed");
+    };
+    const openDayGoalsSheet = () => {
       const g = Phases.goalsForDay(state.viewDay, state.settings);
-      UI.$("#dg-kcal").value = g && g._bumps ? Math.round(g.kcal) : "";
+      const bumps = g && g._bumps;
+      const isFast = !!(bumps && bumps.intent === "fast");
+      const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
+      // An existing plan reopens only while its own intent window is open.
+      // An empty day can author either intent.
+      if (isFast) {
+        if (!toastIfBlocked("fast")) return;
+      } else if (hasReduced) {
+        if (!toastIfBlocked("reduced")) return;
+      } else if (!canAuthorAnyIntent()) {
+        const reason = guardDayIntent("reduced").reason || guardDayIntent("fast").reason ||
+          "This day plan cannot be changed right now.";
+        UI.toast(reason);
+        refreshDayGoalsLink();
+        return;
+      }
       const phase = Phases.phaseForDay(state.settings.phases, state.viewDay);
       const phaseBit = phase ? ` (${Phases.labelForDay(phase, state.viewDay)})` : "";
       const phaseBase = g._phase || g;
-      UI.$("#day-goals-blurb").textContent = `Phase${phaseBit}: ${phaseBase.kcal} kcal. Enter today's absolute calorie target before logging. It stays frozen even if phase targets change later. Blank clears it.`;
+      const titleEl = UI.$("#day-goals-title");
+      if (titleEl) {
+        const today = Ledger.todayKey();
+        const yday = (() => {
+          const d = new Date(today + "T12:00:00");
+          d.setDate(d.getDate() - 1);
+          return Ledger.todayKey(d);
+        })();
+        titleEl.textContent = state.viewDay === today
+          ? "Today's plan"
+          : state.viewDay === dayAfter(today)
+            ? "Tomorrow's plan"
+            : state.viewDay === yday
+              ? "Yesterday's plan"
+              : `Plan for ${state.viewDay}`;
+      }
+      UI.$("#day-goals-blurb").textContent =
+        `Phase${phaseBit}: ${phaseBase.kcal} kcal. Plans freeze before the first food on a reduced day. Declaring a fast is a separate control.`;
+      const ack = UI.$("#dg-fast-ack");
+      if (ack) ack.checked = false;
+      if (isFast) {
+        setDayIntentSeg("fast");
+        if (ack) ack.checked = true;
+        UI.$("#dg-kcal").value = "";
+      } else if (hasReduced) {
+        setDayIntentSeg("reduced");
+        UI.$("#dg-kcal").value = String(Math.round(g.kcal));
+      } else {
+        // Empty day: land on Reduced so the calorie field is ready. Normal is
+        // still one tap away when the user only wants to clear.
+        setDayIntentSeg(guardDayIntent("reduced").ok ? "reduced" : (guardDayIntent("fast").ok ? "fast" : "normal"));
+        UI.$("#dg-kcal").value = "";
+      }
       refreshBumpPreview();
+      refreshPresetChips();
       UI.openSheet("sheet-day-goals");
-    });
+    };
+    UI.$("#btn-day-goals").addEventListener("click", openDayGoalsSheet);
+    if (UI.$("#dg-intent-seg")) {
+      UI.$("#dg-intent-seg").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-dg-intent]");
+        if (!btn) return;
+        const intent = btn.dataset.dgIntent;
+        const g = Phases.goalsForDay(state.viewDay, state.settings);
+        const bumps = g && g._bumps;
+        const isFast = !!(bumps && bumps.intent === "fast");
+        const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
+        if (intent === "reduced" && !guardDayIntent("reduced").ok) {
+          UI.toast(guardDayIntent("reduced").reason || "Reduced plans are locked for this day.");
+          return;
+        }
+        if (intent === "fast" && !guardDayIntent("fast").ok) {
+          UI.toast(guardDayIntent("fast").reason || "A fast cannot be declared for this day.");
+          return;
+        }
+        // Normal clears the plan — follow the same ladder as #dg-clear so a
+        // locked Reduced day cannot switch to Normal just because Fast grace
+        // is still open.
+        if (intent === "normal") {
+          if (isFast && !guardDayIntent("fast").ok) {
+            UI.toast(guardDayIntent("fast").reason || "This fast cannot be cleared right now.");
+            return;
+          }
+          if (hasReduced && !guardDayIntent("reduced").ok) {
+            UI.toast(guardDayIntent("reduced").reason || "This plan cannot be cleared right now.");
+            return;
+          }
+        }
+        setDayIntentSeg(intent);
+      });
+    }
     UI.$("#dg-kcal").addEventListener("input", refreshBumpPreview);
+    if (UI.$("#dg-preset-chips")) {
+      UI.$("#dg-preset-chips").addEventListener("click", (e) => {
+        const del = e.target.closest("[data-preset-delete]");
+        if (del) {
+          e.preventDefault();
+          e.stopPropagation();
+          deletePreset(del.dataset.presetDelete);
+          return;
+        }
+        const btn = e.target.closest("[data-preset-id]");
+        if (!btn) return;
+        const preset = activePresets().find((p) => p.id === btn.dataset.presetId);
+        if (!preset) return;
+        applyPresetToSheet(preset);
+        touchPresetUsed(preset.id);
+      });
+    }
+    if (UI.$("#dg-preset-save")) {
+      UI.$("#dg-preset-save").addEventListener("click", () => {
+        const intent = selectedDayIntent();
+        if (intent !== "reduced" && intent !== "fast") {
+          UI.toast("Choose Reduced or Fast before saving a preset");
+          return;
+        }
+        const phaseBase = Phases.goalsForDay(state.viewDay, { ...state.settings, dayGoals: {} });
+        let targetKcal = Phases.FAST_KCAL;
+        if (intent === "reduced") {
+          const raw = UI.$("#dg-kcal").value.trim();
+          targetKcal = roundPlannedKcal(raw === "" ? null : parseAmount(raw));
+          if (!Number.isFinite(targetKcal) || targetKcal < 200 || targetKcal > 6000) {
+            UI.toast("Target must be 200–6000 kcal");
+            return;
+          }
+          if (targetKcal === phaseBase.kcal) {
+            UI.toast("That is already the phase target — nothing to save as a preset");
+            return;
+          }
+          if (targetKcal < 1200 &&
+              !confirm("Very-low-calorie targets require clinician supervision. Save this preset anyway?")) return;
+        } else {
+          const ack = UI.$("#dg-fast-ack");
+          if (!(ack && ack.checked)) {
+            UI.toast("Confirm the fast acknowledgement before saving a Fast preset");
+            return;
+          }
+        }
+        const active = activePresets();
+        const cap = Sync.DAY_PLAN_PRESET_ACTIVE_CAP || 5;
+        if (active.length >= cap) {
+          UI.toast(`Preset limit is ${cap}. Remove one before saving another.`);
+          return;
+        }
+        const now = Date.now();
+        const label = intent === "fast" ? "Fast" : `${Math.round(targetKcal)} kcal`;
+        const preset = Sync.normalizeDayPlanPreset({
+          id: `dpp_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+          label,
+          intent,
+          targetKcal,
+          fastAcknowledged: intent === "fast",
+          veryLowCalorieAcknowledged: intent === "reduced" && targetKcal < 1200,
+          createdAt: now,
+          updatedAt: now,
+          lastUsedAt: now,
+          resetEpoch: Sync.getResetAt(),
+        });
+        if (!preset) { UI.toast("Couldn’t save this preset"); return; }
+        const nextSettings = cloneLocalData(state.settings);
+        nextSettings.dayPlanPresets = Sync.normalizeDayPlanPresets([
+          ...(nextSettings.dayPlanPresets || []),
+          preset,
+        ]);
+        try { commitSettingsCandidate(nextSettings); }
+        catch (error) { UI.toast("Couldn’t save this preset — nothing changed"); return; }
+        Sync.schedulePush();
+        refreshPresetChips();
+        UI.toast("Preset saved");
+      });
+    }
     UI.$("#dg-save").addEventListener("click", () => {
-      if (!guardEnergyAdjustment()) return;
+      const intent = selectedDayIntent();
+      const phaseBase = Phases.goalsForDay(state.viewDay, { ...state.settings, dayGoals: {} });
+      const nextSettings = cloneLocalData(state.settings);
+      if (!nextSettings.dayGoals || typeof nextSettings.dayGoals !== "object") nextSettings.dayGoals = {};
+      const now = Date.now();
+      const bumps = Phases.goalsForDay(state.viewDay, state.settings)._bumps;
+      const isFastPlan = !!(bumps && bumps.intent === "fast");
+      const hasReducedPlan = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
+
+      if (intent === "normal") {
+        // Same clear ladder as #dg-clear — Fast grace must not unlock a
+        // locked Reduced plan (P2-1).
+        if (isFastPlan) {
+          if (!toastIfBlocked("fast")) return;
+        } else if (hasReducedPlan) {
+          if (!toastIfBlocked("reduced")) return;
+        } else if (!canAuthorAnyIntent()) {
+          toastIfBlocked("reduced");
+          return;
+        } else if (!isFastPlan && !hasReducedPlan) {
+          // No plan on the day: nothing to clear — skip the LWW tombstone.
+          UI.closeSheet("sheet-day-goals");
+          return;
+        }
+        nextSettings.dayGoals[state.viewDay] = { cleared: true, updatedAt: now };
+        try { commitSettingsCandidate(nextSettings); }
+        catch (error) { UI.toast("Couldn’t clear this plan — nothing changed"); return; }
+        Sync.schedulePush();
+        UI.closeSheet("sheet-day-goals");
+        refreshDay();
+        UI.toast("Day plan cleared");
+        return;
+      }
+
+      if (intent === "fast") {
+        if (!toastIfBlocked("fast")) return;
+        const ack = UI.$("#dg-fast-ack");
+        if (!(ack && ack.checked)) {
+          UI.toast("Confirm the fast acknowledgement to save");
+          return;
+        }
+        const win = guardDayIntent("fast");
+        nextSettings.dayGoals[state.viewDay] = {
+          targetKcal: Phases.FAST_KCAL,
+          baseKcal: phaseBase.kcal,
+          plannedAt: now,
+          updatedAt: now,
+          intent: "fast",
+          fastAcknowledged: true,
+          ...(win.declaredAfterDay ? { declaredAfterDay: true } : {}),
+        };
+        try { commitSettingsCandidate(nextSettings); }
+        catch (error) { UI.toast("Couldn’t save this plan — nothing changed"); return; }
+        Sync.schedulePush();
+        UI.closeSheet("sheet-day-goals");
+        refreshDay();
+        UI.toast("Fast declared");
+        return;
+      }
+
+      // reduced
+      if (!toastIfBlocked("reduced")) return;
       const raw = UI.$("#dg-kcal").value.trim();
-      const targetKcal = raw === "" ? null : parseAmount(raw);
-      if (raw !== "" && (!Number.isFinite(targetKcal) || targetKcal < 800 || targetKcal > 6000)) {
-        UI.toast("Target must be 800–6000 kcal");
+      const typedKcal = raw === "" ? null : parseAmount(raw);
+      const targetKcal = roundPlannedKcal(typedKcal);
+      if (raw !== "" && (!Number.isFinite(targetKcal) || targetKcal < 200 || targetKcal > 6000)) {
+        UI.toast("Target must be 200–6000 kcal");
         return;
       }
       if (targetKcal != null && targetKcal < 1200 &&
           !confirm("Very-low-calorie targets require clinician supervision. Save this target anyway?")) return;
-      const phaseBase = Phases.goalsForDay(state.viewDay, { ...state.settings, dayGoals: {} });
-      const nextSettings = cloneLocalData(state.settings);
-      if (!nextSettings.dayGoals || typeof nextSettings.dayGoals !== "object") nextSettings.dayGoals = {};
       if (targetKcal != null && targetKcal !== phaseBase.kcal) {
-        const now = Date.now();
         nextSettings.dayGoals[state.viewDay] = {
           targetKcal,
           baseKcal: phaseBase.kcal,
           plannedAt: now,
           updatedAt: now,
+          intent: "reduced",
           veryLowCalorieAcknowledged: targetKcal < 1200,
         };
       } else {
-        nextSettings.dayGoals[state.viewDay] = { cleared: true, updatedAt: Date.now() };
+        nextSettings.dayGoals[state.viewDay] = { cleared: true, updatedAt: now };
       }
       try { commitSettingsCandidate(nextSettings); }
       catch (error) { UI.toast("Couldn’t save this adjustment — nothing changed"); return; }
       Sync.schedulePush();
       UI.closeSheet("sheet-day-goals");
       refreshDay();
-      UI.toast(targetKcal != null && targetKcal !== phaseBase.kcal ? "Planned calories saved" : "Energy adjustment cleared");
+      UI.toast(targetKcal != null && targetKcal !== phaseBase.kcal ? "Planned calories saved" : "Day plan cleared");
     });
     UI.$("#dg-clear").addEventListener("click", () => {
-      if (!guardEnergyAdjustment()) return;
+      const g = Phases.goalsForDay(state.viewDay, state.settings);
+      const bumps = g && g._bumps;
+      const isFast = !!(bumps && bumps.intent === "fast");
+      const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
+      // Clearing follows the plan on the day: a locked Reduced plan cannot be
+      // cleared just because the Fast grace window is still open.
+      if (isFast) {
+        if (!toastIfBlocked("fast")) return;
+      } else if (hasReduced) {
+        if (!toastIfBlocked("reduced")) return;
+      } else if (!canAuthorAnyIntent()) {
+        toastIfBlocked("reduced");
+        return;
+      }
       const nextSettings = cloneLocalData(state.settings);
       if (!nextSettings.dayGoals || typeof nextSettings.dayGoals !== "object") nextSettings.dayGoals = {};
       nextSettings.dayGoals[state.viewDay] = { cleared: true, updatedAt: Date.now() };
       try { commitSettingsCandidate(nextSettings); }
-      catch (error) { UI.toast("Couldn’t clear this adjustment — nothing changed"); return; }
+      catch (error) { UI.toast("Couldn’t clear this plan — nothing changed"); return; }
       Sync.schedulePush();
       UI.closeSheet("sheet-day-goals");
       refreshDay();
-      UI.toast("Energy adjustment cleared");
+      UI.toast("Day plan cleared");
     });
+    if (UI.$("#btn-hud-fasting-log")) {
+      UI.$("#btn-hud-fasting-log").addEventListener("click", () => {
+        const fab = UI.$("#fab-add");
+        if (fab) fab.click();
+      });
+    }
 
     UI.$("#btn-quick-kcal").addEventListener("click", () => openQuickKcal());
     UI.$("#kcal-cancel").addEventListener("click", () => {
@@ -4872,7 +5456,7 @@ const App = (() => {
     });
 
     UI.$("#btn-factory-reset").addEventListener("click", () => {
-      if (!confirm("Start completely fresh? This deletes meal logs, foods, phases, energy adjustments, weight history, and resets goals.")) return;
+      if (!confirm("Start completely fresh? This deletes meal logs, foods, phases, day plans, weight history, and resets goals.")) return;
       if (!confirm("Last chance. Export first if you want a backup. This cannot be undone. Continue?")) return;
       const resetAt = Date.now();
       const today = Ledger.todayKey();
@@ -4885,6 +5469,7 @@ const App = (() => {
         dayGoals: {},
         dayPlans: {},
         gapDrafts: {},
+        dayPlanPresets: [],
         phases: [],
         weights: {},
         profile: {},
@@ -4988,6 +5573,11 @@ const App = (() => {
         if (override && override.veryLowCalorieAcknowledged === true) {
           out.veryLowCalorieAcknowledged = true;
         }
+        if (override && override.intent === "fast" && override.fastAcknowledged === true) {
+          out.intent = "fast";
+          out.fastAcknowledged = true;
+          if (override.declaredAfterDay === true) out.declaredAfterDay = true;
+        }
         return out;
       },
     });
@@ -5026,6 +5616,11 @@ const App = (() => {
       getGapDrafts: () => state.settings.gapDrafts || {},
       setGapDrafts: (drafts) => {
         state.settings.gapDrafts = normalizeImportedGapDrafts(drafts);
+        saveSettings({ inbound: true });
+      },
+      getDayPlanPresets: () => state.settings.dayPlanPresets || [],
+      setDayPlanPresets: (list) => {
+        state.settings.dayPlanPresets = normalizeImportedDayPlanPresets(list);
         saveSettings({ inbound: true });
       },
       getPhases: () => state.settings.phases || [],

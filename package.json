@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node scripts/inject-client-id.js",
     "test": "npm run test:unit && npm run test:ui",
-    "test:unit": "node tests/test-core.js && node tests/test-parse.js && node tests/test-analytics.js && node tests/test-sw.js",
+    "test:unit": "node tests/test-core.js && node tests/test-parse.js && node tests/test-analytics.js && node tests/test-day-intent-chain.js && node tests/test-sw.js",
     "test:ui": "node tests/smoke-insights.js"
   },
   "devDependencies": {

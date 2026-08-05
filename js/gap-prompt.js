@@ -49,10 +49,21 @@ const GapPrompt = (() => {
     return out;
   }
 
-  function remainingFrom(means, goals) {
+  function remainingFrom(means, goals, totals) {
+    // Honour plan exemptions the same way Today and Insights do: a declared
+    // fast with no calories has nothing to "close", and a reduced day with
+    // unscored protein must not ask for a floor the score already dropped.
+    const scoring = (typeof Phases !== "undefined" && typeof Phases.effectiveGoals === "function")
+      ? Phases.effectiveGoals(totals || null, goals)
+      : goals;
+    const unscored = (scoring && scoring._unscored) || null;
     const out = {};
     for (const k of GOAL_KEYS) {
-      const g = Number(goals && goals[k]) || 0;
+      if (unscored && unscored[k]) {
+        out[k] = 0;
+        continue;
+      }
+      const g = Number(scoring && scoring[k]) || 0;
       const a = Number(means && means[k]) || 0;
       out[k] = Math.round((g - a) * 10) / 10;
     }
@@ -115,7 +126,7 @@ const GapPrompt = (() => {
       ? totalsMeans(ctx.totals)
       : (ctx.means || { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sodium: 0, potassium: 0 });
     const goals = ctx.goals || {};
-    const remaining = ctx.remaining || remainingFrom(means, goals);
+    const remaining = ctx.remaining || remainingFrom(means, goals, ctx.totals);
     const logged = Array.isArray(ctx.logged) ? ctx.logged : [];
     const candidates = Array.isArray(ctx.candidates) ? ctx.candidates : [];
     const sodiumCoverage = Number(ctx.totals && ctx.totals.naCoverage);

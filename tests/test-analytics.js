@@ -9,6 +9,12 @@ const Phases = require("../js/phases.js");
 // fail for reasons that have nothing to do with the code under test.
 globalThis.Phases = Phases;
 const Analytics = require("../js/analytics.js");
+// The dependency now runs both directions: goalsForDay retargets carbs/fat on
+// a reduced day via Analytics.retargetForKcal, guarded the same defensive way
+// analytics.js guards its own Phases reference. Without this global, phases.js
+// silently falls back to "Analytics absent" and every reduced-day plan reads
+// as unscored instead of retargeted.
+globalThis.Analytics = Analytics;
 
 let pass = 0, fail = 0;
 function ok(cond, name, detail) {
@@ -763,11 +769,23 @@ console.log("\n[20] Bump audit");
   };
   const adjusted = Phases.goalsForDay(keys[0], settings);
   ok(adjusted.kcal === base.kcal + 500, "one-day energy adjustment changes calories");
-  for (const key of ["protein", "carbs", "fat", "fiber", "sodium", "potassium"]) {
+  for (const key of ["protein", "fiber", "sodium", "potassium"]) {
     ok(adjusted[key] === base[key], `one-day adjustment cannot move ${key}`);
   }
-  ok(Object.keys(adjusted._bumps).length === 1 && adjusted._bumps.kcal === 500,
-    "legacy multi-nutrient bump keys are dropped from resolved metadata");
+  // Carbs and fat are not floors or ceilings — they are the arithmetic
+  // residual of calories and protein, so a one-day plan retargets them by the
+  // same policy a phase revision uses (spec §4). Floors and ceilings
+  // (protein, fiber, sodium, potassium) never move; only these two do.
+  const retargeted = Analytics.retargetForKcal(base, adjusted.kcal);
+  ok(retargeted && adjusted.carbs === retargeted.carbs && adjusted.fat === retargeted.fat,
+    "carbs and fat follow energy via the same retarget policy a phase revision uses");
+  const atwater = adjusted.protein * 4 + adjusted.carbs * 4 + adjusted.fat * 9;
+  ok(atwater <= adjusted.kcal && adjusted.kcal - atwater <= 3,
+    "reduced-day carbs/fat stay Atwater-consistent within retargetForKcal's tolerance",
+    `sum ${atwater} vs ${adjusted.kcal}`);
+  ok(Object.keys(adjusted._bumps).sort().join(",") === "intent,kcal" && adjusted._bumps.kcal === 500 &&
+      adjusted._bumps.intent === "reduced",
+    "legacy multi-nutrient bump keys are dropped from resolved metadata; intent defaults to reduced");
   const legacyAbsolute = Phases.goalsForDay(keys[1], settings);
   ok(legacyAbsolute.kcal === 2300, "legacy absolute day goal derives a calorie adjustment");
   ok(legacyAbsolute.protein === base.protein && legacyAbsolute.sodium === base.sodium && legacyAbsolute.potassium === base.potassium,
@@ -817,7 +835,7 @@ console.log("\n[20] Bump audit");
   const obs = Analytics.observations(days, { todayKey: END });
   const bumpObs = obs.find((o) => o.id === "bumps");
   ok(!!bumpObs, "bumps surface as an observation");
-  ok(/energy adjustment/.test(bumpObs.text), "audit wording calls it an energy adjustment");
+  ok(/day plan/.test(bumpObs.text), "audit wording calls it a day plan");
   ok(bumpObs.tone === "watch", "a retroactive bump raises the tone");
   ok(/after logging began/.test(bumpObs.text) && !/provenance is unknown/.test(bumpObs.text),
     "completed-day observation uses immutable provenance and excludes today's unfinished audit row");
@@ -1325,6 +1343,706 @@ console.log("\n[33] Phase overlap and revision conflict safety");
   const mergedLww = Phases.mergePhases([older], [newer])[0];
   ok(mergedLww.revisions.find((r) => r.id === "r1").goals.kcal === 2300,
     "same-id revision merge uses revision-level last-write-wins");
+}
+
+console.log("\n[34] Day-intent: reduced-day retargeting and the protein exemption");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300, potassium: 3510 };
+
+  ok(Phases.proteinScorableOnPlan(1425, 150) === true && Phases.proteinScorableOnPlan(1424, 150) === false,
+    "150 g protein floor is scorable at 1425 kcal and unscored one kcal below");
+  ok(Phases.proteinScorableOnPlan(1140, 120) === true && Phases.proteinScorableOnPlan(1139, 120) === false,
+    "120 g protein floor is scorable at 1140 kcal and unscored one kcal below");
+
+  // 1200 kcal on a 2000/P150 phase: protein floor needs 570 kcal, the plan
+  // allows only 480 (1200 * 0.40) — protein is unscored, but carbs/fat still
+  // retarget (well above MIN_AUTOMATED_KCAL) and land Atwater-consistent.
+  const settings1200 = { goals: phaseGoals, phases: [], dayGoals: {
+    "2026-08-01": { targetKcal: 1200, baseKcal: 2000, updatedAt: 1, veryLowCalorieAcknowledged: true },
+  } };
+  const g1200 = Phases.goalsForDay("2026-08-01", settings1200);
+  ok(g1200._unscored && g1200._unscored.protein && !g1200._unscored.carbs && !g1200._unscored.fat,
+    "1200 kcal plan unscores protein but still retargets carbs and fat");
+  const atwater1200 = g1200.protein * 4 + g1200.carbs * 4 + g1200.fat * 9;
+  ok(atwater1200 <= g1200.kcal && g1200.kcal - atwater1200 <= 3,
+    "reduced-day carbs/fat stay within retargetForKcal's own Atwater tolerance");
+  ok(g1200.protein === phaseGoals.protein, "the displayed protein target does not change on a reduced day");
+
+  // retargetForKcal rounds to the nearest 10, so a target that is not itself a
+  // multiple of 10 derives macros that can overshoot it by up to 5 kcal. New
+  // plans are rounded at the save boundary in app.js so this cannot arise, but
+  // an already-stored legacy record is never rewritten to make it go away —
+  // pin the tolerance instead of pretending it is exact.
+  const settings1505 = { goals: phaseGoals, phases: [], dayGoals: {
+    "2026-08-09": { targetKcal: 1505, baseKcal: 2000, updatedAt: 1 },
+  } };
+  const g1505 = Phases.goalsForDay("2026-08-09", settings1505);
+  const atwater1505 = g1505.protein * 4 + g1505.carbs * 4 + g1505.fat * 9;
+  ok(Math.abs(atwater1505 - 1505) <= 5,
+    "a non-round legacy plan stays within the documented 5 kcal Atwater tolerance",
+    `macros ${atwater1505} vs 1505`);
+  const settings1500 = { goals: phaseGoals, phases: [], dayGoals: {
+    "2026-08-10": { targetKcal: 1500, baseKcal: 2000, updatedAt: 1 },
+  } };
+  const g1500 = Phases.goalsForDay("2026-08-10", settings1500);
+  const atwater1500 = g1500.protein * 4 + g1500.carbs * 4 + g1500.fat * 9;
+  ok(atwater1500 <= 1500 && 1500 - atwater1500 <= 3,
+    "a rounded plan — what the save boundary now produces — is exact to within 3 kcal",
+    `macros ${atwater1500} vs 1500`);
+
+  // 500 kcal is below MIN_AUTOMATED_KCAL, so retargetForKcal itself returns
+  // null — carbs and fat are unscored too, alongside protein. Only kcal,
+  // fiber and minerals remain meaningful claims at this energy.
+  const settings500 = { goals: phaseGoals, phases: [], dayGoals: {
+    "2026-08-05": { targetKcal: 500, baseKcal: 2000, updatedAt: 1, veryLowCalorieAcknowledged: true },
+  } };
+  const g500 = Phases.goalsForDay("2026-08-05", settings500);
+  ok(g500._unscored.protein && g500._unscored.carbs && g500._unscored.fat,
+    "a 500 kcal plan unscores protein, carbs and fat");
+  ok(g500.fiber === phaseGoals.fiber && g500.sodium === phaseGoals.sodium && g500.potassium === phaseGoals.potassium,
+    "fiber, sodium and potassium hold at their phase value and stay scored at 500 kcal");
+
+  // scoreDayTotals: the unscored cells carry skipReason "unscored-plan"; a
+  // coverage skip (no potassium logged, nothing to do with the plan) never
+  // does — the two facts must never be conflated.
+  const totals500 = {
+    count: 3, kcal: { mean: 500 }, p: { mean: 60 }, c: { mean: 50 }, f: { mean: 15 }, fb: { mean: 20 },
+    na: { mean: 1500 },
+  };
+  const scored500 = Phases.scoreDayTotals(totals500, g500);
+  ok(scored500.protein.status === "skip" && scored500.protein.skipReason === "unscored-plan",
+    "protein cell skips with skipReason unscored-plan on a 500 kcal day");
+  ok(scored500.potassium.status === "skip" && scored500.potassium.skipReason === undefined,
+    "a missing-coverage skip (no potassium logged) never carries the unscored-plan reason");
+
+  // Part VII.1 regression: healLoggedDayGoals writes a {targetKcal ===
+  // baseKcal, locked: true} record for every logged day, even when the plan
+  // changed nothing. bumpsForDay returns a non-null record for that day, so
+  // without the resolved.kcal === fromPhase.kcal gate in goalsForDay, this
+  // would silently retarget carbs/fat (and evaluate the protein floor)
+  // against a healed no-op — drifting past hit rates the user never planned.
+  // This must be exercised with the real Analytics.retargetForKcal wired in
+  // (globalThis.Analytics, set at the top of this file) — the "Analytics
+  // absent" fallback used to make this gate look correct without ever
+  // calling retargetForKcal at all (Part VII.8).
+  const settingsLockedNoOp = { goals: phaseGoals, phases: [], dayGoals: {
+    "2026-08-06": { targetKcal: 2000, baseKcal: 2000, updatedAt: 1, locked: true },
+  } };
+  const gLockedNoOp = Phases.goalsForDay("2026-08-06", settingsLockedNoOp);
+  ok(gLockedNoOp.kcal === phaseGoals.kcal && gLockedNoOp.carbs === phaseGoals.carbs &&
+      gLockedNoOp.fat === phaseGoals.fat && gLockedNoOp.protein === phaseGoals.protein &&
+      gLockedNoOp._unscored === null,
+    "a locked no-op healed record resolves byte-identically to the phase goals, with no exemption");
+}
+
+console.log("\n[35] Day-intent: nutritionScore exemption reporting");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 10);
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const k of keys) settings.dayGoals[k] = { targetKcal: 1200, baseKcal: 2000, updatedAt: 1, veryLowCalorieAcknowledged: true };
+  const planGoals = Phases.goalsForDay(keys[0], settings); // identical plan every day
+  ok(planGoals._unscored && planGoals._unscored.protein, "fixture sanity: the 1200 kcal plan exempts protein");
+
+  // Fiber deliberately falls short every day so the targets component is not
+  // already pinned at a ceiling — otherwise "never credits" would be trivially
+  // true just because both scores hit the same 100% cap.
+  const totalsFor = () => ({
+    count: 3, kcal: { mean: 1200 }, p: { mean: 60 }, c: { mean: planGoals.carbs },
+    f: { mean: planGoals.fat }, fb: { mean: 20 }, na: { mean: 2000 },
+  });
+  const exemptDays = Analytics.buildDays({
+    keys, totalsForDay: totalsFor, goalsForDay: (day) => Phases.goalsForDay(day, settings),
+  });
+  const exemptScore = Analytics.nutritionScore(exemptDays, Phases.scoreDayTotals, {});
+  const proteinRow = exemptScore.nutrients.find((n) => n.key === "protein");
+  ok(proteinRow && proteinRow.n === 0 && proteinRow.exemptN === keys.length,
+    "a range where protein is exempt every day still emits a protein row, with n === 0 and exemptN set");
+  ok(proteinRow.hitRate === null,
+    "an exempt-only row reports hitRate null, not 0 — indistinguishable from a real miss otherwise");
+  ok(!exemptScore.nutrients.some((n) => n.n === 0 && exemptScore.gap && exemptScore.gap.key === n.key),
+    "biggestGap never returns a nutrient whose n === 0");
+  ok(exemptScore.gap == null || exemptScore.gap.key !== "protein",
+    "the exempt protein row is never surfaced as the biggest gap");
+
+  // Mineral composite gets the same disclosure (Part VII.6). A real fast day
+  // has near-zero mineral coverage by nature — black coffee carries no logged
+  // sodium or potassium — so naK skips on coverage before it ever reaches the
+  // plan exemption, and the coverage-skip guard (Part VII.10) refuses to
+  // stamp skipReason on a cell that would have skipped anyway. Both facts
+  // genuinely apply here (Part VIII.4): the row must still surface with
+  // exemptN even though nothing in this fixture hand-supplies coverage.
+  const fastKeys = keysEndingAt(END, 3);
+  const fastSettings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const k of fastKeys) {
+    fastSettings.dayGoals[k] = { targetKcal: 0, baseKcal: 2000, updatedAt: 1, intent: "fast", fastAcknowledged: true };
+  }
+  const fastGoals = Phases.goalsForDay(fastKeys[0], fastSettings);
+  ok(fastGoals._unscored && fastGoals._unscored.naK, "fixture sanity: a declared fast exempts naK");
+  const fastDays = Analytics.buildDays({
+    keys: fastKeys,
+    // Black coffee: logged (count > 0) but with no known sodium/potassium at
+    // all — naCoverage 0 is what a real fast day looks like, not the naCoverage
+    // 1 the old fixture hand-supplied to dodge the coverage-skip path.
+    totalsForDay: () => ({
+      count: 1, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 },
+      na: { mean: 0 }, naCoverage: 0,
+    }),
+    goalsForDay: (day) => Phases.goalsForDay(day, fastSettings),
+  });
+  const fastScore = Analytics.nutritionScore(fastDays, Phases.scoreDayTotals, {});
+  const mineralRow = fastScore.nutrients.find((n) => n.key === "naK");
+  ok(mineralRow && mineralRow.n === 0 && mineralRow.exemptN === fastKeys.length,
+    "the mineral composite still emits a row on an all-fast range with real (zero) mineral coverage, exemptN set by the plan fact even though coverage also skipped");
+  ok(mineralRow.hitRate === null,
+    "the mineral composite's exempt-only row reports hitRate null, not 0");
+  // Part VIII.3: every scored-key row on this range is exempt (n === 0), so
+  // parts.targets is null with exempt rows present. Consistency alone must
+  // not be allowed to carry the score to a perfect 100/grade A — that would
+  // be an unjustified perfect for a range with zero scored target cells.
+  ok(fastScore.parts.targets == null, "fixture sanity: an all-fast range has no scored target cells");
+  ok(fastScore.score === null && fastScore.grade === "No data yet",
+    "an all-exempt range scores null with the grade suppressed, not 100/grade A from zero scored targets");
+
+  // Same totals, but protein is scored (not exempt) against a target the
+  // actual genuinely meets — "exemption removes, never credits" means this
+  // must score at least as high as the exempt version, never lower.
+  const hitDays = Analytics.buildDays({
+    keys, totalsForDay: totalsFor,
+    goalsForDay: () => ({ kcal: 1200, protein: 60, carbs: planGoals.carbs, fat: planGoals.fat, fiber: 30, sodium: 2300, _unscored: null }),
+  });
+  const hitScore = Analytics.nutritionScore(hitDays, Phases.scoreDayTotals, {});
+  ok(hitScore.score > exemptScore.score,
+    "scoring the identical days with protein actually hit outscores exempting it — exemption never credits a phantom hit");
+}
+
+console.log("\n[36] Day-intent: a declared fast scores no target cells");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {
+    "2026-08-01": { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 },
+  } };
+  const fastGoals = Phases.goalsForDay("2026-08-01", settings);
+  const fastTotals = {
+    count: 1, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 },
+  };
+  // scoreDayTotals mechanism only — buildDays does not yet know a fast from
+  // an ordinary day (that day-accounting layer is Slice 3, out of scope
+  // here). This confirms the *scoring* half of the contract in isolation.
+  const scoredFast = Phases.scoreDayTotals(fastTotals, fastGoals);
+  for (const key of ["kcal", "protein", "carbs", "fat", "fiber", "naK"]) {
+    ok(scoredFast[key].status === "skip", `a declared fast's ${key} cell is skip, not a miss`);
+  }
+
+  const keys = keysEndingAt(END, 5);
+  const normalTotals = () => ({
+    count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 },
+  });
+  const mixedDays = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => (day === keys[0] ? fastTotals : normalTotals()),
+    goalsForDay: (day) => (day === keys[0] ? fastGoals : phaseGoals),
+  });
+  const allNormalDays = Analytics.buildDays({
+    keys, totalsForDay: normalTotals, goalsForDay: () => phaseGoals,
+  });
+  const mixedScore = Analytics.nutritionScore(mixedDays, Phases.scoreDayTotals, {});
+  const normalScore = Analytics.nutritionScore(allNormalDays, Phases.scoreDayTotals, {});
+  ok(mixedScore.parts.targets === normalScore.parts.targets,
+    "swapping one ordinary day for a fully-unscored fast day does not move the targets component");
+}
+
+console.log("\n[37] Day-intent: HUD and Insights resolve a fast identically (Part VIII.5)");
+{
+  // ui.js's updateHUD and Phases.scoreDayTotals used to each decide for
+  // themselves whether a declared fast that recorded food should still read
+  // as unscored — scoreDayTotals could see the totals and reconcile it,
+  // updateHUD could not. Phases.effectiveGoals is now the one implementation
+  // both call, so testing it directly proves the two tabs cannot disagree.
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300, potassium: 3510 };
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {
+    "2026-08-12": { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 },
+  } };
+  const fastGoals = Phases.goalsForDay("2026-08-12", settings);
+
+  const scenarios = {
+    // (a) declared fast, no food at all.
+    noFood: { count: 0, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 } },
+    // (b) declared fast, zero-kcal coffee only — logged, but still a fast.
+    coffee: { count: 1, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 } },
+    // (c) declared fast, 1800 kcal actually eaten — the data beats the plan.
+    ateBig: { count: 3, kcal: { mean: 1800 }, p: { mean: 90 }, c: { mean: 180 }, f: { mean: 60 }, fb: { mean: 20 }, na: { mean: 1500 } },
+  };
+
+  const noFoodGoals = Phases.effectiveGoals(scenarios.noFood, fastGoals);
+  ok(noFoodGoals === fastGoals, "no food: the HUD's resolved goals are the declared-fast goals, unscored intact");
+  ok(Phases.scoreDayTotals(scenarios.noFood, fastGoals) === null,
+    "no food: Insights never reaches the per-day scoring loop (count 0) — nothing to disagree about");
+
+  const coffeeGoals = Phases.effectiveGoals(scenarios.coffee, fastGoals);
+  ok(coffeeGoals === fastGoals, "coffee only: the HUD's resolved goals stay the declared-fast goals");
+  const coffeeScored = Phases.scoreDayTotals(scenarios.coffee, fastGoals);
+  ok(coffeeScored.protein.status === "skip" && coffeeScored.protein.exemptByPlan === true,
+    "coffee only: Insights also keeps every non-kcal cell an exempt skip — the two tabs agree it is still a fast");
+
+  const ateGoals = Phases.effectiveGoals(scenarios.ateBig, fastGoals);
+  ok(ateGoals === fastGoals._phase && ateGoals._unscored == null,
+    "ate on a fast: the HUD's resolved goals revert to the phase targets, with no unscored reason left");
+  const ateScored = Phases.scoreDayTotals(scenarios.ateBig, fastGoals);
+  ok(ateScored.protein.status !== "skip" && !ateScored.protein.exemptByPlan &&
+      ateScored.protein.target === fastGoals._phase.protein,
+    "ate on a fast: Insights scores protein against the real phase target too — the two tabs agree");
+  ok(ateScored.kcal.target === fastGoals._phase.kcal,
+    "ate on a fast: the kcal target itself reverts to the phase number in both places, not the declared 0");
+}
+
+console.log("\n[38] Day-intent: the kcal cell gets the same exemption disclosure as every other nutrient (Part IX.3)");
+{
+  // §9.2 used to read "every non-kcal key" — kcal relied on classify()'s own
+  // zero-target skip and never got exemptByPlan, so nutritionScore counted it
+  // in neither n nor exempt. On a mixed range that just silently under-counts
+  // kcal's n; on an all-fast range the row disappears outright, the same
+  // §VI.2 failure VII.6 closed for the mineral composite, one nutrient over.
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 5);
+  const fastDaySet = new Set([keys[0], keys[1]]); // 2 fasts, 3 ordinary days
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const k of fastDaySet) {
+    settings.dayGoals[k] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  const normalTotals = () => ({
+    count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 },
+  });
+  const fastTotals = () => ({
+    count: 1, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 },
+  });
+  const mixedDays = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => (fastDaySet.has(day) ? fastTotals() : normalTotals()),
+    goalsForDay: (day) => Phases.goalsForDay(day, settings),
+  });
+  const mixedScore = Analytics.nutritionScore(mixedDays, Phases.scoreDayTotals, {});
+  const kcalRow = mixedScore.nutrients.find((n) => n.key === "kcal");
+  ok(kcalRow && kcalRow.exemptN === 2,
+    "on a mixed range (3 normal + 2 fasts), the kcal row discloses exemptN like every other nutrient");
+  ok(kcalRow && kcalRow.n === 3, "kcal is still scored on the 3 ordinary days");
+
+  const allFastKeys = keysEndingAt(END, 2);
+  const allFastSettings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const k of allFastKeys) {
+    allFastSettings.dayGoals[k] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  const allFastDays = Analytics.buildDays({
+    keys: allFastKeys, totalsForDay: fastTotals,
+    goalsForDay: (day) => Phases.goalsForDay(day, allFastSettings),
+  });
+  const allFastScore = Analytics.nutritionScore(allFastDays, Phases.scoreDayTotals, {});
+  const allFastKcalRow = allFastScore.nutrients.find((n) => n.key === "kcal");
+  ok(allFastKcalRow && allFastKcalRow.n === 0 && allFastKcalRow.exemptN === allFastKeys.length,
+    "an all-fast range still emits a kcal row instead of dropping it, with n 0 and exemptN set");
+  ok(allFastKcalRow && allFastKcalRow.hitRate === null,
+    "the all-exempt kcal row reports hitRate null, not 0");
+}
+
+console.log("\n[39] Day-intent X.1: a floor under the score (VIII.3 one day short)");
+{
+  // VIII.3 only suppresses the grade when parts.targets is null, i.e. zero
+  // scored days. A range that is mostly declared fasts plus a single real
+  // eating day has n:1 on every weighted row — one real day, not zero — so
+  // VIII.3's own gate does not fire, and a single perfect day drags the
+  // whole range to a false 100 while nine fasts ride along for free on the
+  // 30% consistency component. This reproduces that exact shape through the
+  // real Phases.goalsForDay + Analytics.buildDays + Analytics.nutritionScore
+  // pipeline, not a hand-built fixture.
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 10);
+  const eatingDay = keys[keys.length - 1];
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const k of keys) {
+    if (k === eatingDay) continue;
+    settings.dayGoals[k] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  const fastTotals = { count: 1, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 } };
+  const perfectTotals = { count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } };
+  const days = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => (day === eatingDay ? perfectTotals : fastTotals),
+    goalsForDay: (day) => Phases.goalsForDay(day, settings),
+  });
+  const score = Analytics.nutritionScore(days, Phases.scoreDayTotals, {});
+  ok(score.score !== 100, "9 declared fasts plus a single perfect eating day must not grade a perfect 100 off n:1 evidence per nutrient", `got ${score.score}`);
+  ok(score.grade !== "Dialed in", "the top grade is not earned on a single real day propped up by fasted consistency credit", `got ${score.grade}`);
+
+  // A range with real evidence at or above the floor must be unaffected —
+  // this is not a blanket "exempt ranges never score" rule, only a minimum
+  // evidence bar per weighted row.
+  const threeEatingKeys = new Set(keys.slice(-3));
+  const settings2 = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const k of keys) {
+    if (threeEatingKeys.has(k)) continue;
+    settings2.dayGoals[k] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  const days2 = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => (threeEatingKeys.has(day) ? perfectTotals : fastTotals),
+    goalsForDay: (day) => Phases.goalsForDay(day, settings2),
+  });
+  const score2 = Analytics.nutritionScore(days2, Phases.scoreDayTotals, {});
+  ok(score2.score === 100, "3 real perfect days clear the evidence floor and still grade 100", `got ${score2.score}`);
+}
+
+console.log("\n[40] Day-intent: consistency credits fasts (§11)");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 10);
+  // Two true (zero-food) fasts, one coffee-only fast, one reduced day, six
+  // normal logged days, one genuinely missed day.
+  const trueFastDays = new Set([keys[0], keys[1]]);
+  const coffeeFastDay = keys[2];
+  const reducedDay = keys[3];
+  const missedDay = keys[4];
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const d of [...trueFastDays, coffeeFastDay]) {
+    settings.dayGoals[d] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  settings.dayGoals[reducedDay] = { targetKcal: 500, baseKcal: 2000, veryLowCalorieAcknowledged: true, updatedAt: 1 };
+  const normalTotals = { count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } };
+  const reducedTotals = { count: 2, kcal: { mean: 480 }, p: { mean: 40 }, c: { mean: 40 }, f: { mean: 15 }, fb: { mean: 10 }, na: { mean: 600 } };
+  const coffeeTotals = { count: 1, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 } };
+  const totalsForDay = (day) => {
+    if (trueFastDays.has(day)) return { count: 0 };
+    if (day === coffeeFastDay) return coffeeTotals;
+    if (day === reducedDay) return reducedTotals;
+    if (day === missedDay) return { count: 0 };
+    return normalTotals;
+  };
+  const days = Analytics.buildDays({
+    keys, totalsForDay, goalsForDay: (day) => Phases.goalsForDay(day, settings),
+  });
+
+  // buildDays itself: intent and accounted per §11's table.
+  const rowFor = (d) => days.find((r) => r.day === d);
+  ok(rowFor(keys[0]).intent === "fast" && rowFor(keys[0]).accounted === true && rowFor(keys[0]).logged === false,
+    "a true fast is accounted but not logged");
+  ok(rowFor(coffeeFastDay).intent === "fast" && rowFor(coffeeFastDay).accounted === true && rowFor(coffeeFastDay).logged === true,
+    "a zero-kcal-item fast is both accounted and logged");
+  ok(rowFor(reducedDay).intent === "reduced" && rowFor(reducedDay).accounted === true,
+    "a reduced day is accounted");
+  ok(rowFor(missedDay).intent === null && rowFor(missedDay).accounted === false,
+    "an undeclared blank day is neither logged nor accounted");
+  ok(Analytics.accountedRows(days).length === 9, "accountedRows includes both fasts and the reduced day, excludes the miss",
+    `got ${Analytics.accountedRows(days).length}`);
+  ok(Analytics.loggedRows(days).length === 7, "loggedRows is unchanged: still means has-food only",
+    `got ${Analytics.loggedRows(days).length}`);
+
+  const cons = Analytics.consistency(days, {});
+  ok(cons.totalDays === 10, "all ten days are scored (no grace day in range)");
+  ok(cons.loggedDays === 9, "consistency's loggedDays now counts accounted days", `got ${cons.loggedDays}`);
+  ok(cons.missedDays.length === 1 && cons.missedDays[0] === missedDay, "only the truly blank day is missed");
+  ok(cons.fastedDays === 3, "fastedDays counts both true fasts and the coffee-only fast", `got ${cons.fastedDays}`);
+  approx(cons.rate, 0.9, 0.001, "consistency rate credits fasts");
+}
+
+console.log("\n[41] Day-intent: estimateTdee includes fasts at 0 kcal and in coverage (§11)");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 21);
+  const fastDays = new Set([keys[3], keys[10], keys[17]]);
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const d of fastDays) {
+    settings.dayGoals[d] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  const normalTotals = { count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } };
+  const days = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => (fastDays.has(day) ? { count: 0 } : normalTotals),
+    goalsForDay: (day) => Phases.goalsForDay(day, settings),
+    weightKgForDay: (day, i) => 80 - keys.indexOf(day) * 0.02,
+  });
+  const tdee = Analytics.estimateTdee(days, {});
+  ok(tdee.loggedDays === 18, "estimateTdee's loggedDays field stays literal food-logged days", `got ${tdee.loggedDays}`);
+  approx(tdee.coverage, 21 / 21, 0.001, "coverage counts accounted days (18 logged + 3 fasts) over the full range");
+  // 18 real days at 2000 plus 3 fasts at 0 must pull the average down from
+  // 2000 — if the fasts were merely excluded (not added as 0) the average
+  // would stay exactly 2000.
+  ok(tdee.intakeAvg < 2000 && tdee.intakeAvg > 1000,
+    "intakeAvg is dragged down by fasts counted as 0, not left at the eating-day average", `got ${tdee.intakeAvg}`);
+  approx(tdee.intakeAvg, (2000 * 18) / 21, 1, "intakeAvg matches 18 real days plus 3 zeros over 21");
+}
+
+console.log("\n[42] Day-intent: partialDays excludes every declared day (H3)");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 14);
+  // A 5:2 pattern: two declared 500 kcal days per week, single-item logs,
+  // which is exactly the shape partialDays used to flag as a forgotten log.
+  const reducedDays = new Set([keys[2], keys[5], keys[9], keys[12]]);
+  const undeclaredStub = keys[7]; // a genuinely forgotten log — still flagged
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const d of reducedDays) {
+    settings.dayGoals[d] = { targetKcal: 500, baseKcal: 2000, veryLowCalorieAcknowledged: true, updatedAt: 1 };
+  }
+  const normalTotals = { count: 4, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } };
+  const reducedTotals = { count: 1, kcal: { mean: 480 }, p: { mean: 30 }, c: { mean: 40 }, f: { mean: 15 }, fb: { mean: 8 }, na: { mean: 500 } };
+  const stubTotals = { count: 1, kcal: { mean: 260 }, p: { mean: 10 }, c: { mean: 30 }, f: { mean: 8 }, fb: { mean: 2 }, na: { mean: 300 } };
+  const days = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => {
+      if (reducedDays.has(day)) return reducedTotals;
+      if (day === undeclaredStub) return stubTotals;
+      return normalTotals;
+    },
+    goalsForDay: (day) => Phases.goalsForDay(day, settings),
+  });
+  const p = Analytics.partialDays(days);
+  ok(p.flagged.length === 1 && p.flagged[0].day === undeclaredStub,
+    "only the undeclared single-item day is flagged; the four declared 5:2 days are not",
+    JSON.stringify(p.flagged));
+
+  // This is what unblocks estimateTdee's actionProblems for a 5:2 user.
+  const tdee = Analytics.estimateTdee(days, {});
+  ok(tdee.partialLogDays === 1, "estimateTdee sees only the one real partial day, not the declared plan");
+
+  // healLoggedDayGoals writes {targetKcal === baseKcal, locked: true} for every
+  // logged day. That must not masquerade as intent "reduced" and silence the gate.
+  for (const d of keys) {
+    if (reducedDays.has(d)) continue;
+    settings.dayGoals[d] = {
+      targetKcal: 2000, baseKcal: 2000, updatedAt: 1, locked: true, lockedByEventId: `e-${d}`,
+    };
+  }
+  const healedDays = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => {
+      if (reducedDays.has(day)) return reducedTotals;
+      if (day === undeclaredStub) return stubTotals;
+      return normalTotals;
+    },
+    goalsForDay: (day) => Phases.goalsForDay(day, settings),
+  });
+  const stubRow = healedDays.find((r) => r.day === undeclaredStub);
+  ok(stubRow && stubRow.intent == null,
+    "a healed no-op lock is not a reduced-day declaration",
+    stubRow && stubRow.intent);
+  const healedPartial = Analytics.partialDays(healedDays);
+  ok(healedPartial.flagged.length === 1 && healedPartial.flagged[0].day === undeclaredStub,
+    "after heal, the undeclared stub is still flagged; locked no-ops do not blind partialDays",
+    JSON.stringify(healedPartial.flagged));
+  ok(healedDays.filter((r) => reducedDays.has(r.day)).every((r) => r.intent === "reduced"),
+    "real energy plans still resolve as intent reduced after neighbouring days are healed");
+}
+
+console.log("\n[43] Day-intent: bumpAudit separates fasts from energy adjustments (H4)");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 8);
+  const reducedDay = keys[1];   // real +/- kcal adjustment
+  const fastDay = keys[3];      // declared fast, on time
+  const lateFastDay = keys[5];  // declared fast, after the day ended
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  settings.dayGoals[reducedDay] = {
+    targetKcal: 2500, baseKcal: 2000, plannedAt: 1, updatedAt: 1,
+  };
+  settings.dayGoals[fastDay] = {
+    targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true,
+    plannedAt: 1, updatedAt: 1,
+  };
+  settings.dayGoals[lateFastDay] = {
+    targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true,
+    plannedAt: 1, updatedAt: 1, declaredAfterDay: true,
+  };
+  const totalsForDay = (day) => {
+    if (day === fastDay || day === lateFastDay) return { count: 0 };
+    return { count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } };
+  };
+  const days = Analytics.buildDays({
+    keys, totalsForDay, goalsForDay: (day) => Phases.goalsForDay(day, settings),
+    bumpForDay: (day) => settings.dayGoals[day] || null,
+  });
+  const audit = Analytics.bumpAudit(days);
+  ok(audit.total === 1, "only the reduced day counts as an energy adjustment", `got ${audit.total}`);
+  ok(audit.kcalTotal === 500, "a fast's delta is never summed into kcalTotal — no -2200 per fast", `got ${audit.kcalTotal}`);
+  ok(audit.fasts === 2, "both fasts are counted, separately from adjustments", `got ${audit.fasts}`);
+  ok(audit.fastsDeclaredAfterDay === 1, "exactly one fast was declared after its day ended", `got ${audit.fastsDeclaredAfterDay}`);
+
+  const obs = Analytics.observations(days, {});
+  const bumpObs = obs.find((o) => o.id === "bumps");
+  ok(bumpObs && bumpObs.text.indexOf("2") === -1 || !/2 days? used a day plan/.test((bumpObs || {}).text || ""),
+    "the bumps observation does not call a fast a day plan", (bumpObs || {}).text);
+  const fastObs = obs.find((o) => o.id === "fasts");
+  ok(!!fastObs, "a separate fasts observation is surfaced");
+  ok(/2 declared fasts/.test(fastObs.text), "the fasts observation names the count", fastObs.text);
+  ok(/1 of these were declared after the day ended/.test(fastObs.text), "the fasts observation surfaces the late one", fastObs.text);
+}
+
+console.log("\n[44] Day-intent: scoreRange/callouts wording does not overclaim (H1)");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300, potassium: 3510 };
+  const keys = keysEndingAt(END, 13);
+  const fastDays = new Set([keys[2], keys[5], keys[8], keys[11]]);
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  for (const d of fastDays) {
+    settings.dayGoals[d] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  const totalsForDay = (day) => fastDays.has(day)
+    ? { count: 1, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 } }
+    : { count: 3, kcal: { mean: 1500 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } };
+  const scorecard = Phases.scoreRange(keys, totalsForDay, settings, {});
+  ok(scorecard.logged === 13, "the header count includes the 4 coffee-only fasts (they did log something)");
+  const kcalRow = scorecard.nutrients.find((n) => n.key === "kcal");
+  ok(kcalRow.n === 9 && kcalRow.exemptN === 4,
+    "kcal is only scored on the 9 real eating days; the 4 fasts are disclosed as exempt, not silently dropped",
+    JSON.stringify(kcalRow));
+  const calls = Phases.callouts(scorecard);
+  ok(/scored days/.test(calls.need) && !/logged days/.test(calls.need),
+    "the callout names the scored-day count, not the logged-day count it doesn't match", calls.need);
+  ok(/9 of 9 scored days/.test(calls.need), "the sentence is now internally consistent: 9 of 9 scored", calls.need);
+}
+
+console.log("\n[45] Day-intent: kcalBalance references the phase target and includes fasts at 0 (H2/Q6)");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 3);
+  const trueFastDay = keys[0];
+  const refeedDay = keys[1];
+  const normalDay = keys[2];
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  settings.dayGoals[trueFastDay] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  // A +500 refeed, planned and eaten exactly to plan.
+  settings.dayGoals[refeedDay] = { targetKcal: 2500, baseKcal: 2000, plannedAt: 1, updatedAt: 1 };
+  const totalsForDay = (day) => {
+    if (day === trueFastDay) return { count: 0 };
+    if (day === refeedDay) return { count: 3, kcal: { mean: 2500 }, p: { mean: 150 }, c: { mean: 260 }, f: { mean: 80 }, fb: { mean: 30 }, na: { mean: 2000 } };
+    return { count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } };
+  };
+  const bal = Phases.kcalBalance(keys, totalsForDay, settings);
+  ok(bal.n === 3, "the true fast is now included (accounted, not just logged)", `n=${bal.n}`);
+  // Old bug: refeed contributed (2500-2500)=0, hiding a real +500 surplus.
+  // New: references _phase.kcal (2000), so it contributes the true +500.
+  // Fast contributes (0 - 2000) = -2000. Normal day contributes 0.
+  // sum = 0 (fast) + 500 (refeed) + 0 (normal) = -2000 + 500 + 0 = -1500.
+  ok(bal.sum === -1500, "sum reflects phase-referenced deltas: fast -2000, refeed +500, normal 0", `got ${bal.sum}`);
+}
+
+console.log("\n[46] Day-intent: heatmap marks fasts; typical target uses phase kcal (H7/H9)");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 5);
+  const fastDay = keys[1];
+  const coffeeFast = keys[2];
+  const reducedDay = keys[3];
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  settings.dayGoals[fastDay] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  settings.dayGoals[coffeeFast] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  settings.dayGoals[reducedDay] = { targetKcal: 1200, baseKcal: 2000, veryLowCalorieAcknowledged: true, updatedAt: 1 };
+  const totalsForDay = (day) => {
+    if (day === fastDay) return { count: 0 };
+    if (day === coffeeFast) return { count: 1, kcal: { mean: 0 }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 } };
+    if (day === reducedDay) return { count: 2, kcal: { mean: 1200 }, p: { mean: 80 }, c: { mean: 80 }, f: { mean: 40 }, fb: { mean: 20 }, na: { mean: 1000 } };
+    return { count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } };
+  };
+  const days = Analytics.buildDays({
+    keys, totalsForDay, goalsForDay: (day) => Phases.goalsForDay(day, settings),
+  });
+  const cells = Analytics.heatmapCells(days, "kcal", Phases.scoreDayTotals);
+  const byDay = Object.fromEntries(cells.map((c) => [c.day, c]));
+  ok(byDay[fastDay].status === "fast", "true empty fast is hm-fast, not empty/not-logged", byDay[fastDay].status);
+  ok(byDay[coffeeFast].status === "fast", "zero-kcal logged fast is still hm-fast", byDay[coffeeFast].status);
+  ok(byDay[keys[0]].status !== "fast" && byDay[keys[0]].status !== "empty", "ordinary eating day is graded, not fast");
+
+  // Without phaseKcalOf, the range mean would be dragged by the 0-kcal fast targets.
+  const rawMean = Analytics.mean(days.map((d) => (d.goals || {}).kcal));
+  const phaseMean = Analytics.mean(days.map((d) => Analytics.phaseKcalOf(d)));
+  ok(rawMean < 2000, "sanity: raw resolved kcal averages below phase because of 0-kcal fasts", `got ${rawMean}`);
+  approx(phaseMean, 2000, 0.5, "phaseKcalOf keeps the typical-target average at the phase baseline");
+  const summary = Analytics.rangeSummary(days, Phases.scoreDayTotals, {});
+  approx(summary.kcalGoal, 2000, 0.5, "rangeSummary.kcalGoal uses the phase reference, not the 0 plan target");
+}
+
+console.log("\n[47] Day-intent: reverted fast keeps marker; observations + TDEE disclose (§11)");
+{
+  const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
+  const keys = keysEndingAt(END, 6);
+  const emptyFast = keys[1];
+  const ateFast = keys[2];
+  const settings = { goals: phaseGoals, phases: [], dayGoals: {} };
+  settings.dayGoals[emptyFast] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  settings.dayGoals[ateFast] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  const totalsForDay = (day) => {
+    if (day === emptyFast) return { count: 0 };
+    if (day === ateFast) {
+      return {
+        count: 2, kcal: { mean: 3000 }, p: { mean: 150 }, c: { mean: 300 }, f: { mean: 100 }, fb: { mean: 30 },
+        na: { mean: 5200 }, naCoverage: 1, k: { mean: 3510 }, kCoverage: 1, naKCoverage: 1,
+        naKNa: { mean: 5200 }, naKK: { mean: 3510 },
+      };
+    }
+    return {
+      count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 },
+      na: { mean: 2000 }, naCoverage: 1, k: { mean: 3510 }, kCoverage: 1, naKCoverage: 1,
+      naKNa: { mean: 2000 }, naKK: { mean: 3510 },
+    };
+  };
+  const days = Analytics.buildDays({
+    keys, totalsForDay, goalsForDay: (day) => Phases.goalsForDay(day, settings),
+    bumpForDay: (day) => settings.dayGoals[day] || null,
+  });
+  const cells = Analytics.heatmapCells(days, "kcal", Phases.scoreDayTotals);
+  const ateCell = cells.find((c) => c.day === ateFast);
+  ok(ateCell.fasted === true && ateCell.status !== "fast",
+    "a reverted fast keeps the declaration marker while grading as an ordinary day",
+    JSON.stringify({ status: ateCell.status, fasted: ateCell.fasted }));
+
+  // effectiveGoals path that Na:K card must use: ate-fast is NOT unscored.
+  const ateGoals = Phases.goalsForDay(ateFast, settings);
+  const ateTotals = Analytics.toTotalsLike(days.find((d) => d.day === ateFast));
+  const resolved = Phases.effectiveGoals(ateTotals, ateGoals);
+  ok(!(resolved && resolved._unscored && resolved._unscored.sodium),
+    "effectiveGoals clears sodium unscored on a declared fast that recorded food");
+  const emptyGoals = Phases.goalsForDay(emptyFast, settings);
+  ok(emptyGoals._unscored && emptyGoals._unscored.sodium,
+    "sanity: an empty honoured fast still has sodium unscored");
+
+  const obs = Analytics.observations(days, {});
+  const fastObs = obs.find((o) => o.id === "fasts");
+  ok(fastObs && /recorded food/.test(fastObs.text),
+    "observations names declared fasts that recorded food", fastObs && fastObs.text);
+
+  const allFastKeys = [keys[0], keys[1], keys[2]];
+  for (const d of allFastKeys) {
+    settings.dayGoals[d] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  const allFastDays = Analytics.buildDays({
+    keys: allFastKeys,
+    totalsForDay: () => ({ count: 0 }),
+    goalsForDay: (day) => Phases.goalsForDay(day, settings),
+    bumpForDay: (day) => settings.dayGoals[day] || null,
+  });
+  const allFastObs = Analytics.observations(allFastDays, {});
+  ok(allFastObs.some((o) => o.id === "fasts"),
+    "an all-fast range still emits the fasts observation", JSON.stringify(allFastObs));
+
+  // Restore mixed settings for TDEE field check via a fresh range with weights.
+  const tdeeKeys = keysEndingAt(END, 14);
+  const tdeeSettings = { goals: phaseGoals, phases: [], dayGoals: {}, weights: {} };
+  const tdeeFasts = new Set([tdeeKeys[2], tdeeKeys[5]]);
+  for (const d of tdeeFasts) {
+    tdeeSettings.dayGoals[d] = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 };
+  }
+  for (let i = 0; i < tdeeKeys.length; i++) {
+    tdeeSettings.weights[tdeeKeys[i]] = { kg: 80 - i * 0.05, updatedAt: 1 };
+  }
+  const tdeeDays = Analytics.buildDays({
+    keys: tdeeKeys,
+    totalsForDay: (day) => tdeeFasts.has(day)
+      ? { count: 0 }
+      : { count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } },
+    goalsForDay: (day) => Phases.goalsForDay(day, tdeeSettings),
+    weightKgForDay: (day) => (tdeeSettings.weights[day] && tdeeSettings.weights[day].kg) || null,
+  });
+  const tdee = Analytics.estimateTdee(tdeeDays, {});
+  ok(tdee.fastedDays === 2, "estimateTdee exposes fastedDays for the TDEE card byline", `got ${tdee.fastedDays}`);
+  ok(tdee.loggedDays === 12, "loggedDays stays eating-day count", `got ${tdee.loggedDays}`);
 }
 
 console.log(`\nanalytics: ${pass} passed, ${fail} failed\n`);

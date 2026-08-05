@@ -7,6 +7,13 @@ const FoodMatch = require("../js/foodmatch.js");
 globalThis.FoodMatch = FoodMatch;
 const Foods = require("../js/foods.js");
 const Ledger = require("../js/ledger.js");
+// phases.js reads `Analytics` for retargetForKcal on a reduced day, the same
+// defensive way analytics.js reads `Phases` (mirrors test-analytics.js).
+// Without this, goalsForDay silently takes the "Analytics absent" fallback
+// and every test in this file exercises a code path the browser never runs —
+// which is how Part VII.1's bug reached review in the first place (VII.8).
+globalThis.Phases = require("../js/phases.js");
+globalThis.Analytics = require("../js/analytics.js");
 
 let pass = 0, fail = 0;
 function ok(cond, name, detail) {
@@ -409,6 +416,78 @@ console.log("\n[5d] Causal ledger convergence");
     "later roots cannot redefine the day lock and amend/remove/restore inherit the root generation");
   ok(contextEvents.filter((event) => event.type === "add" && event.dayGoalLock).length === 1,
     "a restore cannot create a second immutable day-target snapshot");
+  Ledger.configureContext({});
+  Ledger.clearAll();
+
+  // Part VII.2: the target side of dayGoalLock widened to {0} ∪ [200, 6000]
+  // with the rest of the feature. Without this, a 500 kcal or fast day's
+  // first add stamped no dayGoalLock at all, and provenance for exactly the
+  // low days this feature exists to serve silently degraded to the mutable
+  // candidatesByDay fallback.
+  Ledger.clearAll();
+  Ledger.configureContext({
+    getResetEpoch: () => 0,
+    getDayGoalLock: () => ({ targetKcal: 500, baseKcal: 2200, veryLowCalorieAcknowledged: true }),
+  });
+  Ledger.addEntry("2026-09-02", { id: "low-day-root", name: "low day" });
+  const lowDayRoot = Ledger.allEvents().find((event) => event.type === "add" &&
+    event.causal && event.causal.entryId === "low-day-root" && event.causal.seq === 0);
+  ok(lowDayRoot && lowDayRoot.dayGoalLock &&
+      lowDayRoot.dayGoalLock.targetKcal === 500 && lowDayRoot.dayGoalLock.baseKcal === 2200,
+    "a 500 kcal day's first add carries a dayGoalLock");
+  Ledger.configureContext({});
+  Ledger.clearAll();
+
+  // Part VIII.1: a lock at targetKcal 0 is only honoured alongside its own
+  // intent/fastAcknowledged — that is the one shape the rest of the system
+  // (Sync.normalizeDayGoal, Phases.bumpsForDay) refuses to score, so writing
+  // it undeclared would just move the laundering path into the ledger.
+  Ledger.configureContext({
+    getResetEpoch: () => 0,
+    getDayGoalLock: () => ({
+      targetKcal: 0, baseKcal: 2200, intent: "fast", fastAcknowledged: true,
+    }),
+  });
+  Ledger.addEntry("2026-09-03", { id: "fast-day-root", name: "black coffee" });
+  const fastDayRoot = Ledger.allEvents().find((event) => event.type === "add" &&
+    event.causal && event.causal.entryId === "fast-day-root" && event.causal.seq === 0);
+  ok(fastDayRoot && fastDayRoot.dayGoalLock &&
+      fastDayRoot.dayGoalLock.targetKcal === 0 && fastDayRoot.dayGoalLock.baseKcal === 2200 &&
+      fastDayRoot.dayGoalLock.intent === "fast" && fastDayRoot.dayGoalLock.fastAcknowledged === true,
+    "a declared fast's first add carries a dayGoalLock at targetKcal 0 with its declaration");
+  Ledger.configureContext({});
+  Ledger.clearAll();
+
+  Ledger.configureContext({
+    getResetEpoch: () => 0,
+    getDayGoalLock: () => ({ targetKcal: 0, baseKcal: 2200 }),
+  });
+  Ledger.addEntry("2026-09-03b", { id: "undeclared-zero-root", name: "black coffee" });
+  const undeclaredZeroRoot = Ledger.allEvents().find((event) => event.type === "add" &&
+    event.causal && event.causal.entryId === "undeclared-zero-root" && event.causal.seq === 0);
+  ok(undeclaredZeroRoot && !undeclaredZeroRoot.dayGoalLock,
+    "a targetKcal 0 lock with no intent/fastAcknowledged is never honoured — an undeclared zero is not a fast");
+  Ledger.configureContext({});
+  Ledger.clearAll();
+
+  // Part IX.2: intent "fast" must require targetKcal 0, not just its own
+  // acknowledgement. Sync.normalizeDayGoal and App.importedPlannedKcal both
+  // already reject {intent:"fast", targetKcal:1500} as incoherent — the
+  // ledger's own validator writes the immutable event log and must agree,
+  // rather than laundering a 1500 kcal day into a fully unscored "fast".
+  Ledger.configureContext({
+    getResetEpoch: () => 0,
+    getDayGoalLock: () => ({
+      targetKcal: 1500, baseKcal: 2200, intent: "fast", fastAcknowledged: true,
+    }),
+  });
+  Ledger.addEntry("2026-09-03c", { id: "incoherent-fast-root", name: "not actually a fast" });
+  const incoherentFastRoot = Ledger.allEvents().find((event) => event.type === "add" &&
+    event.causal && event.causal.entryId === "incoherent-fast-root" && event.causal.seq === 0);
+  ok(incoherentFastRoot && incoherentFastRoot.dayGoalLock &&
+      incoherentFastRoot.dayGoalLock.targetKcal === 1500 && incoherentFastRoot.dayGoalLock.intent === undefined &&
+      incoherentFastRoot.dayGoalLock.fastAcknowledged === undefined,
+    "intent \"fast\" with a nonzero target is written as an ordinary planned day, never as an incoherent fast lock");
   Ledger.configureContext({});
   Ledger.clearAll();
 }
@@ -1356,6 +1435,68 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
       afterStaleClear.dayGoals["2026-08-20"].lockedByEventId === "locked-root",
     "a JSON export/import round-trip and later clear tombstone cannot alter a logged-day lock");
 
+  // Part VIII.1: a declared fast that recorded food must carry intent and
+  // fastAcknowledged through a merge exactly the way targetKcal/baseKcal do —
+  // dropping them regresses to the shape VII.3 taught the rest of the system
+  // to refuse (an undeclared zero), silently turning a fast into a total miss.
+  const fastRoot = {
+    id: "fast-locked-root", ts: 100, day: "2026-08-21", type: "add", resetEpoch: 0,
+    causal: { entryId: "fast-locked-entry", seq: 0, parentEventId: null },
+    dayGoalLock: {
+      targetKcal: 0, baseKcal: 2200, plannedAt: 90, intent: "fast", fastAcknowledged: true,
+    },
+    entry: { id: "fast-locked-entry", name: "black coffee" },
+  };
+  const fastSource = lockDoc({ events: [fastRoot] });
+  const staleForFastDay = lockDoc({
+    dayGoals: { "2026-08-21": { targetKcal: 1800, baseKcal: 2200, updatedAt: 900 } },
+  });
+  const fastForward = Sync.mergeDocs(fastSource, staleForFastDay).doc;
+  const fastReverse = Sync.mergeDocs(staleForFastDay, fastSource).doc;
+  const fastMergedDay = fastForward.dayGoals["2026-08-21"];
+  ok(fastMergedDay && fastMergedDay.targetKcal === 0 && fastMergedDay.baseKcal === 2200 &&
+      fastMergedDay.intent === "fast" && fastMergedDay.fastAcknowledged === true && fastMergedDay.locked,
+    "a declared fast's dayGoalLock survives mergeDocs with intent and fastAcknowledged intact");
+  ok(Sync.fingerprint(fastForward) === Sync.fingerprint(fastReverse),
+    "the healed fast record converges under reversed shard order");
+  const fastResolved = Phases.goalsForDay("2026-08-21", { ...fastForward, dayGoals: fastForward.dayGoals });
+  ok(fastResolved.kcal === 0 && fastResolved._unscored &&
+      fastResolved._unscored.protein && fastResolved._unscored.carbs && fastResolved._unscored.fat &&
+      fastResolved._unscored.fiber && fastResolved._unscored.sodium && fastResolved._unscored.potassium,
+    "goalsForDay on the merged doc still returns kcal 0 with _unscored intact for a healed fast");
+
+  // Part IX.1(b): an *undeclared* zero lock — targetKcal 0 with no intent or
+  // fastAcknowledged, exactly the shape a pre-fix normalizeImportedEvent (or
+  // any other buggy producer) could still write — must not be honoured as a
+  // lock at all. The eventLock gate has to demand the same declaration
+  // Ledger._normalizedDayGoalLock does, so healing falls through to the
+  // candidate path and recovers the still-intact declaration sitting in
+  // dayGoals, instead of letting the bare zero win and silently overwrite it
+  // with a full-miss-against-phase-target record ("eventLock wins over
+  // selected").
+  const undeclaredZeroRoot = {
+    id: "undeclared-zero-root", ts: 100, day: "2026-08-22", type: "add", resetEpoch: 0,
+    causal: { entryId: "undeclared-zero-entry", seq: 0, parentEventId: null },
+    dayGoalLock: { targetKcal: 0, baseKcal: 2200, plannedAt: 90 },
+    entry: { id: "undeclared-zero-entry", name: "undeclared zero" },
+  };
+  const undeclaredZeroSource = lockDoc({
+    events: [undeclaredZeroRoot],
+    dayGoals: {
+      "2026-08-22": { targetKcal: 0, baseKcal: 2200, updatedAt: 50, intent: "fast", fastAcknowledged: true },
+    },
+  });
+  const undeclaredZeroHealed = Sync.mergeDocs(undeclaredZeroSource, undeclaredZeroSource).doc;
+  const undeclaredZeroDay = undeclaredZeroHealed.dayGoals["2026-08-22"];
+  ok(undeclaredZeroDay && undeclaredZeroDay.intent === "fast" && undeclaredZeroDay.fastAcknowledged === true &&
+      undeclaredZeroDay.targetKcal === 0,
+    "an undeclared zero dayGoalLock is refused as a lock, so healing recovers the declared fast from dayGoals instead of overriding it");
+  const undeclaredZeroResolved = Phases.goalsForDay(
+    "2026-08-22", { ...undeclaredZeroHealed, dayGoals: undeclaredZeroHealed.dayGoals }
+  );
+  ok(undeclaredZeroResolved.kcal === 0,
+    "goalsForDay on the healed doc resolves the recovered fast to kcal 0, not a full-miss against the phase target");
+
   const mixedLegacyRoot = {
     id: "mixed-legacy-root", ts: 100, day: "2026-08-23", type: "add", resetEpoch: 0,
     causal: { entryId: "mixed-legacy-entry", seq: 0, parentEventId: null },
@@ -1481,11 +1622,25 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   ok(changedBase.dayGoals["2026-08-22"].targetKcal === 2500 &&
       changedBase.dayGoals["2026-08-22"].baseKcal === 2200,
     "a healed legacy absolute target stays frozen when the later phase baseline changes");
-  ok(!Sync.normalizeDayGoal({ kcal: 800, updatedAt: 1 }).cleared &&
+  // Day-intent widening: a legacy absolute target is a planned day, not a
+  // phase target, so its floor moves from 800 down to 200 — it can still
+  // never be exactly 0, that shape predates the fast concept.
+  ok(!Sync.normalizeDayGoal({ kcal: 1200, updatedAt: 1 }).cleared &&
       !Sync.normalizeDayGoal({ kcal: 6000, updatedAt: 1 }).cleared &&
-      Sync.normalizeDayGoal({ kcal: 799, updatedAt: 1 }).cleared &&
-      Sync.normalizeDayGoal({ kcal: 6001, updatedAt: 1 }).cleared,
-    "legacy absolute overrides accept exactly 800–6000 kcal and reject values outside it");
+      Sync.normalizeDayGoal({ kcal: 199, updatedAt: 1 }).cleared &&
+      Sync.normalizeDayGoal({ kcal: 6001, updatedAt: 1 }).cleared &&
+      Sync.normalizeDayGoal({ kcal: 0, updatedAt: 1 }).cleared,
+    "legacy absolute overrides accept exactly 200–6000 kcal, reject values outside it, and can never be 0");
+  // Part VIII.2: sync must not be strictly weaker than the import path — a
+  // legacy record does not always originate from a compliant client, so a
+  // below-1200 absolute target needs the same acknowledgement import already
+  // requires, or it is a live very-low plan nobody ever confirmed.
+  ok(Sync.normalizeDayGoal({ kcal: 200, updatedAt: 1 }).cleared,
+    "a legacy absolute target below 1200 kcal without acknowledgement is tombstoned");
+  ok(!Sync.normalizeDayGoal({
+    kcal: 200, updatedAt: 1, veryLowCalorieAcknowledged: true,
+  }).cleared,
+    "a legacy absolute target below 1200 kcal WITH acknowledgement is accepted");
 
   const dgA = { "2026-08-01": { kcal: 2800, protein: 180, updatedAt: 100 } };
   const dgB = {
@@ -1510,8 +1665,19 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   ok(frozenPlan.targetKcal === 2500 && frozenPlan.baseKcal === 2200 && frozenPlan.plannedAt === 10 &&
       Object.keys(frozenPlan).sort().join(",") === "baseKcal,plannedAt,targetKcal,updatedAt",
     "sync preserves only safe frozen calorie-plan fields");
-  ok(Sync.normalizeDayGoal({ targetKcal: 700, baseKcal: 2200, updatedAt: 12 }).cleared,
+  // 700 no longer rejects on range alone — {0} ∪ [200, 6000] is a real 5:2/ADF
+  // plan now — so the boundary probe moves below the widened floor.
+  ok(Sync.normalizeDayGoal({ targetKcal: 150, baseKcal: 2200, updatedAt: 12 }).cleared,
     "sync rejects an out-of-range frozen calorie target");
+  // 700 sits below LOW_KCAL_ACK_KCAL (1200), so the §7 ladder now requires
+  // veryLowCalorieAcknowledged — a record that never asked the question is
+  // no more trustworthy than one outside the range (Part VII.4).
+  ok(!Sync.normalizeDayGoal({
+    targetKcal: 700, baseKcal: 2200, updatedAt: 12, veryLowCalorieAcknowledged: true,
+  }).cleared,
+    "sync accepts a reduced-day frozen target between 200 and 1200 kcal");
+  ok(Sync.normalizeDayGoal({ targetKcal: 700, baseKcal: 2200, updatedAt: 12 }).cleared,
+    "sync tombstones a very-low frozen target that was never acknowledged");
 
   const unsafeDoc = {
     version: 2, resetAt: 0, events: [], personalFoods: [],
@@ -1931,8 +2097,38 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
 {
   globalThis.FoodMatch = require("../js/foodmatch.js");
   const GapPrompt = require("../js/gap-prompt.js");
+  const PhasesGap = require("../js/phases.js");
+  globalThis.Phases = PhasesGap;
   const NutriParse = require("../js/parse.js");
   const Sync = require("../js/sync.js");
+
+  // H8: a declared fast must not ask for P150 inside 0 kcal of headroom.
+  const fastGoals = PhasesGap.goalsForDay("2026-08-02", {
+    goals: { kcal: 2200, protein: 150, carbs: 250, fat: 70, fiber: 30, sodium: 2300 },
+    phases: [],
+    dayGoals: {
+      "2026-08-02": { targetKcal: 0, baseKcal: 2200, intent: "fast", fastAcknowledged: true, updatedAt: 1 },
+    },
+  });
+  const fastRem = GapPrompt.remainingFrom(
+    { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sodium: 0, potassium: 0 },
+    fastGoals,
+    { count: 0 }
+  );
+  ok(fastRem.protein === 0 && fastRem.kcal === 0 && fastRem.carbs === 0,
+    "remainingFrom zeroes every unscored key on a declared empty fast",
+    JSON.stringify(fastRem));
+  const ateFastTotals = {
+    count: 1, kcal: { mean: 1800 }, p: { mean: 100 }, c: { mean: 150 }, f: { mean: 50 }, fb: { mean: 20 }, na: { mean: 1500 },
+  };
+  const ateFastRem = GapPrompt.remainingFrom(
+    GapPrompt.totalsMeans(ateFastTotals),
+    fastGoals,
+    ateFastTotals
+  );
+  ok(ateFastRem.protein === 50,
+    "remainingFrom restores protein headroom after a declared fast records food",
+    `got ${ateFastRem.protein}`);
 
   const candidates = [
     {
@@ -2893,8 +3089,11 @@ END`;
   localStore.delete("nd_generation_schema_version");
   const corruptLocalDayGoals = {
     // This is a current post-reset candidate; generation rollout must stamp it
-    // and still let the strict inbound normalizer reject its bad target.
-    "2026-08-24": { targetKcal: 700, baseKcal: 2200, updatedAt: 101, resetEpoch: 100 },
+    // and still let the strict inbound normalizer reject its bad target. 150
+    // is below both the planned-day floor (200) and the mock's own legacy
+    // 800 threshold below — 700 would now be a genuinely valid planned day
+    // and would no longer exercise this rejection path (Part VIII.6).
+    "2026-08-24": { targetKcal: 150, baseKcal: 2200, updatedAt: 101, resetEpoch: 100 },
   };
   globalThis.GDrive.readShards = async () => ({ docs: [], ownFileId: null });
   globalThis.GDrive.writeOwnShard = async () => { corruptOutboundWrites += 1; };
@@ -3254,6 +3453,386 @@ END`;
   globalThis.sessionStorage = savedSessionStorage;
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: savedNavigator });
   Object.defineProperty(globalThis, "crypto", { configurable: true, value: savedCrypto });
+
+  console.log("\n[14] Day-intent constants and the 800/200 asymmetry");
+  {
+    const Phases14 = require("../js/phases.js");
+    const Sync14 = require("../js/sync.js");
+
+    ok(Phases14.MIN_PLANNED_KCAL === 200 && Phases14.FAST_KCAL === 0 && Phases14.LOW_KCAL_ACK_KCAL === 1200 &&
+        Phases14.MAX_DAY_TARGET_KCAL === 6000,
+      "day-intent constants match the spec");
+    ok(JSON.stringify(Phases14.DAY_INTENTS) === JSON.stringify(["reduced", "fast"]), "DAY_INTENTS lists both intents");
+    ok(typeof Phases14.MIN_DAY_TARGET_KCAL === "undefined", "MIN_DAY_TARGET_KCAL is removed, not aliased");
+
+    ok(Phases14.isPlannedKcal(0) && Phases14.isPlannedKcal(200) && Phases14.isPlannedKcal(6000),
+      "isPlannedKcal accepts the fast value and the full planned-day range");
+    ok(!Phases14.isPlannedKcal(1) && !Phases14.isPlannedKcal(199) && !Phases14.isPlannedKcal(6001) && !Phases14.isPlannedKcal(-1),
+      "isPlannedKcal rejects the dead zone between 1 and 199, and anything past the ceiling");
+
+    // Part VIII.5 / Slice 6: FAST_DECLARATION_COPY is the single source for the
+    // Fast panel copy. It states that the >0 threshold in
+    // effectiveGoals/scoreDayTotals is a hard cliff (5 kcal of milk ends a
+    // declared fast), not a fuzzy allowance.
+    ok(typeof Phases14.FAST_DECLARATION_COPY === "string" && /0 kcal/.test(Phases14.FAST_DECLARATION_COPY) &&
+        /ends the fast/i.test(Phases14.FAST_DECLARATION_COPY),
+      "FAST_DECLARATION_COPY states plainly that any calorie ends the fast");
+
+    const dayGoalsFor = (day, ov) => ({
+      goals: { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 },
+      phases: [], dayGoals: { [day]: ov },
+    });
+
+    // baseKcal is a phase target and keeps its own 800 floor no matter how far
+    // the target side widens — the asymmetry is the whole point of this slice.
+    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      targetKcal: 500, baseKcal: 799, updatedAt: 1,
+    }), { kcal: 799 }) === null, "baseKcal below 800 is still rejected on the modern shape");
+    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      kcal: 500, updatedAt: 1,
+    }), { kcal: 799 }) === null, "baseKcal below 800 is still rejected on the legacy absolute shape");
+
+    // 1–199 is a dead zone on every shape that carries an explicit target.
+    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      targetKcal: 199, baseKcal: 2000, updatedAt: 1,
+    }), { kcal: 2000 }) === null, "the modern shape rejects 199 kcal");
+    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      kcal: 199, updatedAt: 1,
+    }), { kcal: 2000 }) === null, "the legacy absolute shape rejects 199 kcal");
+    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      bumps: { kcal: -1801 }, updatedAt: 1,
+    }), { kcal: 2000 }) === null, "the delta-bump shape rejects a resolved target inside the 1-199 dead zone");
+
+    // A planned day of 500 (5:2 / ADF territory) is now expressible.
+    const fiveTwo = Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      targetKcal: 500, baseKcal: 2000, updatedAt: 1, veryLowCalorieAcknowledged: true,
+    }), { kcal: 2000 });
+    ok(fiveTwo && fiveTwo.targetKcal === 500 && fiveTwo.intent === "reduced",
+      "a 500 kcal planned day round-trips through bumpsForDay as a reduced day");
+
+    // Part VIII.2's exact scenario: a legacy {bumps:{kcal:-800}} record was
+    // written while the phase stood at 2200 kcal. Nobody acknowledged
+    // anything at the time — there was nothing to acknowledge yet, since the
+    // resolved target was a normal 1400 kcal. The phase is later cut to 1200,
+    // and the same stale bump now resolves to a live 400 kcal plan no one
+    // ever confirmed. The scoring layer must catch this itself rather than
+    // trust that an ack was enforced somewhere upstream.
+    const staleBumpLaundered = Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      bumps: { kcal: -800 }, updatedAt: 1,
+    }), { kcal: 1200 });
+    ok(staleBumpLaundered === null,
+      "a stale delta bump that resolves below 1200 kcal after a phase cut is rejected without acknowledgement");
+    const staleBumpAcknowledged = Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      bumps: { kcal: -800 }, updatedAt: 1, veryLowCalorieAcknowledged: true,
+    }), { kcal: 1200 });
+    ok(staleBumpAcknowledged && staleBumpAcknowledged.kcal === -800,
+      "the same stale delta bump resolves once acknowledgement is present");
+    // Before the cut, the same record needed no ack at all — 2200 - 800 =
+    // 1400 sits above the ladder threshold.
+    const staleBumpBeforeCut = Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+      bumps: { kcal: -800 }, updatedAt: 1,
+    }), { kcal: 2200 });
+    ok(staleBumpBeforeCut && staleBumpBeforeCut.kcal === -800,
+      "the same record needs no acknowledgement while the phase still resolves it above 1200 kcal");
+
+    // Sync.normalizeDayGoal — target side widens, base side does not. 500 is
+    // below LOW_KCAL_ACK_KCAL, so the §7 ladder requires the ack (Part VII.4).
+    ok(!Sync14.normalizeDayGoal({
+      targetKcal: 500, baseKcal: 2000, updatedAt: 1, veryLowCalorieAcknowledged: true,
+    }).cleared,
+      "sync accepts a 500 kcal reduced-day target");
+    ok(Sync14.normalizeDayGoal({ targetKcal: 500, baseKcal: 2000, updatedAt: 1 }).cleared,
+      "sync tombstones a 500 kcal reduced-day target with no acknowledgement");
+    ok(Sync14.normalizeDayGoal({ targetKcal: 500, baseKcal: 799, updatedAt: 1 }).cleared,
+      "sync still rejects a sub-800 baseKcal even when the target is in the widened range");
+    ok(Sync14.normalizeDayGoal({ targetKcal: 199, baseKcal: 2000, updatedAt: 1 }).cleared,
+      "sync rejects a targetKcal of 199");
+
+    // goalsForDay resolves every legacy dayGoals generation exactly as before:
+    // only kcal moves, floors and ceilings are untouched. Analytics is loaded
+    // in this file (see line 16), so carbs/fat are genuinely retargeted here
+    // via the real Analytics.retargetForKcal — this block just doesn't assert
+    // their values; the retargeted-carbs/fat case has its own dedicated
+    // assertions in test-analytics.js.
+    const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300, potassium: 3510 };
+    const genSettings = (day, dayGoal) => ({ goals: phaseGoals, phases: [], dayGoals: { [day]: dayGoal } });
+    const gday = "2026-08-01";
+    const modernGoals = Phases14.goalsForDay(gday, genSettings(gday, { targetKcal: 2500, baseKcal: 2000, updatedAt: 1 }));
+    const deltaGoals = Phases14.goalsForDay(gday, genSettings(gday, { bumps: { kcal: 500 }, updatedAt: 1 }));
+    const legacyGoals = Phases14.goalsForDay(gday, genSettings(gday, { kcal: 2500, updatedAt: 1 }));
+    const tombstoneGoals = Phases14.goalsForDay(gday, genSettings(gday, { cleared: true, updatedAt: 1 }));
+    for (const g of [modernGoals, deltaGoals, legacyGoals]) {
+      ok(g.kcal === 2500 && g.protein === 150 && g.fiber === 30 && g.sodium === 2300 && g.potassium === 3510,
+        "every legacy dayGoals generation still resolves kcal-only; floors and ceilings are untouched");
+    }
+    ok(tombstoneGoals.kcal === 2000 && tombstoneGoals._bumps === null && tombstoneGoals._unscored === null,
+      "a cleared tombstone resolves to the phase target with no plan and no exemptions");
+  }
+
+  console.log("\n[15] Day-intent plumbing — fast declarations");
+  {
+    const Phases15 = require("../js/phases.js");
+    const Sync15 = require("../js/sync.js");
+
+    // Absent on every record generation that predates this feature; migration
+    // is read-time defaulting, so the stored record itself never gains a
+    // written-out "reduced" intent.
+    const reducedNoIntent = Sync15.normalizeDayGoal({ targetKcal: 1500, baseKcal: 2000, updatedAt: 1 });
+    ok(reducedNoIntent.intent === undefined, "absent intent is not rewritten to \"reduced\" on disk");
+
+    ok(Sync15.normalizeDayGoal({
+      targetKcal: 0, baseKcal: 2000, intent: "fast", updatedAt: 1,
+    }).cleared, "a fast without fastAcknowledged is rejected, not silently accepted");
+    const fast = Sync15.normalizeDayGoal({
+      targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, plannedAt: 5, updatedAt: 1,
+    });
+    ok(fast && !fast.cleared && fast.targetKcal === 0 && fast.intent === "fast" && fast.fastAcknowledged === true,
+      "a fully acknowledged fast is accepted and keeps its intent");
+
+    ok(Sync15.normalizeDayGoal({ targetKcal: 0, baseKcal: 2000, updatedAt: 1 }).cleared,
+      "targetKcal 0 without intent \"fast\" is rejected");
+    ok(Sync15.normalizeDayGoal({
+      targetKcal: 500, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1,
+    }).cleared, "intent \"fast\" with a nonzero target is an incoherent record, not a plan to preserve");
+
+    // A fast only ever takes the frozen modern shape — legacy shapes cannot
+    // express a zero-calorie day explicitly, so intent never rides along.
+    ok(Sync15.normalizeDayGoal({
+      bumps: { kcal: 500 }, intent: "fast", fastAcknowledged: true, updatedAt: 1,
+    }).intent === undefined, "intent does not survive through the legacy delta-bump shape");
+
+    // Phases.bumpsForDay carries intent through to the resolved record.
+    const fastSettings = {
+      goals: { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 },
+      phases: [],
+      dayGoals: { "2026-08-01": { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 } },
+    };
+    const fastBumps = Phases15.bumpsForDay("2026-08-01", fastSettings, fastSettings.goals);
+    ok(fastBumps && fastBumps.intent === "fast" && fastBumps.targetKcal === 0,
+      "bumpsForDay carries a declared fast through to its resolved record");
+    const reducedSettings = { ...fastSettings, dayGoals: { "2026-08-01": { targetKcal: 1500, baseKcal: 2000, updatedAt: 1 } } };
+    const reducedBumps = Phases15.bumpsForDay("2026-08-01", reducedSettings, reducedSettings.goals);
+    ok(reducedBumps && reducedBumps.intent === "reduced", "bumpsForDay defaults intent to reduced when absent");
+
+    // Part IX.2: intent "fast" with a nonzero target is honoured by neither
+    // Sync.normalizeDayGoal (asserted above) nor App.importedPlannedKcal
+    // (asserted in the real-import smoke suite) — bumpsForDay, which decides
+    // the grade, and Ledger._normalizedDayGoalLock (asserted in [5c]), which
+    // writes the immutable event log, must agree with both. Eating 1500 kcal
+    // and having every other target waved off is the laundering path this
+    // closes.
+    const incoherentFastSettings = {
+      ...fastSettings,
+      dayGoals: {
+        "2026-08-01": { targetKcal: 1500, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 },
+      },
+    };
+    const incoherentFastBumps = Phases15.bumpsForDay(
+      "2026-08-01", incoherentFastSettings, incoherentFastSettings.goals
+    );
+    ok(incoherentFastBumps && incoherentFastBumps.intent === "reduced" && incoherentFastBumps.targetKcal === 1500,
+      "bumpsForDay never honours intent \"fast\" unless the resolved target is exactly 0 kcal");
+    const incoherentFastGoals = Phases15.goalsForDay("2026-08-01", incoherentFastSettings);
+    ok(incoherentFastGoals.kcal === 1500 && incoherentFastGoals._unscored === null,
+      "goalsForDay scores every target on the incoherent record instead of unscoring seven cells for free");
+
+    // goalsForDay: a declared fast keeps phase values visible but unscores
+    // every non-kcal target, including fiber/sodium/potassium — unlike a
+    // reduced day, where those never move into _unscored (Q5/Q8).
+    const fastGoals = Phases15.goalsForDay("2026-08-01", fastSettings);
+    ok(fastGoals.kcal === 0 && fastGoals.protein === 150, "a declared fast keeps kcal at 0 and protein at its phase value");
+    for (const key of ["protein", "carbs", "fat", "fiber", "sodium", "naK"]) {
+      ok(fastGoals._unscored && fastGoals._unscored[key] === "declared fast", `fast day marks ${key} unscored`);
+    }
+
+    // mergeDayGoals LWW across fast and reduced records, in both directions.
+    const day = "2026-08-01";
+    const reducedRecord = { targetKcal: 1500, baseKcal: 2000, updatedAt: 10 };
+    const fastRecord = { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 20 };
+    const newerFastWins = Sync15.mergeDayGoals({ [day]: reducedRecord }, { [day]: fastRecord });
+    ok(newerFastWins[day].intent === "fast" && newerFastWins[day].targetKcal === 0,
+      "a newer declared fast beats an older reduced-day plan on merge");
+    const newerReducedWins = Sync15.mergeDayGoals({ [day]: fastRecord }, { [day]: { ...reducedRecord, updatedAt: 30 } });
+    ok(newerReducedWins[day].intent === undefined && newerReducedWins[day].targetKcal === 1500,
+      "a newer reduced-day plan beats an older declared fast on merge, in the other direction");
+
+    // Old-client simulation: an older client that has not shipped this feature
+    // runs the pre-widening [800, 6000] rule and would normalize a 500 kcal
+    // plan straight to a tombstone. That tombstone must not defeat a newer
+    // valid record on the way back — mergeDayGoals picks by updatedAt, so an
+    // older stamp loses even when it is a clear. (This simulates the old
+    // client's *output*, not its code, since only the current validator is
+    // under test here.)
+    const newerPlan = { targetKcal: 500, baseKcal: 2000, updatedAt: 100, veryLowCalorieAcknowledged: true };
+    const oldClientTombstone = { cleared: true, updatedAt: 50 };
+    const survivesOldClient = Sync15.mergeDayGoals({ [day]: newerPlan }, { [day]: oldClientTombstone });
+    ok(survivesOldClient[day].targetKcal === 500 && !survivesOldClient[day].cleared,
+      "a newer 5:2-range plan survives merge against an older client's stale pre-widening tombstone");
+    const newerClearStillWins = Sync15.mergeDayGoals({ [day]: newerPlan }, { [day]: { cleared: true, updatedAt: 200 } });
+    ok(newerClearStillWins[day].cleared === true,
+      "a genuinely newer clear still wins — ordinary LWW, not special-cased for the widened range");
+
+    // declaredAfterDay: modern-branch boolean only; survives normalize + bumps;
+    // never a stampMap clock key.
+    const lateFast = Sync15.normalizeDayGoal({
+      targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true,
+      plannedAt: 1, updatedAt: 1, declaredAfterDay: true,
+    });
+    ok(lateFast && lateFast.declaredAfterDay === true,
+      "normalizeDayGoal keeps declaredAfterDay on a modern fast record");
+    ok(Sync15.normalizeDayGoal({
+      targetKcal: 1500, baseKcal: 2000, updatedAt: 1, declaredAfterDay: true,
+    }).declaredAfterDay === undefined,
+      "declaredAfterDay never rides on a non-fast (reduced) record");
+    const lateSettings = {
+      goals: fastSettings.goals, phases: [],
+      dayGoals: { "2026-08-01": lateFast },
+    };
+    const lateBumps = Phases15.bumpsForDay("2026-08-01", lateSettings, lateSettings.goals);
+    ok(lateBumps && lateBumps.declaredAfterDay === true,
+      "bumpsForDay carries declaredAfterDay onto the resolved bump");
+
+    // §10 declaration window.
+    ok(Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-01", intent: "reduced" }).ok,
+      "reduced: previous day may plan ahead");
+    ok(Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-02", intent: "reduced" }).ok,
+      "reduced: same day is allowed before the first add");
+    ok(!Phases15.dayIntentWindow("2026-08-02", {
+      todayKey: "2026-08-02", intent: "reduced", hasEverAdded: true,
+    }).ok, "reduced: first food add closes the window");
+    ok(!Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-03", intent: "reduced" }).ok,
+      "reduced: the day after the target is closed");
+    ok(Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-03", intent: "fast" }).ok,
+      "fast: grace through the day after is open");
+    ok(!Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-04", intent: "fast" }).ok,
+      "fast: two days later is refused");
+    const endMs = Phases15.endOfLocalDayMs("2026-08-02");
+    ok(Phases15.isDeclaredAfterDay("2026-08-02", endMs + 1) === true,
+      "isDeclaredAfterDay is true after local midnight of the target day");
+    ok(Phases15.dayIntentWindow("2026-08-02", {
+      todayKey: "2026-08-03", intent: "fast", plannedAt: endMs + 1,
+    }).declaredAfterDay === true,
+      "dayIntentWindow stamps declaredAfterDay for a late fast save");
+
+    // Slice 6 §12 — dayPlanPresets LWW by id with deleted tombstones, max 5 active.
+    const pA = Sync15.normalizeDayPlanPreset({
+      id: "p1", label: "5:2", intent: "reduced", targetKcal: 500,
+      veryLowCalorieAcknowledged: true, createdAt: 1, updatedAt: 10,
+    });
+    const pB = Sync15.normalizeDayPlanPreset({
+      id: "p1", label: "5:2 revised", intent: "reduced", targetKcal: 600,
+      veryLowCalorieAcknowledged: true, createdAt: 1, updatedAt: 20,
+    });
+    const pFast = Sync15.normalizeDayPlanPreset({
+      id: "p2", label: "Fast", intent: "fast", targetKcal: 0,
+      fastAcknowledged: true, createdAt: 1, updatedAt: 5,
+    });
+    const mergedPresets = Sync15.mergeDayPlanPresets([pA, pFast], [pB]);
+    ok(mergedPresets.find((p) => p.id === "p1").targetKcal === 600,
+      "dayPlanPresets LWW keeps the newer same-id record");
+    ok(mergedPresets.find((p) => p.id === "p2").intent === "fast",
+      "dayPlanPresets merge retains a Fast preset from the other side");
+    const tombstoned = Sync15.mergeDayPlanPresets(
+      [pB, pFast],
+      [{ id: "p2", deleted: true, updatedAt: 50, createdAt: 1 }]
+    );
+    ok(tombstoned.find((p) => p.id === "p2").deleted === true,
+      "dayPlanPresets accept a deleted tombstone when it is newer");
+    ok(Sync15.activeDayPlanPresets(tombstoned).every((p) => p.id !== "p2"),
+      "activeDayPlanPresets excludes tombstones");
+    ok(Sync15.normalizeDayPlanPreset({
+      id: "bad", intent: "fast", targetKcal: 0, createdAt: 1, updatedAt: 1,
+    }) === null, "a Fast preset without fastAcknowledged is rejected");
+
+    // Cap of 5 must be enforced at merge time — two devices at the legal
+    // maximum must not brick Drive by throwing on canonicalize.
+    const makePreset = (id, updatedAt, lastUsedAt) => Sync15.normalizeDayPlanPreset({
+      id, label: id, intent: "reduced", targetKcal: 500,
+      veryLowCalorieAcknowledged: true, createdAt: 1, updatedAt, lastUsedAt,
+    });
+    const sideA = [0, 1, 2, 3, 4].map((i) => makePreset(`dpp_a_${i}`, 10, 10 + i));
+    const sideB = [0, 1, 2, 3, 4].map((i) => makePreset(`dpp_b_${i}`, 10, 20 + i));
+    const capped = Sync15.mergeDayPlanPresets(sideA, sideB, 100);
+    ok(Sync15.activeDayPlanPresets(capped).length === Sync15.DAY_PLAN_PRESET_ACTIVE_CAP,
+      "mergeDayPlanPresets enforces the active cap of 5 across two full sides");
+    ok(capped.filter((p) => p.deleted).length === 5,
+      "cap losers become deleted tombstones so a later merge cannot reinstate them");
+    ok(Sync15.activeDayPlanPresets(capped).every((p) => String(p.id).startsWith("dpp_b_")),
+      "cap keeps the most recently used presets (side B lastUsedAt dominates)");
+    const mergedDoc = Sync15.mergeDocs(
+      { version: 3, events: [], personalFoods: [], dayPlanPresets: sideA, dayGoals: {}, dayPlans: {}, gapDrafts: {}, phases: [], weights: {}, profile: null, goals: null, resetAt: 0 },
+      { version: 3, events: [], personalFoods: [], dayPlanPresets: sideB, dayGoals: {}, dayPlans: {}, gapDrafts: {}, phases: [], weights: {}, profile: null, goals: null, resetAt: 0 }
+    );
+    ok(Sync15.activeDayPlanPresets(mergedDoc.doc.dayPlanPresets).length <= Sync15.DAY_PLAN_PRESET_ACTIVE_CAP,
+      "mergeDocs itself never emits more than 5 active presets");
+
+    // R1: lastUsedAt must merge as max independently of the updatedAt LWW pick.
+    // stableText tie-break is lexical — without the max pass, lastUsedAt:500
+    // beats lastUsedAt:1754300000000 and the fresh apply is discarded.
+    const usedLocal = Sync15.normalizeDayPlanPreset({
+      id: "dpp_used", label: "Used", intent: "reduced", targetKcal: 500,
+      veryLowCalorieAcknowledged: true, createdAt: 1, updatedAt: 1000,
+      lastUsedAt: 1754300000000,
+    });
+    const usedRemote = Sync15.normalizeDayPlanPreset({
+      id: "dpp_used", label: "Used", intent: "reduced", targetKcal: 500,
+      veryLowCalorieAcknowledged: true, createdAt: 1, updatedAt: 1000,
+      lastUsedAt: 500,
+    });
+    const usedMerged = Sync15.mergeDayPlanPresets([usedLocal], [usedRemote]);
+    ok(usedMerged.length === 1 && usedMerged[0].lastUsedAt === 1754300000000,
+      "mergeDayPlanPresets keeps max(lastUsedAt) across an updatedAt tie");
+    const usedFlip = Sync15.mergeDayPlanPresets([usedRemote], [usedLocal]);
+    ok(usedFlip[0].lastUsedAt === 1754300000000,
+      "max(lastUsedAt) is order-independent");
+
+    // Cap stamps without an explicit `now` are derived from input clocks.
+    const run1 = Sync15.mergeDayPlanPresets(sideA, sideB);
+    const run2 = Sync15.mergeDayPlanPresets(sideA, sideB);
+    ok(JSON.stringify(run1) === JSON.stringify(run2),
+      "mergeDayPlanPresets without `now` is a pure function of its inputs");
+
+    // Cap output (actives + tombstones) must be a fixed point under merge and
+    // under Sync normalize — the same bytes Drive would re-feed after eviction.
+    const cappedRound = Sync15.mergeDayPlanPresets(capped, capped);
+    ok(JSON.stringify(cappedRound) === JSON.stringify(capped),
+      "re-merging a capped list with tombstones is a fixed point");
+    ok(Sync15.normalizeDayPlanPresets(capped).filter((p) => p.deleted).length === 5,
+      "normalizeDayPlanPresets keeps cap-loser tombstones (no targetKcal required)");
+    ok(capped.filter((p) => p.deleted).every((p) => p.targetKcal == null && p.intent == null),
+      "cap-loser tombstones are Sync-shaped (id/deleted/clocks only)");
+  }
+
+  console.log("\n[16] Day-intent: goalsForDay's standalone fallback (no Analytics global)");
+  {
+    // VII.8 fixed this file to load globalThis.Analytics up top so goalsForDay's
+    // real retargetForKcal path gets exercised by every other test here — but
+    // that means nothing in this file was left exercising the fallback branch
+    // itself (phases.js loaded without analytics.js at all). Simulate that by
+    // removing the global for the duration of this block only.
+    const Phases16 = require("../js/phases.js");
+    const savedAnalytics = globalThis.Analytics;
+    const hadAnalytics = Object.prototype.hasOwnProperty.call(globalThis, "Analytics");
+    delete globalThis.Analytics;
+    try {
+      const phaseGoals16 = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300, potassium: 3510 };
+      const settings16 = {
+        goals: phaseGoals16, phases: [],
+        dayGoals: { "2026-08-01": { targetKcal: 1500, baseKcal: 2000, updatedAt: 1 } },
+      };
+      const reduced16 = Phases16.goalsForDay("2026-08-01", settings16);
+      ok(reduced16.carbs === phaseGoals16.carbs && reduced16.fat === phaseGoals16.fat,
+        "without Analytics, carbs/fat hold at their phase values instead of drifting to an un-retargeted guess");
+      ok(reduced16._unscored && reduced16._unscored.carbs === "energy too low to retarget carbs and fat coherently" &&
+          reduced16._unscored.fat === "energy too low to retarget carbs and fat coherently",
+        "without Analytics, carbs and fat drop out of scoring instead of silently contradicting the day's calorie plan");
+    } finally {
+      if (hadAnalytics) globalThis.Analytics = savedAnalytics;
+      else delete globalThis.Analytics;
+    }
+    ok(typeof globalThis.Analytics !== "undefined" && typeof globalThis.Analytics.retargetForKcal === "function",
+      "the real Analytics global is restored for every test after this block");
+  }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail ? 1 : 0);

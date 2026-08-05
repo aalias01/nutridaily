@@ -207,6 +207,162 @@ const Sync = (() => {
     return [...map.values()].sort((x, y) => String(x.id).localeCompare(String(y.id)));
   }
 
+  /**
+   * Day-intent presets (Slice 6 §12). LWW-by-id + deleted tombstones like
+   * personalFoods, plus a deterministic active cap of 5 applied at every
+   * merge/normalize so two full devices cannot brick Drive sync.
+   */
+  const DAY_PLAN_PRESET_ACTIVE_CAP = 5;
+
+  function normalizeDayPlanPreset(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const id = typeof raw.id === "string" ? raw.id.slice(0, 160) : "";
+    if (!id) return null;
+    const updatedAt = Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : 0;
+    const createdAt = Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : updatedAt;
+    const resetEpoch = safeGeneration(raw.resetEpoch);
+    const generation = Object.prototype.hasOwnProperty.call(raw, "resetEpoch") ? { resetEpoch } : {};
+    if (raw.deleted === true) {
+      return { id, deleted: true, updatedAt, createdAt, ...generation };
+    }
+    const intent = raw.intent === "fast" ? "fast" : "reduced";
+    const targetKcal = Number(raw.targetKcal);
+    const targetOk = intent === "fast"
+      ? targetKcal === 0
+      : Number.isFinite(targetKcal) && targetKcal >= 200 && targetKcal <= 6000;
+    if (!targetOk) return null;
+    if (intent === "fast" && raw.fastAcknowledged !== true) return null;
+    const label = typeof raw.label === "string" && raw.label.trim()
+      ? raw.label.trim().slice(0, 80)
+      : (intent === "fast" ? "Fast" : `${Math.round(targetKcal)} kcal`);
+    const out = {
+      id, label, intent, targetKcal, createdAt, updatedAt, ...generation,
+    };
+    if (intent === "fast") out.fastAcknowledged = true;
+    if (intent === "reduced" && targetKcal < 1200) out.veryLowCalorieAcknowledged = true;
+    const lastUsedAt = Number(raw.lastUsedAt);
+    if (Number.isFinite(lastUsedAt) && lastUsedAt >= 0) out.lastUsedAt = lastUsedAt;
+    return out;
+  }
+
+  function normalizeDayPlanPresets(list) {
+    const mapped = (list || []).map(normalizeDayPlanPreset).filter(Boolean);
+    const byId = new Map();
+    for (const p of mapped) {
+      const cur = byId.get(p.id);
+      if (!cur) {
+        byId.set(p.id, { picked: p, seen: [p] });
+        continue;
+      }
+      cur.seen.push(p);
+      cur.picked = lwwPick(cur.picked, p, "updatedAt", "deleted");
+    }
+    // lastUsedAt is usage telemetry: keep the max seen for the id even when
+    // LWW's updatedAt-tie stableText pick discards the fresher apply record.
+    const merged = [...byId.values()].map(({ picked, seen }) => {
+      if (!picked || picked.deleted) return picked;
+      let maxUsed = Number(picked.lastUsedAt) || 0;
+      for (const s of seen) {
+        const n = Number(s && s.lastUsedAt);
+        if (Number.isFinite(n) && n > maxUsed) maxUsed = n;
+      }
+      return maxUsed > 0 ? { ...picked, lastUsedAt: maxUsed } : picked;
+    }).filter(Boolean);
+    return enforceDayPlanPresetCap(merged);
+  }
+
+  /**
+   * Keep at most DAY_PLAN_PRESET_ACTIVE_CAP non-deleted presets. Winners are
+   * the most recently used, then most recently revised, then newest-created,
+   * then id — deterministic so every device converges. Losers become
+   * deleted tombstones so a later merge cannot reinstate them.
+   * When `now` is omitted, tombstone clocks are derived from the input so the
+   * merge is a pure function of its arguments (same winners, same bytes).
+   */
+  function enforceDayPlanPresetCap(list, now) {
+    const normalized = (list || []).map(normalizeDayPlanPreset).filter(Boolean);
+    const byId = new Map();
+    for (const p of normalized) {
+      const cur = byId.get(p.id);
+      if (!cur) {
+        byId.set(p.id, { picked: p, seen: [p] });
+        continue;
+      }
+      cur.seen.push(p);
+      cur.picked = lwwPick(cur.picked, p, "updatedAt", "deleted");
+    }
+    const all = [...byId.values()].map(({ picked, seen }) => {
+      if (!picked || picked.deleted) return picked;
+      let maxUsed = Number(picked.lastUsedAt) || 0;
+      for (const s of seen) {
+        const n = Number(s && s.lastUsedAt);
+        if (Number.isFinite(n) && n > maxUsed) maxUsed = n;
+      }
+      return maxUsed > 0 ? { ...picked, lastUsedAt: maxUsed } : picked;
+    }).filter(Boolean);
+    const active = all.filter((p) => !p.deleted);
+    if (active.length <= DAY_PLAN_PRESET_ACTIVE_CAP) {
+      return all.sort((x, y) => String(x.id).localeCompare(String(y.id)));
+    }
+    const ranked = active.slice().sort((a, b) =>
+      (Number(b.lastUsedAt) || 0) - (Number(a.lastUsedAt) || 0) ||
+      (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0) ||
+      (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0) ||
+      String(a.id).localeCompare(String(b.id))
+    );
+    const keep = new Set(ranked.slice(0, DAY_PLAN_PRESET_ACTIVE_CAP).map((p) => p.id));
+    // Prefer an injected clock; otherwise derive one from the input so two
+    // identical merges produce identical tombstone stamps.
+    const derived = Math.max(0, ...all.map((p) => Number(p.updatedAt) || 0));
+    const stamp = Number.isFinite(Number(now)) ? Number(now) : derived;
+    return all.map((p) => {
+      if (p.deleted || keep.has(p.id)) return p;
+      return {
+        id: p.id,
+        deleted: true,
+        updatedAt: Math.max(Number(p.updatedAt) || 0, stamp),
+        createdAt: Number(p.createdAt) || stamp,
+        ...(Object.prototype.hasOwnProperty.call(p, "resetEpoch")
+          ? { resetEpoch: safeGeneration(p.resetEpoch) }
+          : {}),
+      };
+    }).sort((x, y) => String(x.id).localeCompare(String(y.id)));
+  }
+
+  function mergeDayPlanPresets(a, b, now) {
+    // Do not go through mergePersonal: that LWW-picks the whole record and can
+    // discard a fresher lastUsedAt on an updatedAt tie (stableText tie-break
+    // is lexical, so "500" beats "1754…"). Keep max(lastUsedAt) on the survivor.
+    const left = Array.isArray(a) ? a : [];
+    const right = Array.isArray(b) ? b : [];
+    const byId = new Map();
+    for (const raw of [...left, ...right]) {
+      const p = normalizeDayPlanPreset(raw);
+      if (!p) continue;
+      const cur = byId.get(p.id);
+      if (!cur) {
+        byId.set(p.id, { picked: p, seen: [p] });
+        continue;
+      }
+      cur.seen.push(p);
+      cur.picked = lwwPick(cur.picked, p, "updatedAt", "deleted");
+    }
+    const merged = [...byId.values()].map(({ picked, seen }) => {
+      if (!picked || picked.deleted) return picked;
+      let maxUsed = Number(picked.lastUsedAt) || 0;
+      for (const s of seen) {
+        const n = Number(s && s.lastUsedAt);
+        if (Number.isFinite(n) && n > maxUsed) maxUsed = n;
+      }
+      return maxUsed > 0 ? { ...picked, lastUsedAt: maxUsed } : picked;
+    }).filter(Boolean);
+    return enforceDayPlanPresetCap(merged, now);
+  }
+
+  function activeDayPlanPresets(list) {
+    return normalizeDayPlanPresets(list).filter((p) => !p.deleted);
+  }
+
   function normalizeDayGoal(ov) {
     if (!ov || typeof ov !== "object") return null;
     const updatedAt = Number.isFinite(Number(ov.updatedAt)) ? Number(ov.updatedAt) : 0;
@@ -214,19 +370,54 @@ const Sync = (() => {
     const generation = Object.prototype.hasOwnProperty.call(ov, "resetEpoch") ? { resetEpoch } : {};
     if (ov.cleared) return { cleared: true, updatedAt, ...generation };
 
+    // Absent on every record generation that predates this feature; a missing
+    // intent is an ordinary planned day, not a fast nobody declared.
+    const intent = ov.intent === "fast" ? "fast" : "reduced";
+    const fastAcknowledged = ov.fastAcknowledged === true;
+    // A fast without its own acknowledgement is not a plan to preserve — it is
+    // indistinguishable from a corrupt or partially-written record.
+    if (intent === "fast" && !fastAcknowledged) return { cleared: true, updatedAt, ...generation };
+
     // Current records freeze both sides of the plan. Whitelist only the
     // calorie-plan fields so arbitrary imported/synced properties never ride
     // along with settings data.
     const targetKcal = Number(ov.targetKcal);
     const baseKcal = Number(ov.baseKcal);
-    if (Number.isFinite(targetKcal) && targetKcal >= 800 && targetKcal <= 6000 &&
+    // targetKcal is a planned day; baseKcal is a frozen phase target and keeps
+    // its own unrelated floor — see Phases.isPlannedKcal for the {0} ∪
+    // [200, 6000] vs [800, 6000] asymmetry this checks (kept as a literal
+    // here so this module still loads standalone).
+    const targetKcalValid = Number.isFinite(targetKcal) &&
+      (targetKcal === 0 ? intent === "fast" : targetKcal >= 200 && targetKcal <= 6000);
+    if (targetKcalValid &&
         Number.isFinite(baseKcal) && baseKcal >= 800 && baseKcal <= 6000) {
+      // targetKcal is 0 iff intent === "fast". A nonzero target under a fast
+      // declaration is an incoherent combination, not a plan to preserve.
+      if (intent === "fast" && targetKcal !== 0) return { cleared: true, updatedAt, ...generation };
       const locked = ov.locked === true || (typeof ov.lockedByEventId === "string" && ov.lockedByEventId);
       if (targetKcal === baseKcal && !locked) return { cleared: true, updatedAt, ...generation };
+      const ack = ov.veryLowCalorieAcknowledged === true;
+      // A record does not always originate from a compliant client — a legacy
+      // delta bump can resolve to a live very-low target after a phase
+      // revision, producing a plan no one ever acknowledged. Excludes a locked
+      // no-op (targetKcal === baseKcal, which
+      // only reaches this line when locked — the unlocked case already
+      // returned above): that is a healed restatement of the phase's own
+      // target, not a plan, and must not need an acknowledgement it was never
+      // offered the chance to give.
+      if (targetKcal !== baseKcal && targetKcal > 0 && targetKcal < 1200 && !ack) {
+        return { cleared: true, updatedAt, ...generation };
+      }
       const out = { targetKcal, baseKcal, updatedAt, ...generation };
       const plannedAt = Number(ov.plannedAt);
       if (Number.isFinite(plannedAt) && plannedAt >= 0) out.plannedAt = plannedAt;
-      if (ov.veryLowCalorieAcknowledged === true) out.veryLowCalorieAcknowledged = true;
+      if (ack) out.veryLowCalorieAcknowledged = true;
+      if (intent === "fast") {
+        out.intent = "fast";
+        out.fastAcknowledged = true;
+        // Boolean flag, never a clock — stampMap keeps ["updatedAt","plannedAt"] only.
+        if (ov.declaredAfterDay === true) out.declaredAfterDay = true;
+      }
       if (locked) {
         out.locked = true;
         if (typeof ov.lockedByEventId === "string") out.lockedByEventId = ov.lockedByEventId.slice(0, 160);
@@ -234,6 +425,9 @@ const Sync = (() => {
       return out;
     }
 
+    // A declared fast only ever takes the frozen modern shape above — a delta
+    // bump or a legacy absolute target cannot express a zero-calorie day
+    // coherently, so intent never survives through either legacy branch below.
     if (ov.bumps && typeof ov.bumps === "object") {
       const raw = ov.bumps.kcal;
       const kcal = raw == null || raw === "" ? NaN : Number(raw);
@@ -251,13 +445,20 @@ const Sync = (() => {
 
     // Pre-bump documents stored absolute daily goals. Preserve only absolute
     // kcal until Phases can convert it against that day's historical target.
+    // Legacy records predate the fast concept and can never be 0.
     const rawKcal = ov.kcal;
     const kcal = rawKcal == null || rawKcal === "" ? NaN : Number(rawKcal);
-    if (Number.isFinite(kcal) && kcal >= 800 && kcal <= 6000) {
+    const legacyAck = ov.veryLowCalorieAcknowledged === true;
+    // The floor here dropped 800 → 200 alongside the rest of the widening,
+    // but a legacy record does not always originate from a compliant client —
+    // sync must not be strictly weaker than the import path for an identical
+    // record (Part VIII.2).
+    if (Number.isFinite(kcal) && kcal >= 200 && kcal <= 6000 &&
+        (kcal >= 1200 || legacyAck)) {
       const out = { kcal, updatedAt, ...generation };
       const plannedAt = Number(ov.plannedAt);
       if (Number.isFinite(plannedAt) && plannedAt >= 0) out.plannedAt = plannedAt;
-      if (ov.veryLowCalorieAcknowledged === true) out.veryLowCalorieAcknowledged = true;
+      if (legacyAck) out.veryLowCalorieAcknowledged = true;
       return out;
     }
     return { cleared: true, updatedAt, ...generation };
@@ -403,6 +604,9 @@ const Sync = (() => {
       personalFoods: (d.personalFoods || []).filter((record) =>
         record && safeGeneration(record.resetEpoch) >= epoch
       ),
+      dayPlanPresets: (d.dayPlanPresets || []).filter((record) =>
+        record && safeGeneration(record.resetEpoch) >= epoch
+      ),
       // During raw rollout migration, preserve the exact day-goal payload for
       // the App's strict inbound normalizer. Generation stamping must not
       // accidentally sanitize an otherwise-invalid outbound candidate.
@@ -451,14 +655,36 @@ const Sync = (() => {
     if (!record || record.cleared) return { targetKcal: baseKcal, baseKcal, source: record };
     let targetKcal = Number(record.targetKcal);
     let frozenBase = Number(record.baseKcal);
-    if (!(Number.isFinite(targetKcal) && Number.isFinite(frozenBase))) {
+    // The modern shape (both finite here) already passed normalizeDayGoal's
+    // own {0} ∪ [200, 6000] + ack-ladder checks and can express intent. The
+    // fallback below resolves a delta bump or legacy absolute value against a
+    // base for the first time — it cannot express intent at all, so 0 here
+    // would be an arithmetic accident, not a declaration (Part VII.3: this
+    // was a laundering path into a fully unscored day nobody ever declared).
+    const isModernShape = Number.isFinite(targetKcal) && Number.isFinite(frozenBase);
+    if (!isModernShape) {
       frozenBase = baseKcal;
       if (record.bumps && Number.isFinite(Number(record.bumps.kcal))) {
         targetKcal = frozenBase + Number(record.bumps.kcal);
       } else if (Number.isFinite(Number(record.kcal))) targetKcal = Number(record.kcal);
     }
-    if (!Number.isFinite(targetKcal) || targetKcal < 800 || targetKcal > 6000 ||
+    // targetKcal is a planned day; frozenBase is a frozen phase target and
+    // keeps its own unrelated floor — see Phases.isPlannedKcal for the
+    // asymmetry. The fallback path never gets the {0} ∪ … allowance (VII.3).
+    const targetKcalValid = Number.isFinite(targetKcal) &&
+      (isModernShape
+        ? (targetKcal === 0 || (targetKcal >= 200 && targetKcal <= 6000))
+        : (targetKcal >= 200 && targetKcal <= 6000));
+    if (!targetKcalValid ||
         !Number.isFinite(frozenBase) || frozenBase < 800 || frozenBase > 6000) {
+      return { targetKcal: baseKcal, baseKcal, source: record };
+    }
+    // The very-low acknowledgement, applied to a delta-resolved target now
+    // that a base is finally available: the modern shape was already checked by
+    // normalizeDayGoal, but a delta bump only becomes a concrete number here,
+    // against *today's* historical base — a phase revision since the bump was
+    // written can walk it into very-low territory no one ever acknowledged.
+    if (!isModernShape && targetKcal > 0 && targetKcal < 1200 && record.veryLowCalorieAcknowledged !== true) {
       return { targetKcal: baseKcal, baseKcal, source: record };
     }
     return { targetKcal, baseKcal: frozenBase, source: record };
@@ -478,6 +704,14 @@ const Sync = (() => {
       };
       if (record.plannedAt != null) common.plannedAt = record.plannedAt;
       if (record.veryLowCalorieAcknowledged === true) common.veryLowCalorieAcknowledged = true;
+      // normalizeDayGoal never lets intent survive without its acknowledgement
+      // (a bare "fast" tombstones), so this read is already safe — but check
+      // both anyway rather than trust a single field to carry the declaration.
+      if (record.intent === "fast" && record.fastAcknowledged === true) {
+        common.intent = "fast";
+        common.fastAcknowledged = true;
+        if (record.declaredAfterDay === true) common.declaredAfterDay = true;
+      }
       if (record.bumps && frozen.targetKcal !== frozen.baseKcal && !record.locked) {
         // Valid legacy relative plans remain relative until logging begins;
         // their resolved range was checked above. Absolute legacy plans migrate
@@ -563,6 +797,9 @@ const Sync = (() => {
     for (const [index, food] of (doc.personalFoods || []).entries()) {
       requireEpoch(food, `personalFoods[${index}].resetEpoch`);
     }
+    for (const [index, preset] of (doc.dayPlanPresets || []).entries()) {
+      requireEpoch(preset, `dayPlanPresets[${index}].resetEpoch`);
+    }
     for (const key of ["dayGoals", "dayPlans", "gapDrafts", "weights"]) {
       for (const [id, record] of Object.entries(doc[key] || {})) {
         requireEpoch(record, `${key}.${id}.resetEpoch`);
@@ -622,6 +859,10 @@ const Sync = (() => {
     out.personalFoods = (Array.isArray(out.personalFoods) ? out.personalFoods : []).map((food) => ({
       ...food,
       resetEpoch: legacyRecordGeneration(food, epoch, ["updatedAt", "createdAt"]),
+    }));
+    out.dayPlanPresets = (Array.isArray(out.dayPlanPresets) ? out.dayPlanPresets : []).map((preset) => ({
+      ...preset,
+      resetEpoch: legacyRecordGeneration(preset, epoch, ["updatedAt", "createdAt", "lastUsedAt"]),
     }));
     const stampMap = (map, clockKeys) => {
       const stamped = Object.create(null);
@@ -720,8 +961,22 @@ const Sync = (() => {
       // redefine an already-logged day.
       const root = rows[0];
       const rootValue = root && root.dayGoalLock;
+      // See Phases.isPlannedKcal — targetKcal vs baseKcal asymmetry, kept as
+      // a literal so this module still loads standalone. A 0 target is only
+      // ever a real declaration, never bare arithmetic — admitting it
+      // unconditionally let an undeclared zero (e.g. a pre-fix reimport of a
+      // fast, Part IX.1) win here even though eventLock outranks the
+      // candidate path below, silently overwriting an intact declaration
+      // still sitting in dayGoals with a full-miss-against-phase-target
+      // record. An undeclared zero must not be a lock at all, so this falls
+      // through to the candidate path and recovers the real declaration.
+      const rootLockTargetKcal = rootValue ? Number(rootValue.targetKcal) : NaN;
+      const rootLockDeclaredFast = !!rootValue &&
+        rootValue.intent === "fast" && rootValue.fastAcknowledged === true;
       const eventLock = rootValue &&
-        Number(rootValue.targetKcal) >= 800 && Number(rootValue.targetKcal) <= 6000 &&
+        (rootLockTargetKcal === 0
+          ? rootLockDeclaredFast
+          : (rootLockTargetKcal >= 200 && rootLockTargetKcal <= 6000)) &&
         Number(rootValue.baseKcal) >= 800 && Number(rootValue.baseKcal) <= 6000
         ? root
         : null;
@@ -731,11 +986,17 @@ const Sync = (() => {
       let frozenBase = baseKcal;
       let plannedAt = 0;
       let acknowledged = false;
+      let intent = "reduced";
+      let fastAcknowledged = false;
+      let declaredAfterDay = false;
       if (eventLock) {
         targetKcal = Number(eventLock.dayGoalLock.targetKcal);
         frozenBase = Number(eventLock.dayGoalLock.baseKcal);
         plannedAt = Number(eventLock.dayGoalLock.plannedAt) || 0;
         acknowledged = eventLock.dayGoalLock.veryLowCalorieAcknowledged === true;
+        intent = eventLock.dayGoalLock.intent === "fast" ? "fast" : "reduced";
+        fastAcknowledged = eventLock.dayGoalLock.fastAcknowledged === true;
+        declaredAfterDay = eventLock.dayGoalLock.declaredAfterDay === true;
       } else {
         const candidates = candidatesByDay.get(day) || [];
         const planClock = (record) => Number(
@@ -758,6 +1019,9 @@ const Sync = (() => {
           frozenBase = frozen.baseKcal;
           plannedAt = Number(selected.plannedAt) || 0;
           acknowledged = selected.veryLowCalorieAcknowledged === true;
+          intent = selected.intent === "fast" ? "fast" : "reduced";
+          fastAcknowledged = selected.fastAcknowledged === true;
+          declaredAfterDay = selected.declaredAfterDay === true;
         }
       }
       out[day] = {
@@ -770,6 +1034,15 @@ const Sync = (() => {
       };
       if (plannedAt) out[day].plannedAt = plannedAt;
       if (acknowledged) out[day].veryLowCalorieAcknowledged = true;
+      // Sourced the same way `acknowledged` is: from whichever of eventLock or
+      // selected actually won above. A fast can only reach either source
+      // already carrying its own acknowledgement (Part VIII.1), so this never
+      // records a declaration without the flag that makes it real.
+      if (intent === "fast" && fastAcknowledged) {
+        out[day].intent = "fast";
+        out[day].fastAcknowledged = true;
+        if (declaredAfterDay) out[day].declaredAfterDay = true;
+      }
     }
     return out;
   }
@@ -789,6 +1062,7 @@ const Sync = (() => {
     const R = filterDocGeneration(migratedRemote, resetAt);
     const events = mergeEvents(L.events, R.events);
     const personalFoods = mergePersonal(L.personalFoods, R.personalFoods);
+    const dayPlanPresets = mergeDayPlanPresets(L.dayPlanPresets, R.dayPlanPresets);
     const dayPlans = mergeDayPlans(L.dayPlans, R.dayPlans);
     const gapDrafts = mergeDayPlans(L.gapDrafts, R.gapDrafts);
     const phases = mergePhases(L.phases, R.phases, events);
@@ -844,6 +1118,7 @@ const Sync = (() => {
       resetAt,
       events,
       personalFoods,
+      dayPlanPresets,
       dayGoals,
       dayPlans,
       gapDrafts,
@@ -888,6 +1163,7 @@ const Sync = (() => {
       resetAt: doc.resetAt || 0,
       events: doc.events || [],
       personalFoods: doc.personalFoods || [],
+      dayPlanPresets: doc.dayPlanPresets || [],
       // Keep the raw representation in the comparison: legacy forbidden
       // fields must differ from the sanitized merged document so sync writes
       // the cleanup back to Drive instead of treating it as semantically equal.
@@ -914,6 +1190,7 @@ const Sync = (() => {
       resetAt: getResetAt(),
       events: Ledger.allEvents(),
       personalFoods: deps.getPersonal(),
+      dayPlanPresets: deps.getDayPlanPresets ? deps.getDayPlanPresets() : [],
       // Deliberately raw until the same canonical inbound normalizer accepts it.
       dayGoals: deps.getDayGoals ? deps.getDayGoals() : {},
       dayPlans: deps.getDayPlans ? deps.getDayPlans() : {},
@@ -936,6 +1213,7 @@ const Sync = (() => {
     return {
       events: detached(Ledger.allEvents()),
       personalFoods: detached(deps.getPersonal()),
+      dayPlanPresets: deps.getDayPlanPresets ? detached(deps.getDayPlanPresets()) : undefined,
       goals: detached(deps.getGoals()),
       goalsUpdatedAt: deps.getGoalsUpdatedAt ? deps.getGoalsUpdatedAt() : 0,
       goalsResetEpoch: deps.getGoalsResetEpoch ? deps.getGoalsResetEpoch() : undefined,
@@ -960,6 +1238,9 @@ const Sync = (() => {
     };
     restore(() => Ledger.replaceAll(snapshot.events || []));
     restore(() => deps.setPersonal(detached(snapshot.personalFoods || [])));
+    if (deps.setDayPlanPresets && snapshot.dayPlanPresets !== undefined) {
+      restore(() => deps.setDayPlanPresets(detached(snapshot.dayPlanPresets)));
+    }
     restore(() => deps.setGoals(
       detached(snapshot.goals || {}), snapshot.goalsUpdatedAt || 0, snapshot.goalsResetEpoch
     ));
@@ -1013,6 +1294,9 @@ const Sync = (() => {
       const priorResetAt = Number(snapshot.resetRaw || 0) || 0;
       Ledger.replaceAll(detached(doc.events || []));
       deps.setPersonal(detached(doc.personalFoods || []));
+      if (deps.setDayPlanPresets && Array.isArray(doc.dayPlanPresets)) {
+        deps.setDayPlanPresets(detached(doc.dayPlanPresets));
+      }
       if (doc.goals) deps.setGoals(
         detached(doc.goals), doc.goalsUpdatedAt || 0, doc.goalsResetEpoch || doc.resetAt || 0
       );
@@ -1113,7 +1397,7 @@ const Sync = (() => {
           version: DOC_VERSION,
           generationSchemaVersion: GENERATION_SCHEMA_VERSION,
           resetAt: safeGeneration(before.resetAt),
-          events: [], personalFoods: [], dayGoals: {}, dayPlans: {}, gapDrafts: {},
+          events: [], personalFoods: [], dayPlanPresets: [], dayGoals: {}, dayPlans: {}, gapDrafts: {},
           phases: [], weights: {}, profile: null, goals: null,
           goalsUpdatedAt: 0,
           goalsResetEpoch: safeGeneration(before.resetAt),
@@ -1332,7 +1616,9 @@ const Sync = (() => {
 
   return {
     init, connect, finishConnect, disconnect, resume, schedulePush, fullSync, state,
-    mergeDocs, mergeEvents, mergePersonal, normalizeDayGoal, normalizeDayGoals,
+    mergeDocs, mergeEvents, mergePersonal, mergeDayPlanPresets,
+    normalizeDayGoal, normalizeDayGoals, normalizeDayPlanPreset, normalizeDayPlanPresets,
+    enforceDayPlanPresetCap, activeDayPlanPresets, DAY_PLAN_PRESET_ACTIVE_CAP,
     mergeDayGoals, mergeDayPlans, mergePhases, mergeWeights, mergeProfiles,
     activeDayGoals, markReset, getResetAt, fingerprint, canonicalizeDoc,
     validateDocClocks, validateDocGenerations, migrateLegacyGenerationDoc,

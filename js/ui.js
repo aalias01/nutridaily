@@ -204,17 +204,139 @@ const UI = (() => {
     return _sheetStack.length ? _sheetStack[_sheetStack.length - 1] : null;
   }
 
-  function setDayLabel(dayKey, isToday) {
+  function setDayLabel(dayKey, isToday, opts) {
     const d = new Date(dayKey + "T12:00:00");
     const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     const btn = $("#day-label");
     btn.textContent = isToday ? `${label} · today` : `${label} · tap for today`;
     btn.classList.toggle("is-today", !!isToday);
-    $("#btn-day-next").disabled = isToday;
+    // Default remains today-only; callers that allow §10 plan-ahead pass
+    // disableNext when viewDay has reached tomorrow.
+    const disableNext = opts && Object.prototype.hasOwnProperty.call(opts, "disableNext")
+      ? !!opts.disableNext
+      : !!isToday;
+    $("#btn-day-next").disabled = disableNext;
   }
 
-  function updateHUD(totals, goals) {
-    const bumps = goals && goals._bumps;
+  function updateHUD(totals, goals, opts) {
+    // A declared fast that actually recorded food scores against the phase
+    // targets, not the fast declaration (see Phases.effectiveGoals) — reading
+    // goals._unscored directly here, as this used to, cannot see that: it
+    // would keep showing "not scored today" on every macro while Insights
+    // (which calls the same reconciliation) scores the day normally. Route
+    // through the one shared implementation so the two tabs cannot disagree.
+    const resolvedGoals = typeof Phases !== "undefined" ? Phases.effectiveGoals(totals, goals) : goals;
+    const bumps = resolvedGoals && resolvedGoals._bumps;
+    const unscored = (resolvedGoals && resolvedGoals._unscored) || null;
+    const o = opts || {};
+    const viewDay = o.viewDay || null;
+    const todayKey = o.todayKey || (typeof Ledger !== "undefined" && Ledger.todayKey
+      ? Ledger.todayKey()
+      : null);
+    const hud = $("#hud");
+    const fastingRoot = $("#hud-fasting");
+    const declaredFast = !!(goals && goals._bumps && goals._bumps.intent === "fast");
+    const ateOnAFast = declaredFast && totals && totals.count > 0 &&
+      Number(totals.kcal && totals.kcal.mean) > 0;
+    // Honoured fast (including empty day and black-coffee-only): replace the
+    // nutrient HUD. Food with calories reverts to the ordinary bars.
+    const showFasting = declaredFast && !ateOnAFast;
+    if (hud) hud.classList.toggle("is-fasting", showFasting);
+    if (fastingRoot) {
+      fastingRoot.hidden = !showFasting;
+      if (showFasting) {
+        const meta = $("#hud-fasting-meta");
+        if (meta) {
+          const plannedAt = Number(goals && goals._bumps && goals._bumps.plannedAt);
+          const declared = Number.isFinite(plannedAt) && plannedAt > 0
+            ? new Date(plannedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+            : null;
+          // Hours elapsed of the *fast day*, not of the declaration: clamp to
+          // start-of-viewDay, and only render while viewing today (past days
+          // would tick forever as "192 h in").
+          let elapsed = "";
+          const isToday = !!(viewDay && todayKey && viewDay === todayKey);
+          if (isToday && viewDay && /^\d{4}-\d{2}-\d{2}$/.test(String(viewDay))) {
+            const dayStart = new Date(String(viewDay) + "T12:00:00");
+            dayStart.setHours(0, 0, 0, 0);
+            const startMs = dayStart.getTime();
+            const endMs = typeof Phases !== "undefined" && typeof Phases.endOfLocalDayMs === "function"
+              ? Phases.endOfLocalDayMs(viewDay)
+              : (startMs + 24 * 3600000);
+            const clockStart = Number.isFinite(plannedAt) && plannedAt > startMs
+              ? plannedAt
+              : startMs;
+            const now = Math.min(Date.now(), Number.isFinite(endMs) ? endMs : Date.now());
+            const hrs = Math.max(0, (now - clockStart) / 3600000);
+            if (hrs > 0 || Number.isFinite(plannedAt)) {
+              elapsed = hrs < 1
+                ? ` · ${Math.max(1, Math.round(hrs * 60))} min in`
+                : ` · ${Math.floor(hrs)} h in`;
+            }
+          }
+          meta.textContent = declared
+            ? `Declared ${declared}${elapsed}`
+            : `Declared fast${elapsed}`;
+        }
+        // Keep nutrient cells in the empty-day dash state. The fasting panel
+        // replaces them visually, but direct callers (and a later ordinary
+        // day) must not read leftover "not scored" / coverage text.
+        if ($("#v-kcal-big")) $("#v-kcal-big").textContent = "0";
+        if ($("#kcal-range")) $("#kcal-range").textContent = "—";
+        for (const id of ["kcal", "p", "c", "f", "fb", "sodium", "potassium"]) {
+          const val = $(`#v-${id}`);
+          if (val) val.textContent = "—";
+          const fill = $(`#f-${id}`);
+          if (fill) {
+            fill.style.width = "0%";
+            fill.classList.remove("near", "over");
+          }
+        }
+        const nakLine = $("#v-nak");
+        if (nakLine) {
+          nakLine.hidden = false;
+          nakLine.className = "nak-line small";
+          nakLine.textContent = "—";
+        }
+        const naLine = $("#v-na");
+        if (naLine) {
+          naLine.hidden = true;
+          naLine.textContent = "";
+        }
+      }
+    }
+    if (showFasting) return;
+    // A plan can make a target arithmetically incoherent (see Phases.goalsForDay
+    // / _unscored). Drawing a bar against a target that will not be graded
+    // reads as a bug — the same over/under-vs-Insights confusion the "near"
+    // HUD state exists to prevent for banded targets. This is the un-banded
+    // version of that fix: no bar, no target line, just an honest label.
+    const notScored = (id, mean, unit, coverage) => {
+      const fill = $(`#f-${id}`), val = $(`#v-${id}`);
+      if (!fill || !val) return null;
+      const bar = fill.parentElement;
+      fill.style.width = "0%";
+      fill.classList.remove("near", "over");
+      val.classList.remove("near", "over");
+      if (bar && bar.classList.contains("bar")) {
+        bar.classList.remove("warn", "warn-near", "warn-over");
+        bar.title = "Not scored today — see Insights for why.";
+      }
+      // Same empty-day guard as incompleteMineral: with nothing logged at
+      // all, "0 mg* · not scored today" plus a "0% covered" footnote reads as
+      // a measurement that came back empty, not as the absence of one.
+      if (!totals.count) { val.textContent = "—"; return null; }
+      // A plan exemption does not make a partial known-subtotal complete —
+      // caller passes `coverage` only when the mineral is also incomplete, so
+      // the value keeps its asterisk and feeds the same footnote
+      // incompleteMineral does, instead of quietly dropping both.
+      const partial = Number.isFinite(coverage);
+      const mark = partial ? "*" : "";
+      val.textContent = unit
+        ? `${fmt(mean)} ${unit}${mark} · not scored today`
+        : `${fmt(mean)}${mark} · not scored today`;
+      return partial ? Math.round(coverage * 100) : null;
+    };
     const goalLabel = (resolved, key, unit) => {
       const g = Number(resolved) || 0;
       if (!g) return "";
@@ -251,14 +373,18 @@ const UI = (() => {
     const lo = Math.max(0, Math.round(totals.kcal.mean - totals.kcal.sd));
     const hi = Math.round(totals.kcal.mean + totals.kcal.sd);
     const bumpNote = bumps && bumps.kcal
-      ? ` · planned ${fmt(goals.kcal)} kcal (${bumps.kcal > 0 ? "+" : ""}${fmt(bumps.kcal)})`
+      ? ` · planned ${fmt(resolvedGoals.kcal)} kcal (${bumps.kcal > 0 ? "+" : ""}${fmt(bumps.kcal)})`
       : "";
     $("#kcal-range").textContent = totals.count ? `likely ${fmt(lo)}–${fmt(hi)}${bumpNote}` : "—";
-    set("kcal", totals.kcal.mean, goals.kcal, "kcal", "");
-    set("p", totals.p.mean, goals.protein, "protein", "g");
-    set("c", totals.c.mean, goals.carbs, "carbs", "g");
-    set("f", totals.f.mean, goals.fat, "fat", "g");
-    set("fb", totals.fb.mean, goals.fiber, "fiber", "g");
+    set("kcal", totals.kcal.mean, resolvedGoals.kcal, "kcal", "");
+    if (unscored && unscored.protein) notScored("p", totals.p.mean, "g");
+    else set("p", totals.p.mean, resolvedGoals.protein, "protein", "g");
+    if (unscored && unscored.carbs) notScored("c", totals.c.mean, "g");
+    else set("c", totals.c.mean, resolvedGoals.carbs, "carbs", "g");
+    if (unscored && unscored.fat) notScored("f", totals.f.mean, "g");
+    else set("f", totals.f.mean, resolvedGoals.fat, "fat", "g");
+    if (unscored && unscored.fiber) notScored("fb", totals.fb.mean, "g");
+    else set("fb", totals.fb.mean, resolvedGoals.fiber, "fiber", "g");
     // The full "known subtotal · N% covered · incomplete" sentence used to
     // live inline in the value column, where it wrapped onto 2-3 lines and
     // threw off the whole card's row heights. It now collapses to a short
@@ -282,7 +408,9 @@ const UI = (() => {
     };
     const sodiumCovered = typeof Phases !== "undefined" && Phases.sodiumCovered(totals);
     let naFootPct = null;
-    if (sodiumCovered) set("sodium", totals.na.mean, goals.sodium, "sodium", "mg");
+    if (unscored && unscored.sodium) {
+      naFootPct = notScored("sodium", totals.na.mean, "mg", sodiumCovered ? null : totals.naCoverage);
+    } else if (sodiumCovered) set("sodium", totals.na.mean, resolvedGoals.sodium, "sodium", "mg");
     else naFootPct = incompleteMineral("sodium", totals.na.mean, totals.naCoverage);
 
     // Absolute sodium and potassium each use their own coverage. The ratio is
@@ -293,25 +421,36 @@ const UI = (() => {
     const kVal = $("#v-potassium");
     let kFootPct = null;
     if (kFill && kVal) {
-      if (potassiumCovered) {
-        set("potassium", totals.k.mean, goals.potassium, "potassium", "mg");
+      if (unscored && unscored.potassium) {
+        kFootPct = notScored("potassium", totals.k.mean, "mg", potassiumCovered ? null : totals.kCoverage);
+      } else if (potassiumCovered) {
+        set("potassium", totals.k.mean, resolvedGoals.potassium, "potassium", "mg");
       } else {
         kFootPct = incompleteMineral("potassium", totals.k.mean, totals.kCoverage);
       }
     }
     const nakLine = $("#v-nak");
     if (nakLine) {
-      const paired = jointCovered ? Phases.pairedMinerals(totals) : null;
-      const ratio = paired ? Phases.naKRatio(paired.na, paired.k) : null;
-      if (ratio == null) {
-        nakLine.hidden = true;
-        nakLine.textContent = "";
-      } else {
-        const target = Number(goals.naK) || 1.0;
-        const status = Phases.classify(ratio, target, Phases.BANDS.naK);
+      if (unscored && unscored.naK) {
         nakLine.hidden = false;
-        nakLine.className = `nak-line small ${status === "over" ? "over" : "ok"}`;
-        nakLine.textContent = `Na:K ${ratio.toFixed(2)} (target ≤ ${target.toFixed(1)})`;
+        nakLine.className = "nak-line small";
+        // Same empty-day guard as notScored()/incompleteMineral above: with
+        // nothing logged at all, "Na:K — not scored today" is the one row on
+        // an empty fast that does not read a plain dash like its neighbours.
+        nakLine.textContent = totals.count ? "Na:K — not scored today" : "—";
+      } else {
+        const paired = jointCovered ? Phases.pairedMinerals(totals) : null;
+        const ratio = paired ? Phases.naKRatio(paired.na, paired.k) : null;
+        if (ratio == null) {
+          nakLine.hidden = true;
+          nakLine.textContent = "";
+        } else {
+          const target = Number(resolvedGoals.naK) || 1.0;
+          const status = Phases.classify(ratio, target, Phases.BANDS.naK);
+          nakLine.hidden = false;
+          nakLine.className = `nak-line small ${status === "over" ? "over" : "ok"}`;
+          nakLine.textContent = `Na:K ${ratio.toFixed(2)} (target ≤ ${target.toFixed(1)})`;
+        }
       }
     }
     const naLine = $("#v-na");
@@ -939,8 +1078,15 @@ const UI = (() => {
     return Phases.BANDS[key] || Phases.BANDS.kcal;
   }
 
-  /** @returns {"hit"|"under"|"over"|"none"} */
-  function statusFor(key, value, goal) {
+  /**
+   * @param {boolean} [unscored] true when the plan exempted this cell that
+   *   day (goals._unscored[key]) — Today already says "not scored today" for
+   *   the same cell, so this must never independently reach for a band
+   *   verdict, or two tabs make opposite claims about the same day (Part X.2).
+   * @returns {"hit"|"under"|"over"|"none"|"exempt"}
+   */
+  function statusFor(key, value, goal, unscored) {
+    if (unscored) return "exempt";
     const band = bandFor(key);
     if (!band || !Number.isFinite(value) || !goal) return "none";
     const s = Phases.classify(value, goal, band);
@@ -1186,7 +1332,7 @@ const UI = (() => {
 
     const s = ctx.score;
     const kcalAvg = Analytics.mean(logged.map((d) => d.kcal));
-    const kcalGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).kcal));
+    const kcalGoal = Analytics.mean(ctx.days.map((d) => Analytics.phaseKcalOf(d)));
     const rate = Analytics.weightRate(ctx.trend);
     const cons = ctx.consistency;
 
@@ -1274,9 +1420,13 @@ const UI = (() => {
     const meta = nutMeta(ctx.nutrient);
     const bt = bandText(ctx.nutrient);
     const rows = series.map((p, i) => {
+      const cellStatus = statusFor(ctx.nutrient, p.value, p.goal, p.unscored);
       const status = !p.logged || !Number.isFinite(p.value)
         ? "Not logged"
-        : (bt[statusFor(ctx.nutrient, p.value, p.goal)] || "Logged");
+        // A plan exemption is not a band verdict — Today already says "not
+        // scored today" for the same cell, so this row must say the same
+        // thing rather than reaching for under/over/hit (Part X.2).
+        : cellStatus === "exempt" ? "Not scored" : (bt[cellStatus] || "Logged");
       const period = weekly
         ? `<span>${esc(p.sub || p.key)}</span>`
         : chartDayButton(p.key, p.sub || p.label || p.key);
@@ -1324,16 +1474,31 @@ const UI = (() => {
           logged: w.loggedDays > 0,
           sub: `${w.rangeLabel} · ${w.loggedDays}/${w.days} logged`,
           partial: w.partial,
+          // Only a week where every logged day was exempt reads as a plan
+          // exemption here — a partially-exempt week still carries real
+          // evidence for the nutrient and keeps its band verdict (Part X.2).
+          unscored: w.loggedDays > 0 && w.exemptDays === w.loggedDays,
         }))
-      : ctx.days.map((d) => ({
-          key: d.day,
-          label: d.day.slice(5),
-          value: d.logged ? d[ctx.nutrient] : null,
-          goal: (d.goals || {})[ctx.nutrient] || 0,
-          logged: d.logged,
-          sub: typeof Phases !== "undefined" ? Phases.shortDate(d.day) : d.day,
-          partial: false,
-        }));
+      : ctx.days.map((d) => {
+          // A declared fast that actually recorded food reverts to an
+          // ordinary day (Phases.effectiveGoals, Part VIII.5) — reading
+          // d.goals._unscored raw here would still call it exempt after the
+          // data reverted it, disagreeing with Insights' own scoring and
+          // with Today (Part X.2).
+          const resolved = (typeof Phases !== "undefined" && typeof Analytics !== "undefined")
+            ? Phases.effectiveGoals(Analytics.toTotalsLike(d), d.goals || {})
+            : (d.goals || {});
+          return {
+            key: d.day,
+            label: d.day.slice(5),
+            value: d.logged ? d[ctx.nutrient] : null,
+            goal: (d.goals || {})[ctx.nutrient] || 0,
+            logged: d.logged,
+            sub: typeof Phases !== "undefined" ? Phases.shortDate(d.day) : d.day,
+            partial: false,
+            unscored: d.logged && !!(resolved && resolved._unscored && resolved._unscored[ctx.nutrient]),
+          };
+        });
 
     const roll = weekly ? [] : Analytics.rollingMean(series.map((p) => p.value), 7, 3);
     const h = 190;
@@ -1502,7 +1667,7 @@ const UI = (() => {
     const hasPartial = !!(partial && partial.flagged && partial.flagged.length);
     const eligibility = ctx.targetEligibility || { canApply: true, message: "" };
     const allowApply = !!t.actionable && !hasPartial && eligibility.canApply !== false;
-    const kcalGoal = Analytics.mean(ctx.days.map((d) => (d.goals || {}).kcal));
+    const kcalGoal = Analytics.mean(ctx.days.map((d) => Analytics.phaseKcalOf(d)));
 
     if (t.tdee == null) {
       root.innerHTML = `
@@ -1543,7 +1708,7 @@ const UI = (() => {
     root.innerHTML = `
       <div class="card-head-row"><b>Energy expenditure</b><span class="conf conf-${esc(t.confidence)}">${esc(confLabel)}</span></div>
       <div class="tdee-big">${fmt(t.tdee)}<span class="tdee-unit"> kcal/day${esc(margin)}</span></div>
-      <p class="muted small">From ${t.loggedDays} logged days and ${t.weighIns} weigh-ins over ${t.spanDays} days:
+      <p class="muted small">From ${t.loggedDays} eating day${t.loggedDays === 1 ? "" : "s"}${t.fastedDays ? ` and ${t.fastedDays} declared fast${t.fastedDays === 1 ? "" : "s"} (counted as 0 kcal)` : ""} and ${t.weighIns} weigh-ins over ${t.spanDays} days:
         you ate ${fmt(t.intakeAvg)} kcal/day while ${esc(dir)} ${Math.abs(perWeek).toFixed(2)} ${esc(ctx.weightUnit)}/week.</p>
       <div class="rate-table">
         <div class="rate-head muted small">To move at…</div>
@@ -1589,7 +1754,7 @@ const UI = (() => {
     if (calls.over) bits.push(`<p class="callout over">${esc(calls.over)}</p>`);
     if (bal) {
       const sign = bal.sum >= 0 ? "+" : "";
-      bits.push(`<p class="muted small">Cumulative vs calorie target: ${sign}${fmt(bal.sum)} kcal across ${bal.n} days (≈ ${sign}${(bal.sum / 7700).toFixed(2)} kg).</p>`);
+      bits.push(`<p class="muted small">Cumulative vs phase calorie target: ${sign}${fmt(bal.sum)} kcal across ${bal.n} days (≈ ${sign}${(bal.sum / 7700).toFixed(2)} kg).</p>`);
     }
     if (wDelta) {
       const sign = wDelta.delta >= 0 ? "+" : "";
@@ -1624,12 +1789,20 @@ const UI = (() => {
           n.over ? `${n.over} ${t.over}` : null,
         ].filter(Boolean).join(" · ") || "—";
         const avg = n.n ? formatBandDelta(n.key, n.avgDelta) : "—";
+        // A target the plan exempted must say so here too, not just drop
+        // silently out of the row's own counts — the same disclosure
+        // nutritionScore.nutrients already carries, sourced from the same
+        // exemptByPlan fact so the two cannot disagree.
+        const exemptLine = n.exemptN
+          ? `<span class="muted small score-exempt">not scored on ${n.exemptN} planned day${n.exemptN === 1 ? "" : "s"}</span>`
+          : "";
         return `<li>
           <span class="score-name">${esc(n.label)}</span>
           <span class="score-bar" role="img" aria-label="${esc(counts)}">
             <i class="sb-under" style="width:${pct(n.under)}%"></i><i class="sb-hit" style="width:${pct(n.hit)}%"></i><i class="sb-over" style="width:${pct(n.over)}%"></i>
           </span>
           <span class="muted small">${total ? `${Math.round(pct(n.hit))}% ${esc(t.hit)}` : "—"} · ${esc(counts)} · avg ${esc(avg)}</span>
+          ${exemptLine}
         </li>`;
       }).join("")}</ul>
       ${bandLegend()}`;
@@ -1671,14 +1844,26 @@ const UI = (() => {
       const inner = wk.cells.map((c) => {
         if (!c) return `<i class="hm-cell hm-void"></i>`;
         const bt2 = bandText(ctx.nutrient);
-        const stateWord = c.logged ? (bt2[c.status] || c.status) : "not logged";
-        const title = c.logged
-          ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.bumped ? " · planned calorie target" : ""}`
-          : `${c.day} · not logged`;
+        let title;
+        if (c.status === "fast") {
+          // Honoured fast (0 kcal). §11 tooltip is just "fasted".
+          title = `${c.day} · fasted`;
+        } else if (c.fasted) {
+          // Declared fast that recorded food: keep the real grade and name both
+          // facts — the declaration marker and the intake vs target.
+          const stateWord = bt2[c.status] || c.status;
+          title = `${c.day} · fasted · recorded food · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.bumped ? " · planned calorie target" : ""}`;
+        } else {
+          const stateWord = c.logged ? (bt2[c.status] || c.status) : "not logged";
+          title = c.logged
+            ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.bumped ? " · planned calorie target" : ""}`
+            : `${c.day} · not logged`;
+        }
         // Status is carried by shape as well as colour: green/orange alone
         // fails for red-green colour blindness, and this grid has no text or
         // position fallback the way the bars and scorecard do.
-        return `<button type="button" class="hm-cell hm-${esc(c.status)}${c.bumped ? " hm-bumped" : ""}" data-action="heatmap-day" data-day="${esc(c.day)}" title="${esc(title)}" aria-label="${esc(title)}"></button>`;
+        const fastMark = c.fasted && c.status !== "fast" ? " hm-fasted" : "";
+        return `<button type="button" class="hm-cell hm-${esc(c.status)}${c.bumped ? " hm-bumped" : ""}${fastMark}" data-action="heatmap-day" data-day="${esc(c.day)}" title="${esc(title)}" aria-label="${esc(title)}"></button>`;
       }).join("");
       return `<div class="hm-col">${inner}</div>`;
     }).join("");
@@ -1696,6 +1881,7 @@ const UI = (() => {
     const dir = (bandFor(ctx.nutrient) || {}).dir || "range";
     const keySwatches = [
       `<i class="hm-cell hm-empty"></i>none`,
+      `<i class="hm-cell hm-fast"></i>fasted`,
       dir !== "ceiling" ? `<i class="hm-cell hm-under"></i>${esc(bt.under)}` : null,
       `<i class="hm-cell hm-hit"></i>${esc(bt.hit)}`,
       dir !== "floor" ? `<i class="hm-cell hm-over"></i>${esc(bt.over)}` : null,
@@ -1703,6 +1889,8 @@ const UI = (() => {
     const dirNote = dir === "ceiling"
       ? "ceiling — lower is better"
       : dir === "floor" ? "floor — more is fine" : "range";
+    const eatingDays = Math.max(0, (cons.loggedDays || 0) - (cons.fastedDays || 0));
+    const missedN = (cons.missedDays && cons.missedDays.length) || 0;
     root.innerHTML = `
       <div class="card-head-row"><b>Logging calendar</b><span class="muted small">${esc(nutMeta(ctx.nutrient).label)} · ${esc(dirNote)}</span></div>
       <div class="hm-scroll">
@@ -1716,7 +1904,9 @@ const UI = (() => {
       </div>
       <p class="muted small hm-key">${keySwatches}</p>
       <div class="stat-grid">
-        <div class="stat"><span class="stat-k">Days logged</span><span class="stat-v">${cons.loggedDays}/${cons.totalDays}</span></div>
+        <div class="stat"><span class="stat-k">Logged</span><span class="stat-v">${eatingDays}</span></div>
+        <div class="stat"><span class="stat-k">Fasted</span><span class="stat-v">${cons.fastedDays || 0}</span></div>
+        <div class="stat"><span class="stat-k">Missed</span><span class="stat-v">${missedN}</span></div>
         <div class="stat"><span class="stat-k">Current streak</span><span class="stat-v">${cons.currentStreak} d</span></div>
         <div class="stat"><span class="stat-k">Best streak</span><span class="stat-v">${cons.longestStreak} d</span></div>
         <div class="stat"><span class="stat-k">Weekday / weekend</span><span class="stat-v">${pct(cons.weekdayRate)} / ${pct(cons.weekendRate)}</span></div>
@@ -2083,7 +2273,20 @@ const UI = (() => {
     const constraint = (key, coverageKey, valueKey, fallback) => {
       const all = logged.map((row) => ({ row, goal: goalFor(row, key, fallback) }));
       const enabled = all.filter((x) => x.goal > 0);
-      const usable = enabled.filter((x) => x.row[coverageKey] && Number.isFinite(x.row[valueKey]));
+      // A declared fast keeps the ceiling/floor number on display (it never
+      // scales), but a day the plan exempted from scoring must not enter the
+      // average either — that would credit it, not merely leave it out, since
+      // 0 mg on a fast pulls the mean down and makes the ceiling look easier
+      // to hold than the eating days alone show (Part X.4: "exemption removes
+      // from the denominator, never credits").
+      // Resolve through effectiveGoals first: a declared fast that recorded
+      // food reverts to an ordinary day, and reading goals._unscored raw would
+      // still exclude it — the Part X.2 contradiction this card alone kept.
+      const usable = enabled.filter((x) => {
+        if (!x.row[coverageKey] || !Number.isFinite(x.row[valueKey])) return false;
+        const resolved = Phases.effectiveGoals(Analytics.toTotalsLike(x.row), x.row.goals || {});
+        return !(resolved && resolved._unscored && resolved._unscored[key]);
+      });
       return {
         enabled: enabled.length > 0,
         goal: Analytics.mean(enabled.map((x) => x.goal)) ?? 0,
@@ -2476,7 +2679,15 @@ const UI = (() => {
         ? Phases.goalsForDay(dayKey, o.settings)
         : null)
       || {};
-    const goal = Number(goals[metric]) || 0;
+    // A declared fast that actually recorded food reverts to an ordinary day
+    // (Phases.effectiveGoals, Part VIII.5) — reading goals._unscored raw
+    // here, as this used to, would keep calling an exempted cell "150 g
+    // short" after Insights' own scoring and the Today HUD both call it
+    // scored (or vice versa on a genuine fast), the same contradiction across
+    // tabs Part X.2 closes for the day list and weekly rollup.
+    const resolvedGoals = typeof Phases !== "undefined" ? Phases.effectiveGoals(t, goals) : goals;
+    const unscoredReason = resolvedGoals && resolvedGoals._unscored && resolvedGoals._unscored[metric];
+    const goal = Number(resolvedGoals[metric]) || 0;
     const d = new Date(dayKey + "T12:00:00");
     const label = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
     root.dataset.day = dayKey;
@@ -2495,7 +2706,12 @@ const UI = (() => {
         ? (typeof Phases !== "undefined" && Phases.potassiumCovered(t))
         : true;
     let headLine;
-    if (!mineralComplete) {
+    if (unscoredReason) {
+      // Same wording as Today's own "not scored today" — a delta against a
+      // target this cell was exempted from would be a band verdict Insights
+      // itself never computed (Part X.2).
+      headLine = `${fmt(value)}${esc(unitSuffix)} — not scored today`;
+    } else if (!mineralComplete) {
       const coverageText = Number.isFinite(mineralCoverage)
         ? ` · ${Math.round(mineralCoverage * 100)}% covered`
         : "";
@@ -2654,11 +2870,17 @@ const UI = (() => {
   /** Remaining blurb for gap sheet / Today. Incomplete sodium is a subtotal, never headroom. */
   function formatGapRemaining(remaining, goals, totals) {
     if (!remaining) return "";
+    const resolved = typeof Phases !== "undefined" ? Phases.effectiveGoals(totals, goals) : goals;
+    const unscored = (resolved && resolved._unscored) || null;
+    if (resolved && resolved._bumps && resolved._bumps.intent === "fast" && unscored) {
+      return "Declared fast — nothing to close today.";
+    }
     const bits = [];
     const push = (label, key, unit) => {
+      if (unscored && unscored[key]) return;
       const r = Number(remaining[key]);
       if (!Number.isFinite(r)) return;
-      const g = Number(goals && goals[key]) || 0;
+      const g = Number(resolved && resolved[key]) || 0;
       if (!g && r === 0) return;
       const sign = r > 0 ? "+" : "";
       bits.push(`${label} ${sign}${fmt(r)}${unit}`);
@@ -2668,26 +2890,30 @@ const UI = (() => {
     push("C", "carbs", "g");
     push("F", "fat", "g");
     {
-      const g = Number(goals && goals.fiber) || 0;
-      const r = Number(remaining.fiber);
-      const actual = Number.isFinite(r) ? g - r : 0;
-      if (g > 0) bits.push(`Fiber ${fmt(actual)} / ${fmt(g)} g`);
-      else if (Number.isFinite(r) && actual !== 0) bits.push(`Fiber ${fmt(actual)} g`);
+      if (!(unscored && unscored.fiber)) {
+        const g = Number(resolved && resolved.fiber) || 0;
+        const r = Number(remaining.fiber);
+        const actual = Number.isFinite(r) ? g - r : 0;
+        if (g > 0) bits.push(`Fiber ${fmt(actual)} / ${fmt(g)} g`);
+        else if (Number.isFinite(r) && actual !== 0) bits.push(`Fiber ${fmt(actual)} g`);
+      }
     }
     {
-      const g = Number(goals && goals.sodium) || 0;
-      const r = Number(remaining.sodium);
-      const sodiumCovered = !totals || !totals.count ||
-        (typeof Phases !== "undefined" && Phases.sodiumCovered(totals));
-      if (!sodiumCovered) {
-        const known = totals && totals.na ? Number(totals.na.mean) || 0 : Math.max(0, g - (Number.isFinite(r) ? r : g));
-        const pct = Number.isFinite(totals && totals.naCoverage) ? ` · ${Math.round(totals.naCoverage * 100)}% covered` : "";
-        bits.push(`Na ${fmt(known)} mg known subtotal${pct} · incomplete`);
-      } else if (g > 0) {
-        if (Number.isFinite(r) && r < 0) bits.push(`Na over ${fmt(Math.abs(r))} mg`);
-        else bits.push(`Na room +${fmt(Number.isFinite(r) ? r : g)} mg`);
-      } else if (Number.isFinite(r) && r !== 0) {
-        bits.push(`Na ${fmt(Math.abs(r))} mg`);
+      if (!(unscored && unscored.sodium)) {
+        const g = Number(resolved && resolved.sodium) || 0;
+        const r = Number(remaining.sodium);
+        const sodiumCovered = !totals || !totals.count ||
+          (typeof Phases !== "undefined" && Phases.sodiumCovered(totals));
+        if (!sodiumCovered) {
+          const known = totals && totals.na ? Number(totals.na.mean) || 0 : Math.max(0, g - (Number.isFinite(r) ? r : g));
+          const pct = Number.isFinite(totals && totals.naCoverage) ? ` · ${Math.round(totals.naCoverage * 100)}% covered` : "";
+          bits.push(`Na ${fmt(known)} mg known subtotal${pct} · incomplete`);
+        } else if (g > 0) {
+          if (Number.isFinite(r) && r < 0) bits.push(`Na over ${fmt(Math.abs(r))} mg`);
+          else bits.push(`Na room +${fmt(Number.isFinite(r) ? r : g)} mg`);
+        } else if (Number.isFinite(r) && r !== 0) {
+          bits.push(`Na ${fmt(Math.abs(r))} mg`);
+        }
       }
     }
     return bits.length ? `Gap: ${bits.join(" · ")}` : "Targets already met (or no goals set).";

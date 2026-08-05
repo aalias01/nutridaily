@@ -34,40 +34,40 @@ For always-connected Drive auth locally, prefer `npx vercel dev` (see Deploy bel
 
 ## What gets tracked
 
-Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium, potassium. Daily goals and rings. Before logging your first food, **Energy adjustment** can set today's absolute calorie target from 800–6,000 kcal (for example, for a long training day). The target and its phase baseline are frozen, and the plan stays locked after the first-ever add event even if that food is deleted. Targets below 1,200 kcal show a clinician-supervision warning. Once today has ever been logged, regular phase-target changes begin tomorrow. Energy adjustments never change protein, sodium, potassium, or other nutrient targets. Body weight shows a smoothed trend and weekly rate next to the entry field, so a heavy morning doesn't read as a heavy week. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
+Per food (per 100 g): calories, protein, carbs, fat, fiber, sodium, potassium. Daily goals and rings. Before logging your first food, **Day plan** lets you keep the phase target, set an absolute calorie target from 200–6,000 kcal, or declare a zero-calorie fast (for today, or plan tomorrow from today). Up to five presets can be saved and reapplied one day at a time; nothing auto-schedules future days. The target and its phase baseline are frozen, and a reduced plan stays locked after the first-ever add event even if that food is deleted. Targets below 1,200 kcal show a clinician-supervision warning. Once a day has ever been logged, regular phase-target changes begin the next day. Day plans never change protein, fiber, sodium, or potassium floors and ceilings; carbs and fat follow the day's calorie plan so the macros still add up. Body weight shows a smoothed trend and weekly rate next to the entry field, so a heavy morning doesn't read as a heavy week. Appearance: Settings → Mode (`auto` / `light` / `dark`). Default is light.
 
 ### Sodium and potassium
 
 Sodium and potassium both matter for blood pressure, and their **molar Na:K ratio** is a useful supporting signal. It does not replace either nutrient's independent target. A five-year trial of potassium-enriched salt in ~21,000 older, high-risk participants found fewer strokes, cardiovascular events, and deaths; that trial tested a salt substitute in a specific population, not this app's ratio score.
 
-The supporting ratio target is at or below **1.0**, while sodium still has its own ceiling and potassium its own floor. Watch the units — mass and molar ratios differ by a factor of 1.70 because potassium's atomic mass is 70% higher. The app stores milligrams and shows molar. WHO's 2,000 mg sodium / 3,510 mg potassium works out to 0.97.
+The supporting ratio target is at or below **1.0**, while sodium still has its own ceiling and potassium its own floor. Watch the units: mass and molar ratios differ by a factor of 1.70 because potassium's atomic mass is 70% higher. The app stores milligrams and shows molar. WHO's 2,000 mg sodium / 3,510 mg potassium works out to 0.97.
 
 **Sodium and potassium are both nullable, and that matters.** A food with either value unrecorded stays blank rather than defaulting to zero, because "contains none" and "not measured" are different claims. Each absolute nutrient has independent completeness. The ratio uses only entries where both Na and K are known, so separately known subsets are never divided. It is shown only when the same paired entries satisfy the app's conservative **80% coverage heuristic**: at least 80% by both calorie share and item share (the lower share wins, so zero-calorie unknown items still count). This 80% cutoff is an app heuristic for honest display, not a clinical guideline.
 
-The card also names which lever to pull, and deliberately not by picking whichever milligram gap is smaller — adding a food is easier to sustain than stripping salt out of meals you already eat. If sodium is already inside its own limit, the gap is on the potassium side regardless of which number looks bigger.
+The card also names which lever to pull, and deliberately not by picking whichever milligram gap is smaller: adding a food is easier to sustain than stripping salt out of meals you already eat. If sodium is already inside its own limit, the gap is on the potassium side regardless of which number looks bigger.
 
 > Kidney disease and medicines such as ACE inhibitors, ARBs, and potassium-sparing diuretics can raise potassium dangerously. Ask a clinician before deliberately increasing potassium or using supplements or potassium salt substitutes.
 
-Targets have shapes, and the app is consistent about them: **protein, fiber, and potassium are floors** (minimums), **sodium and the Na:K ratio are ceilings** (lower is better), and **calories, carbs and fat are ranges**. The headline has exactly one 10% mineral-composite slot: with joint paired coverage it requires the sodium ceiling, potassium floor, and ratio together; without joint coverage it scores only when both absolute Na and K are independently complete, and then requires both. Otherwise the mineral slot is skipped and the remaining weights are renormalized. Today flags the moment you pass a number, and says whether you are slightly over or past the tolerance band — the amber zone is exactly what Insights scores as on target.
+Targets have shapes, and the app is consistent about them: **protein, fiber, and potassium are floors** (minimums), **sodium and the Na:K ratio are ceilings** (lower is better), and **calories, carbs and fat are ranges**. The headline has exactly one 10% mineral-composite slot: with joint paired coverage it requires the sodium ceiling, potassium floor, and ratio together; without joint coverage it scores only when both absolute Na and K are independently complete, and then requires both. Otherwise the mineral slot is skipped and the remaining weights are renormalized, either because coverage is incomplete for that day, or because a very low-calorie day plan makes that target arithmetically incoherent and exempts it outright; a range mixing both reasons still discloses how many days were exempt rather than silently dropping the slot. Today flags the moment you pass a number, and says whether you are slightly over or past the tolerance band: the amber zone is exactly what Insights scores as on target.
 
 New installations use a configurable generic adult potassium reference of **3,510 mg** (the WHO adult reference), not an individualized prescription. Existing saved targets are preserved; the app does not infer medical personalization.
 
 ## Insights
 
-Everything is derived on device from your own log — no server, no model, no guesswork you can't inspect.
+Everything is derived on device from your own log: no server, no model, no guesswork you can't inspect.
 
-- **Headline score** — one 0–100 number blending logging consistency, target hit rate, and protein specifically, plus average calories, weight trend and streak.
-- **Intake chart** — daily bars or weekly averages against that day's own target, with the hit band shaded and a 7-day rolling mean drawn on top. Tap any bar for the detail. Also: median, typical swing, range, and the last 7 days versus the 7 before.
-- **Energy expenditure** — an adaptive TDEE estimate: average intake minus what your weight trend actually did (7700 kcal/kg). Comes with the intake needed to lose 0.5 / 0.25 kg per week, maintain, or gain. Shown only when there is enough data; otherwise the card says exactly what is missing rather than printing a confident-looking number.
-- **Weight** — raw weigh-ins as dots with a gap-aware EMA trend line through them, rate per week from a regression on the weigh-ins, and a 4-week projection.
-- **Consistency** — a calendar heatmap coloured by how each day landed against target, streaks, weekday-versus-weekend logging rates, and a per-nutrient scorecard with under / on-target / over bars.
-- **Breakdown** — macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by any of the seven nutrients — the one that finds your sodium is one soup, or your fat is one spoon of peanut butter.
+- **Headline score**: a 0–100 number blending logging consistency, target hit rate, and protein specifically, plus average calories, weight trend and streak. A range with too few real scored days behind a target (whether because every cell was exempt or because there just isn't enough data yet) shows "No data yet" instead of a number rather than crediting an unjustified perfect off a single day propped up by consistency credit alone.
+- **Intake chart**: daily bars or weekly averages against that day's own target, with the hit band shaded and a 7-day rolling mean drawn on top. Tap any bar for the detail. Also: median, typical swing, range, and the last 7 days versus the 7 before.
+- **Energy expenditure**: an adaptive TDEE estimate: average intake minus what your weight trend actually did (7700 kcal/kg). Comes with the intake needed to lose 0.5 / 0.25 kg per week, maintain, or gain. Shown only when there is enough data; otherwise the card says exactly what is missing rather than printing a confident-looking number.
+- **Weight**: raw weigh-ins as dots with a gap-aware EMA trend line through them, rate per week from a regression on the weigh-ins, and a 4-week projection.
+- **Consistency**: a calendar heatmap coloured by how each day landed against target, streaks, weekday-versus-weekend logging rates, and a per-nutrient scorecard with under / on-target / over bars.
+- **Breakdown**: macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by any of the seven nutrients: the one that finds your sodium is one soup, or your fat is one spoon of peanut butter.
 
-It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), and calorie heatmaps mark days that used a planned energy adjustment. Because the plan locks after the first logged food, it cannot be added later to turn an over-target result into a hit.
+It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), and calorie heatmaps mark days that used a day plan. Declared low-calorie days and declared fasts are user-stamped, not inferred: they stay out of unfinished-log flags and out of eating-day averages; when a low plan makes a floor or ceiling arithmetically incoherent, that nutrient is left unscored and disclosed rather than quietly dropped; fasts count toward consistency at zero calories and are included in the TDEE intake average as zero; and a declaration made after the day ended is reported rather than quietly rewritten. Because a reduced plan locks after the first logged food, it cannot be added later to turn an over-target result into a hit.
 
 Where a previous phase exists, Insights compares it to the current one: score, logging, calorie target, weight rate and target hit rates side by side. Calorie average and weight rate are shown without a verdict, because faster loss is progress in a cut and a problem in a bulk.
 
-Observations under the headline are descriptive only — they report what the numbers say and never grade you on it.
+Observations under the headline are descriptive only: they report what the numbers say and never grade you on it.
 
 Numbers are estimates from logged data. Nothing here is medical advice; talk to a clinician or dietitian for anything that matters.
 
@@ -75,7 +75,7 @@ Numbers are estimates from logged data. Nothing here is medical advice; talk to 
 
 Lives in this browser. Optional Google Drive backup in `NutriDaily/` uses one `nutridaily-shard-v4-<writer-id>.json` file per browser installation. Export / import JSON in Settings.
 
-**Editing a food does not rewrite history.** Every log line stores the macros and food version it was saved with, so correcting or changing a recipe applies from that point on — past days stay as they were logged. That is what you want when a recipe genuinely changed; if you had a number wrong all along and want an old day fixed, edit that entry directly on the day.
+**Editing a food does not rewrite history.** Every log line stores the macros and food version it was saved with, so correcting or changing a recipe applies from that point on: past days stay as they were logged. That is what you want when a recipe genuinely changed; if you had a number wrong all along and want an old day fixed, edit that entry directly on the day.
 
 New add, amend, remove, and Undo-restore events also store a per-entry causal sequence and parent event. Replay follows that logical chain rather than device clocks; concurrent amendments merge in a canonical order, removal wins a concurrent amendment, and only a later restore starts a live generation again. Older events without causal metadata remain readable through a deterministic fallback: the originating add is anchored first, then the remaining legacy events are ordered by timestamp, event id, and canonical payload.
 
@@ -165,7 +165,7 @@ Use the localhost origin/redirect URI you registered (often `http://localhost:30
 ## Tests
 
 ```bash
-npm test          # core, parser, analytics — no dependencies
+npm test          # core, parser, analytics: no dependencies
 
 npm install --no-save jsdom
 npm run test:ui   # boots index.html headless and exercises the Insights tab

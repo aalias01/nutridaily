@@ -89,8 +89,9 @@ const Analytics = (() => {
    * @param {Function} [opts.weightKgForDay] day → body weight in kg (or null)
    * @param {Function} [opts.bumpForDay] day → calorie-plan record | null
    * @param {Function} [opts.firstAddAt] day → immutable first-add timestamp | null
-   * @returns {Array<Object>} rows: { day, dow, weekend, logged, itemCount,
-   *   kcal, protein, carbs, fat, fiber, sodium, goals, weightKg, bump }
+   * @returns {Array<Object>} rows: { day, dow, weekend, logged, intent,
+   *   accounted, itemCount, kcal, protein, carbs, fat, fiber, sodium, goals,
+   *   weightKg, bump }
    */
   function buildDays(opts) {
     const o = opts || {};
@@ -105,13 +106,43 @@ const Analytics = (() => {
       const t = totalsForDay(day);
       const logged = !!(t && t.count);
       const dow = dateOf(day).getDay();
+      const goals = goalsForDay(day) || {};
+      // The resolved bump (not the raw stored record) is the only reliable
+      // source for intent: an improperly-flagged fast (e.g. missing
+      // fastAcknowledged) fails validation inside Phases.bumpsForDay and
+      // resolves to no bump at all, so trusting the raw record here would
+      // read a rejected declaration as a real one.
+      //
+      // A locked no-op (kcal delta 0) is what healLoggedDayGoals writes for
+      // every logged day even when nobody planned anything — that is a
+      // restatement of the phase target, not a reduced-day declaration.
+      // Treating it as intent "reduced" would make partialDays exclude every
+      // healed day and silence the unfinished-log gate.
+      const resolvedBump = goals._bumps;
+      const intent = !resolvedBump
+        ? null
+        : resolvedBump.intent === "fast"
+          ? "fast"
+          : (Number(resolvedBump.kcal) !== 0 ? "reduced" : null);
+      // A day with zero entries always totals to 0 kcal by construction, so
+      // this only ever matters for distinguishing "no data available" (t
+      // null, some callers pass no totals accessor at all) from a real
+      // logged 0 — both read as 0 here, which is what a fast expects.
+      const kcalMean = t && t.kcal && Number.isFinite(t.kcal.mean) ? t.kcal.mean : 0;
       const row = {
         day,
         dow,
         weekend: dow === 0 || dow === 6,
         logged,
         itemCount: (t && t.count) || 0,
-        goals: goalsForDay(day) || {},
+        goals,
+        intent,
+        // accounted = logged || (intent === "fast" && loggedKcal === 0).
+        // Logging anything with calories reverts a fast to an ordinary day
+        // (Phases.effectiveGoals), so the fast clause only ever adds true,
+        // undeclared-food fasts — a logged zero-kcal item is already covered
+        // by the `logged` term on the left.
+        accounted: logged || (intent === "fast" && kcalMean === 0),
         weightKg: numOrNull(weightKgForDay(day)),
         bump: bumpForDay(day) || null,
         firstAddAt: numOrNull(firstAddAt(day)),
@@ -160,6 +191,11 @@ const Analytics = (() => {
 
   function loggedRows(days) {
     return (days || []).filter((d) => d.logged);
+  }
+
+  /** Logged days plus honoured (undeclared-food) fasts — every row where `accounted` is true. */
+  function accountedRows(days) {
+    return (days || []).filter((d) => d.accounted);
   }
 
   // ------------------------------------------------------------- statistics
@@ -368,13 +404,22 @@ const Analytics = (() => {
     const excludeDay = o.excludeDay || o.todayKey || null;
     const rows = (days || []).filter((d) => !(excludeDay && d.day === excludeDay));
     const logged = loggedRows(rows);
+    // TDEE's intake and coverage are drawn from the same calendar the weight
+    // regression already reflects. A fast's deficit shows up in the trend
+    // line whether or not the day is counted here, so excluding it from
+    // intake while the regression keeps its effect would bias the estimate
+    // upward — including it at 0 keeps numerator and denominator aligned.
+    const accounted = accountedRows(rows);
     const rangeDays = rows.length;
-    const coverage = rangeDays ? logged.length / rangeDays : 0;
+    const coverage = rangeDays ? accounted.length / rangeDays : 0;
     const trend = trendWeight(rows, { halfLifeDays: o.halfLifeDays || 7 });
     const rate = weightRate(trend);
     const weighIns = trend.filter((p) => !p.carried).length;
     const spanDays = rate ? rate.spanDays : 0;
-    const intakes = logged.map((r) => r.kcal).filter(Number.isFinite);
+    // A day only reaches `accounted` without being `logged` by honouring a
+    // declared fast, and a fast's real kcal total is 0 by definition — so an
+    // accounted-but-unlogged row always contributes 0 here, never a guess.
+    const intakes = accounted.map((r) => (r.logged ? r.kcal : 0)).filter(Number.isFinite);
     const intakeAvg = mean(intakes);
     const medianIntake = median(intakes);
     const completionRatios = logged.map((r) => {
@@ -393,7 +438,9 @@ const Analytics = (() => {
       tdee: null, marginKcal: null, intervalLow: null, intervalHigh: null,
       intakeAvg, medianIntake, completionRatio,
       kgPerWeek: rate ? rate.kgPerWeek : null,
-      loggedDays: logged.length, rangeDays, coverage, weighIns, spanDays,
+      loggedDays: logged.length,
+      fastedDays: accounted.filter((d) => d.intent === "fast" && !(d.kcal > 0)).length,
+      rangeDays, coverage, weighIns, spanDays,
       fitR2: rate ? rate.r2 : null,
       fitRmseKg: rate ? rate.rmseKg : null,
       partialLogDays: partial.flagged.length,
@@ -414,7 +461,7 @@ const Analytics = (() => {
     if (coverage < 0.5) {
       return {
         ...base,
-        reason: `Only ${Math.round(coverage * 100)}% of days are logged — needs 50%+ to be meaningful.`,
+        reason: `Only ${Math.round(coverage * 100)}% of days are accounted for (logged or declared fast) — needs 50%+ to be meaningful.`,
       };
     }
 
@@ -534,34 +581,45 @@ const Analytics = (() => {
   function consistency(days, opts) {
     const todayKey = (opts && opts.todayKey) || null;
     const rows = days || [];
-    const scored = rows.filter((d) => !(todayKey && d.day === todayKey && !d.logged));
-    const logged = scored.filter((d) => d.logged);
+    // A declared fast counts toward consistency the same as a logged day —
+    // `accounted`, not `logged`, is what "did you account for this day"
+    // means throughout this function. `logged` stays reserved for "has
+    // food", which is a different question every other caller of that field
+    // still means.
+    const scored = rows.filter((d) => !(todayKey && d.day === todayKey && !d.accounted));
+    const accounted = scored.filter((d) => d.accounted);
 
     let current = 0;
     for (let i = rows.length - 1; i >= 0; i--) {
-      if (todayKey && rows[i].day === todayKey && !rows[i].logged) continue; // grace for today
-      if (rows[i].logged) current += 1;
+      if (todayKey && rows[i].day === todayKey && !rows[i].accounted) continue; // grace for today
+      if (rows[i].accounted) current += 1;
       else break;
     }
     let longest = 0, run = 0;
     for (const d of rows) {
-      if (d.logged) { run += 1; longest = Math.max(longest, run); }
+      if (d.accounted) { run += 1; longest = Math.max(longest, run); }
       else if (!(todayKey && d.day === todayKey)) run = 0;
     }
 
     const weekdays = scored.filter((d) => !d.weekend);
     const weekends = scored.filter((d) => d.weekend);
-    const rate = (list) => (list.length ? list.filter((d) => d.logged).length / list.length : null);
+    const rate = (list) => (list.length ? list.filter((d) => d.accounted).length / list.length : null);
 
     return {
-      loggedDays: logged.length,
+      loggedDays: accounted.length,
       totalDays: scored.length,
-      rate: scored.length ? logged.length / scored.length : 0,
+      rate: scored.length ? accounted.length / scored.length : 0,
       currentStreak: current,
       longestStreak: longest,
       weekdayRate: rate(weekdays),
       weekendRate: rate(weekends),
-      missedDays: scored.filter((d) => !d.logged).map((d) => d.day),
+      missedDays: scored.filter((d) => !d.accounted).map((d) => d.day),
+      // Honoured fasts within `accounted`. A zero-kcal item (black coffee)
+      // still counts as fasted — `d.logged` alone can't tell that apart from
+      // eating, so this checks the same signal effectiveGoals does: whether
+      // any calories were actually recorded. A fast that recorded real kcal
+      // reverted to an ordinary day and is not counted here.
+      fastedDays: accounted.filter((d) => d.intent === "fast" && !(d.kcal > 0)).length,
     };
   }
 
@@ -599,6 +657,14 @@ const Analytics = (() => {
   /** Non-mineral nutrients scored directly; minerals are one composite below. */
   const SCORED_KEYS = ["kcal", "protein", "carbs", "fat", "fiber"];
 
+  // A hit rate built on one or two real days is not evidence — the same bar
+  // biggestGap already holds a nutrient to before naming it "the problem".
+  // Reused here so a weighted row cannot carry the targets component on
+  // n:1 while nine declared-plan exemptions ride along for free on the 30%
+  // consistency component (Part X.1): below this many scored days, the row
+  // still discloses (n and exemptN both render), it just earns no weight.
+  const MIN_SCORED_DAYS = 3;
+
   /**
    * One headline number, 0–100, so the tab opens with an answer rather than a
    * chart to interpret. Two components: logging consistency (30%) and an
@@ -620,10 +686,10 @@ const Analytics = (() => {
     if (typeof scoreDay === "function") {
       const tally = {};
       for (const k of SCORED_KEYS) {
-        tally[k] = { hit: 0, n: 0 };
+        tally[k] = { hit: 0, n: 0, exempt: 0 };
       }
       const mineralHandling = {
-        hit: 0, n: 0, jointN: 0, absoluteN: 0,
+        hit: 0, n: 0, exempt: 0, jointN: 0, absoluteN: 0,
         ratioHits: 0, sodiumHits: 0, potassiumHits: 0,
       };
       const todayKey = opts && opts.todayKey;
@@ -669,10 +735,25 @@ const Analytics = (() => {
           if (sodiumCell && sodiumCell.status === "hit") mineralHandling.sodiumHits += 1;
           if (potassiumCell && potassiumCell.status === "hit") mineralHandling.potassiumHits += 1;
           if (enabledAbsolutes.every((cell) => cell.status === "hit")) mineralHandling.hit += 1;
+        } else if (s.naK && s.naK.exemptByPlan) {
+          // Same disclosure as the per-key tally above: a fast unscores the
+          // whole mineral slot, and that is a different fact from a day that
+          // simply lacks sodium/potassium coverage — exemptByPlan carries the
+          // plan fact even when coverage would have skipped the cell anyway
+          // (a real fast has near-zero mineral coverage by nature), so it is
+          // what disclosure counts off, never skipReason (Part VIII.4).
+          mineralHandling.exempt += 1;
         }
         for (const k of Object.keys(tally)) {
           const cell = s[k];
-          if (!cell || cell.status === "skip") continue;
+          if (!cell) continue;
+          if (cell.status === "skip") {
+            // A plan exemption and a missing-coverage skip are different facts
+            // — only the former is disclosed to the user at declaration time,
+            // so only the former is worth naming in the score breakdown.
+            if (cell.exemptByPlan) tally[k].exempt += 1;
+            continue;
+          }
           tally[k].n += 1;
           if (cell.status === "hit") tally[k].hit += 1;
         }
@@ -680,17 +761,32 @@ const Analytics = (() => {
       let acc = 0, wsum = 0;
       for (const k of Object.keys(tally)) {
         const t = tally[k];
-        if (!t.n) continue; // no goal set for this nutrient in this range
+        // A range where a target was exempt every day still gets a visible row
+        // — disappearing silently is exactly the "guesswork you can't inspect"
+        // the score breakdown exists to avoid. It just never earns weight.
+        if (!t.n && !t.exempt) continue; // no goal set for this nutrient in this range
         const w = SCORE_WEIGHTS[k] || 0;
-        const hitRate = t.hit / t.n;
-        nutrients.push({ key: k, label: LABEL[k], weight: w, hitRate, hit: t.hit, n: t.n });
-        acc += hitRate * w;
-        wsum += w;
+        // A row with no scored days has no hit rate — 0 would be
+        // indistinguishable from "missed every day", the exact suspicion the
+        // exemption disclosure exists to prevent (Part VII.7).
+        const hitRate = t.n ? t.hit / t.n : null;
+        const row = { key: k, label: LABEL[k], weight: w, hitRate, hit: t.hit, n: t.n };
+        if (t.exempt) row.exemptN = t.exempt;
+        nutrients.push(row);
+        // Below MIN_SCORED_DAYS the row still discloses (n and exemptN both
+        // render above) but does not carry the targets component — a hit
+        // rate on 1-2 real days is not enough evidence to grade on, and
+        // letting it through is exactly how a mostly-exempt range reaches an
+        // unearned 100 (Part X.1).
+        if (t.n >= MIN_SCORED_DAYS) {
+          acc += hitRate * w;
+          wsum += w;
+        }
       }
-      if (mineralHandling.n) {
-        const hitRate = mineralHandling.hit / mineralHandling.n;
+      if (mineralHandling.n || mineralHandling.exempt) {
+        const hitRate = mineralHandling.n ? mineralHandling.hit / mineralHandling.n : null;
         const w = SCORE_WEIGHTS.naK;
-        nutrients.push({
+        const row = {
           key: "naK",
           label: "Mineral balance",
           mode: mineralHandling.jointN && mineralHandling.absoluteN ? "mixed" : (mineralHandling.jointN ? "joint" : "absolute"),
@@ -703,20 +799,32 @@ const Analytics = (() => {
           hitRate,
           hit: mineralHandling.hit,
           n: mineralHandling.n,
-        });
-        acc += hitRate * w;
-        wsum += w;
+        };
+        if (mineralHandling.exempt) row.exemptN = mineralHandling.exempt;
+        nutrients.push(row);
+        if (mineralHandling.n >= MIN_SCORED_DAYS) {
+          acc += hitRate * w;
+          wsum += w;
+        }
       }
       targets = wsum ? acc / wsum : null;
     }
 
     const parts = { consistency: cons.rate, targets, nutrients };
     const weights = { consistency: 0.30, targets: 0.70 };
+    // An all-exempt range has zero scored targets — every nutrient cell was a
+    // declared plan exemption, never a hit. Simply dropping `targets` out of
+    // the weighted mean would let consistency alone report a perfect score;
+    // an unjustified perfect is exactly as dishonest as an unjustified miss,
+    // so the grade is suppressed rather than computed on nothing.
+    const hasExemptRows = nutrients.some((n) => n.exemptN);
     let acc = 0, wsum = 0;
-    for (const k of Object.keys(weights)) {
-      if (parts[k] == null) continue;
-      acc += parts[k] * weights[k];
-      wsum += weights[k];
+    if (!(targets == null && hasExemptRows)) {
+      for (const k of Object.keys(weights)) {
+        if (parts[k] == null) continue;
+        acc += parts[k] * weights[k];
+        wsum += weights[k];
+      }
     }
     const score = wsum ? Math.round((acc / wsum) * 100) : null;
     const gap = biggestGap(nutrients);
@@ -729,9 +837,13 @@ const Analytics = (() => {
    * instead of a verdict. Null when nothing is meaningfully off.
    */
   function biggestGap(nutrients, opts) {
-    const minDays = (opts && opts.minDays) || 3;
+    const minDays = (opts && opts.minDays) || MIN_SCORED_DAYS;
+    // A row with n === 0 (exempt every day, e.g. protein on an all-low-kcal
+    // range) has no scored days and therefore no hit rate — it cannot be the
+    // thing costing the score the most, so it is excluded outright rather
+    // than relying on minDays to happen to filter it out.
     const ranked = (nutrients || [])
-      .filter((n) => n.n >= minDays && n.hitRate < 0.8)
+      .filter((n) => n.n > 0 && n.n >= minDays && n.hitRate < 0.8)
       .map((n) => ({ ...n, cost: (1 - n.hitRate) * n.weight }))
       .sort((a, b) => b.cost - a.cost);
     return ranked[0] || null;
@@ -798,6 +910,16 @@ const Analytics = (() => {
       .map(([ws, rows]) => {
         const logged = rows.filter((r) => r.logged);
         const end = rows[rows.length - 1].day;
+        // A declared fast that actually recorded food reverts to an ordinary
+        // day (Phases.effectiveGoals, Part VIII.5) — counting off the raw
+        // declaration here would disagree with Insights' own per-day scoring
+        // and with Today about the same day (Part X.2).
+        const exemptDays = typeof Phases !== "undefined"
+          ? logged.filter((r) => {
+              const resolved = Phases.effectiveGoals(toTotalsLike(r), r.goals || {});
+              return !!(resolved && resolved._unscored && resolved._unscored[key]);
+            }).length
+          : 0;
         return {
           weekStart: ws,
           endDay: end,
@@ -805,8 +927,9 @@ const Analytics = (() => {
           rangeLabel: `${shortDate(rows[0].day)} – ${shortDate(end)}`,
           days: rows.length,
           loggedDays: logged.length,
+          exemptDays,
           value: mean(logged.map((r) => r[key])),
-          goal: mean(rows.map((r) => (r.goals || {})[key])),
+          goal: mean(rows.map((r) => (key === "kcal" ? phaseKcalOf(r) : (r.goals || {})[key]))),
           partial: logged.length > 0 && logged.length < 4,
         };
       });
@@ -828,7 +951,7 @@ const Analytics = (() => {
         n: match.length,
         totalDays: all.length,
         avg: mean(match.map((d) => d[key])),
-        goal: mean(all.map((d) => (d.goals || {})[key])),
+        goal: mean(all.map((d) => (key === "kcal" ? phaseKcalOf(d) : (d.goals || {})[key]))),
       });
     }
     // Monday-first reads better next to the weekly rollup.
@@ -968,7 +1091,15 @@ const Analytics = (() => {
       const value = d[key];
       let status = "empty";
       let ratio = null;
-      if (d.logged && Number.isFinite(value)) {
+      // An honoured fast with no calories uses status "fast". A declared fast
+      // that recorded food keeps its marker for display/audit (§11) while still
+      // grading against phase targets — `fasted` is the declaration flag, and
+      // status holds the ordinary grade.
+      const honouredFast = d.intent === "fast" && d.accounted && !(d.kcal > 0);
+      const fasted = d.intent === "fast";
+      if (honouredFast) {
+        status = "fast";
+      } else if (d.logged && Number.isFinite(value)) {
         ratio = goal ? value / goal : null;
         if (excludeDay && d.day === excludeDay) {
           // Keep the activity visible without grading an in-progress day.
@@ -986,12 +1117,29 @@ const Analytics = (() => {
         dow: d.dow,
         weekStart: weekStart(d.day),
         logged: d.logged,
+        intent: d.intent || null,
+        accounted: !!d.accounted,
+        fasted,
         value,
         goal,
         ratio,
         status,
       };
     });
+  }
+
+  /**
+   * Phase calorie reference for a day row — `_phase.kcal` when a plan froze
+   * a baseline, otherwise the resolved kcal. Used wherever Insights averages
+   * a "typical target" so a declared fast's 0 cannot drag the comparison.
+   */
+  function phaseKcalOf(dayOrGoals) {
+    const g = dayOrGoals && dayOrGoals.goals ? dayOrGoals.goals : dayOrGoals;
+    if (!g || typeof g !== "object") return null;
+    const phase = g._phase && Number(g._phase.kcal);
+    if (Number.isFinite(phase)) return phase;
+    const kcal = Number(g.kcal);
+    return Number.isFinite(kcal) ? kcal : null;
   }
 
   /** Group heatmap cells into Monday-start week columns, padded to 7 rows. */
@@ -1049,17 +1197,20 @@ const Analytics = (() => {
     const o = opts || {};
     const out = [];
     const logged = loggedRows(days);
-    if (!logged.length) return out;
+    const accounted = accountedRows(days);
+    // An all-fast range has nothing "logged" but still has testimony — do not
+    // bail before the fasts observation below can speak.
+    if (!logged.length && !accounted.length) return out;
 
     const cons = consistency(days, o);
-    if (cons.totalDays >= 7 && cons.rate < 0.6) {
+    if (logged.length && cons.totalDays >= 7 && cons.rate < 0.6) {
       out.push({
         id: "coverage",
         tone: "info",
-        text: `${cons.loggedDays} of ${cons.totalDays} days logged. Averages below are drawn from logged days only.`,
+        text: `${cons.loggedDays} of ${cons.totalDays} days accounted for. Averages below are drawn from logged eating days only.`,
       });
     }
-    if (cons.weekdayRate != null && cons.weekendRate != null && cons.weekdayRate - cons.weekendRate >= 0.3) {
+    if (logged.length && cons.weekdayRate != null && cons.weekendRate != null && cons.weekdayRate - cons.weekendRate >= 0.3) {
       out.push({
         id: "weekend-logging",
         tone: "info",
@@ -1067,7 +1218,7 @@ const Analytics = (() => {
       });
     }
 
-    const we = weekendEffect(days, "kcal");
+    const we = logged.length ? weekendEffect(days, "kcal") : null;
     if (we && we.notable) {
       const dir = we.delta > 0 ? "higher" : "lower";
       out.push({
@@ -1095,7 +1246,7 @@ const Analytics = (() => {
       });
     }
 
-    const mom = momentum(days, "kcal", 7);
+    const mom = logged.length ? momentum(days, "kcal", 7) : null;
     if (mom && Math.abs(mom.pct || 0) >= 0.08) {
       const dir = mom.delta > 0 ? "up" : "down";
       out.push({
@@ -1129,7 +1280,26 @@ const Analytics = (() => {
       out.push({
         id: "bumps",
         tone: bumps.retroactive || bumps.unknown ? "watch" : "info",
-        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used an energy adjustment, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted calorie target.${retro}${unknown}`,
+        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used a day plan, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted calorie target.${retro}${unknown}`,
+      });
+    }
+    if (bumps.fasts) {
+      const late = bumps.fastsDeclaredAfterDay;
+      const lateText = late
+        ? ` ${late} of these were declared after the day ended.`
+        : "";
+      const reverted = (bumps.fastDays || []).filter((f) => f.logged).length;
+      const revertedText = reverted
+        ? ` ${reverted} declared fast day${reverted === 1 ? "" : "s"} recorded food and ${reverted === 1 ? "is" : "are"} counted as ordinary day${reverted === 1 ? "" : "s"}.`
+        : "";
+      out.push({
+        id: "fasts",
+        // A late declaration is reported, not punished — it still buys
+        // nothing but streak credit. The tone only shifts once it stops
+        // being the exception: more than half the fasts in range declared
+        // after the fact is worth a second look.
+        tone: late * 2 > bumps.fasts ? "watch" : "info",
+        text: `${bumps.fasts} declared fast${bumps.fasts === 1 ? "" : "s"} in this range.${lateText}${revertedText}`,
       });
     }
 
@@ -1142,11 +1312,15 @@ const Analytics = (() => {
    * Days that look like a forgotten log rather than a day of eating.
    *
    * A day holding one 250 kcal entry drags every average down and quietly
-   * distorts the TDEE estimate, which assumes logged intake is complete. But a
-   * genuine fast looks identical in the data, so this only ever *flags*: the
-   * days stay in every calculation, and the counterfactual average is offered
-   * beside the real one rather than replacing it. Silently discarding someone's
-   * data because it looks odd is worse than showing an average they can judge.
+   * distorts the TDEE estimate, which assumes logged intake is complete. A
+   * declared day (fast or reduced) is no longer a candidate at all: the
+   * declaration is timestamped user testimony about that exact day, made
+   * before the food was logged, so flagging it anyway is the app arguing
+   * with a plan it already accepted. Everything left is undeclared, so it
+   * only ever *flags*: the days stay in every calculation, and the
+   * counterfactual average is offered beside the real one rather than
+   * replacing it. Silently discarding someone's data because it looks odd is
+   * worse than showing an average they can judge.
    *
    * Thresholds are relative to the person's own median, not an absolute
    * calorie floor, so a 1,400 kcal eater is not permanently flagged.
@@ -1156,7 +1330,7 @@ const Analytics = (() => {
     const ratio = o.ratio || 0.4;
     const maxItems = o.maxItems || 2;
     const excludeDay = o.excludeDay || o.todayKey || null;
-    const logged = loggedRows(days).filter((d) => !(excludeDay && d.day === excludeDay));
+    const logged = loggedRows(days).filter((d) => !(excludeDay && d.day === excludeDay) && !d.intent);
     const empty = { flagged: [], median: null, avg: null, adjustedAvg: null, threshold: null };
     if (logged.length < 5) return empty; // no baseline worth trusting yet
 
@@ -1193,6 +1367,15 @@ const Analytics = (() => {
    * genuinely have a different calorie target. Because it can convert an
    * "over" day into a "hit", recording planned versus retroactive adjustments
    * keeps the feature useful without making adherence self-marking.
+   *
+   * A fast is not an energy adjustment and is counted separately: its kcal
+   * cell is exempt, not scored against a target of 0, so folding its
+   * resolved delta (targetKcal − baseKcal, i.e. the whole phase target) into
+   * `kcalTotal` would misreport an exemption as a deliberate multi-thousand
+   * calorie cut. What is worth auditing for a fast is *when* it was
+   * declared — a late declaration buys only streak credit, never a better
+   * grade, so it is reported rather than folded into `retroactive`, which
+   * means something different (a target moved after logging began).
    */
   function bumpAudit(days, opts) {
     const excludeDay = opts && (opts.excludeDay || opts.todayKey);
@@ -1201,10 +1384,23 @@ const Analytics = (() => {
     let planned = 0;
     let unknown = 0;
     let kcalTotal = 0;
+    const fastRows = [];
+    let fastsDeclaredAfterDay = 0;
     for (const d of days || []) {
       if (excludeDay && d.day === excludeDay) continue;
       const b = d.bump;
       if (!b) continue;
+      const intent = d.goals && d.goals._bumps && d.goals._bumps.intent === "fast" ? "fast" : "reduced";
+      if (intent === "fast") {
+        const declaredAfterDay = b.declaredAfterDay === true;
+        const recordedAt = numOrNull(b.plannedAt != null ? b.plannedAt : b.updatedAt);
+        let provenance = "unknown";
+        if (declaredAfterDay) provenance = "declaredAfterDay";
+        else if (Number.isFinite(recordedAt)) provenance = "planned";
+        if (declaredAfterDay) fastsDeclaredAfterDay += 1;
+        fastRows.push({ day: d.day, provenance, declaredAfterDay, logged: d.logged });
+        continue;
+      }
       // Resolved goals carry the phase-aware delta even for the oldest
       // absolute `{kcal: ...}` dayGoal shape. Fall back to the raw modern bump
       // so callers that provide audit rows directly remain compatible.
@@ -1230,7 +1426,10 @@ const Analytics = (() => {
         logged: d.logged,
       });
     }
-    return { total: rows.length, retroactive, planned, unknown, kcalTotal, days: rows };
+    return {
+      total: rows.length, retroactive, planned, unknown, kcalTotal, days: rows,
+      fasts: fastRows.length, fastsDeclaredAfterDay, fastDays: fastRows,
+    };
   }
 
   // ----------------------------------------------------------- comparison
@@ -1249,7 +1448,7 @@ const Analytics = (() => {
       loggedDays: logged.length,
       coverage: days.length ? logged.length / days.length : 0,
       kcalAvg: mean(logged.map((d) => d.kcal)),
-      kcalGoal: mean(days.map((d) => (d.goals || {}).kcal)),
+      kcalGoal: mean(days.map((d) => phaseKcalOf(d))),
       proteinAvg: mean(logged.map((d) => d.protein)),
       fiberAvg: mean(logged.map((d) => d.fiber)),
       sodiumAvg: mean(logged.map((d) => d.sodium)),
@@ -1374,12 +1573,13 @@ const Analytics = (() => {
     MIN_TDEE_MARGIN_KCAL,
     DOW_LABEL, MEALS, NUTRIENTS, TOTALS_KEY, UNIT, LABEL,
     dayKeyFromDate, dateOf, addDays, daysBetween, weekStart, shortDate,
-    buildDays, loggedRows, toTotalsLike,
+    buildDays, loggedRows, accountedRows, toTotalsLike,
     mean, median, stdev, summaryStats, rollingMean, linearFit,
     trendWeight, weightRate, estimateTdee, intakeForRate, projectWeight,
     consistency, nutritionScore, gradeFor, biggestGap, SCORE_WEIGHTS,
     weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods,
     proteinPerKg, heatmapCells, heatmapWeeks, extremes, momentum, observations,
+    phaseKcalOf,
     partialDays, bumpAudit, bumpIsRetroactive,
     rangeSummary, compareSummaries, retargetForKcal,
     fmtNum, fmtSigned, kgToDisplay,

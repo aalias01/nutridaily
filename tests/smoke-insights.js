@@ -509,7 +509,7 @@ async function run(label, days) {
 
 
   // --- new analytics surfaces --------------------------------------------
-  ok(/energy adjustment/i.test(text("#insight-observations")), "planned calorie adjustments are disclosed");
+  ok(/day plan/i.test(text("#insight-observations")), "planned calorie adjustments are disclosed");
   ok(!/after the day ended/i.test(text("#insight-observations")), "planned-only fixture is not described as retroactive");
   ok(window.document.querySelectorAll(".hm-bumped").length >= 1, "adjusted calorie days are marked on the heatmap");
 
@@ -536,8 +536,8 @@ async function run(label, days) {
     }
     ok([...applyBtns].every((b) => Number(b.dataset.kcal) >= 1200),
       "automated TDEE actions never offer a target below 1200 kcal");
-    ok($("#dg-kcal").min === "800",
-      "manual, acknowledged energy adjustments retain the broader 800 kcal lower bound");
+    ok($("#dg-kcal").min === "200" && $("#dg-kcal").step === "10",
+      "manual energy adjustments use the widened 200 kcal floor and round-to-10 step (Part VIII.6)");
 
     if (label === "main") {
       const unsafeLow = window.document.createElement("button");
@@ -677,15 +677,19 @@ END`;
         PhaseMath.goalsForDay(DateMath.addDays(loggedToday, 1), deferredSettings).kcal === targetBeforeSave + 100,
       "phase target changes made after today's first add take effect tomorrow");
 
-    // Once today's logging has begun, no energy adjustment can be created.
+    // Once today's logging has begun, a Reduced plan cannot be created — Fast
+    // grace remains open (§10), so the sheet may still open on Fast.
     const todayTabForK = [...window.document.querySelectorAll(".tab")].find((x) => x.dataset.view === "today");
     todayTabForK.click();
     $("#btn-day-goals").click();
-    ok(!$("#sheet-day-goals").classList.contains("open"), "logged day cannot open an energy adjustment editor");
-    ok(/lock after the first food/i.test(text("#toast")), "logged-day lock explains when calories must be planned");
+    ok(!$("#sheet-day-goals").hidden, "logged day can still open the plan sheet for a Fast declaration");
+    $("#dg-intent-seg button[data-dg-intent='reduced']").click();
+    ok(/lock after the first food/i.test(text("#toast")) ||
+        $("#dg-intent-seg button[data-dg-intent='reduced']").getAttribute("aria-pressed") !== "true",
+      "logged-day lock explains when calories must be planned");
     ok(!$("#dg-protein") && !$("#dg-sodium") && !$("#dg-potassium"), "energy adjustment sheet has no nutrient bump fields");
-    const todayKey = window.eval("Ledger.todayKey()")
-
+    const todayKey = window.eval("Ledger.todayKey()");
+    window.eval("UI").closeSheet("sheet-day-goals");
     // Shared foods retain nullable/known K and exact logging semantics.
     const Share = window.eval("Share");
     const shared = Share.unpack(Share.pack({
@@ -728,6 +732,13 @@ END`;
     const todayTab = [...window.document.querySelectorAll(".tab")].find((x) => x.dataset.view === "today");
     todayTab.click();
     $("#btn-close-gap").click();
+    // First open of this session lands on the one-time intro step (gap
+    // sessionStorage flag is unset), which leaves #btn-gap-to-prompt at its
+    // static disabled attribute — that button is only re-enabled by
+    // refreshGapSelectList, which runs for the "select" step. Dismiss the
+    // intro the way a real user would before continuing; this scenario is
+    // exercising the paste-rejection flow below, not the intro screen.
+    if (!$("#gap-step-intro").hidden) $("#btn-gap-intro-ok").click();
     $("#btn-gap-to-prompt").click();
     $("#gap-paste").value = `GAP v1
 Day: ${todayKey}
@@ -1067,7 +1078,7 @@ async function runEmpty() {
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
 
-  // Energy adjustments are a calories-only plan, made before the first log.
+  // Day plans are calories-only (or a declared fast), made before the first log.
   const Phases = window.eval("Phases");
   const Ledger = window.eval("Ledger");
   const todayKey = Ledger.todayKey();
@@ -1076,10 +1087,39 @@ async function runEmpty() {
   ok(!$("#sheet-day-goals").hidden, "unlogged today can open the energy adjustment editor");
   ok(!!$("#dg-kcal") && !$("#dg-protein") && !$("#dg-sodium") && !$("#dg-potassium"),
     "energy adjustment editor is calories-only");
+  // 700 is a real 5:2 / alternate-day plan now, so the boundary probe moves
+  // below the widened floor. A fast is declared, never typed, so 0 is still
+  // not reachable from this field.
+  $("#dg-kcal").value = "150";
+  $("#dg-kcal").dispatchEvent(new window.Event("input", { bubbles: true }));
+  ok($("#dg-kcal").getAttribute("aria-invalid") === "true" && /200–6000/.test($("#energy-adjustment-preview").textContent),
+    "out-of-range energy target is rejected in preview");
+  // Part VIII.8: dg-save rounds to the nearest 10 before validating/storing
+  // (Analytics.retargetForKcal only resolves cleanly on round tens); the
+  // preview must round the same way, or it can show one number while saving
+  // another — 1505 previewed as itself but stored as 1510, or 195 rejected in
+  // preview yet quietly saved as 200.
+  $("#dg-kcal").value = "1505";
+  $("#dg-kcal").dispatchEvent(new window.Event("input", { bubbles: true }));
+  ok($("#dg-kcal").getAttribute("aria-invalid") !== "true" &&
+      /Planned target: 1510 kcal/.test($("#energy-adjustment-preview").textContent),
+    "the preview rounds a typed 1505 to 1510, matching what dg-save will store");
+  $("#dg-kcal").value = "195";
+  $("#dg-kcal").dispatchEvent(new window.Event("input", { bubbles: true }));
+  ok($("#dg-kcal").getAttribute("aria-invalid") !== "true",
+    "the preview accepts a typed 195 — it rounds to the 200 floor instead of rejecting a value that would save anyway");
+  // Part X.6: the same tie-break symmetry at the ceiling. 6004 already rounds
+  // down to 6000 and was never the problem; 6005 sits on the tie and
+  // Math.round breaks it up to 6010, which used to bounce as over budget.
+  $("#dg-kcal").value = "6005";
+  $("#dg-kcal").dispatchEvent(new window.Event("input", { bubbles: true }));
+  ok($("#dg-kcal").getAttribute("aria-invalid") !== "true" &&
+      /Planned target: 6000 kcal/.test($("#energy-adjustment-preview").textContent),
+    "X.6: the preview clamps a typed 6005 to the 6000 ceiling instead of rounding it up to 6010 and rejecting it");
   $("#dg-kcal").value = "700";
   $("#dg-kcal").dispatchEvent(new window.Event("input", { bubbles: true }));
-  ok($("#dg-kcal").getAttribute("aria-invalid") === "true" && /800–6000/.test($("#energy-adjustment-preview").textContent),
-    "out-of-range energy target is rejected in preview");
+  ok($("#dg-kcal").getAttribute("aria-invalid") !== "true",
+    "a 700 kcal reduced-day plan is accepted in preview");
   $("#dg-save").click();
   ok(!((JSON.parse(window.localStorage.getItem("nd_settings_v1") || "{}").dayGoals || {})[todayKey]),
     "out-of-range energy target is rejected on save");
@@ -1132,8 +1172,14 @@ async function runEmpty() {
 
   $("#btn-day-prev").click();
   $("#btn-day-goals").click();
-  ok(!$("#sheet-day-goals").classList.contains("open"), "past day cannot create an energy adjustment");
-  ok(/only be planned for today/i.test($("#toast").textContent), "past-day lock explains that planning is today-only");
+  // §10: a Fast may still be declared on the calendar day after the target
+  // day, so yesterday opens (on Fast), while a Reduced plan cannot.
+  ok(!$("#sheet-day-goals").hidden, "previous day can open for a same-evening Fast declaration");
+  ok(!!$("#dg-intent-seg button[data-dg-intent='fast']"), "previous-day sheet still exposes the Fast control");
+  $("#dg-intent-seg button[data-dg-intent='reduced']").click();
+  ok(/lock after the first food|day before|before it ends|cannot be changed|grace window/i.test($("#toast").textContent) ||
+      $("#dg-intent-seg button[data-dg-intent='reduced']").getAttribute("aria-pressed") !== "true",
+    "previous-day Reduced stays blocked even though Fast grace is still open");
 
   dom.window.close();
 }
@@ -2332,6 +2378,276 @@ async function runImportSecurity() {
   ok(/^Imported$/.test($("#toast").textContent.trim()),
     "a day override at 1500 kcal (above the 1200 gate) is accepted without acknowledgement");
 
+  // Part VIII.1's required round-trip: a declared fast must survive real
+  // import through the App's own normalizer, and re-exporting what import
+  // just wrote must not throw on the way back in. A day well before `today`
+  // is used so this fast declaration cannot bleed into the Today HUD
+  // assertions later in this same test run.
+  const fastDay = "2026-01-15";
+  const fastImport = currentBackup();
+  fastImport.settings.dayGoals = {
+    ...fastImport.settings.dayGoals,
+    [fastDay]: {
+      targetKcal: 0, baseKcal: 2200, updatedAt: 50, intent: "fast", fastAcknowledged: true,
+    },
+  };
+  await importBackup(window, fastImport);
+  ok(/^Imported$/.test($("#toast").textContent.trim()),
+    "a declared fast (targetKcal 0, intent fast, fastAcknowledged) imports through the real App normalizer");
+  const fastImportedSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
+  const fastImportedGoal = fastImportedSettings.dayGoals[fastDay];
+  ok(fastImportedGoal && fastImportedGoal.targetKcal === 0 &&
+      fastImportedGoal.intent === "fast" && fastImportedGoal.fastAcknowledged === true,
+    "the imported fast record keeps its intent and acknowledgement, not just its zero target");
+  ok(Phases.goalsForDay(fastDay, fastImportedSettings).kcal === 0,
+    "goalsForDay resolves the imported fast day to kcal 0");
+  const fastReexport = currentBackup();
+  let fastReimportThrew = false;
+  try {
+    await importBackup(window, fastReexport);
+  } catch (_) { fastReimportThrew = true; }
+  ok(!fastReimportThrew && /^Imported$/.test($("#toast").textContent.trim()),
+    "re-exporting an imported fast day and importing it again does not throw");
+  // Clean up: subsequent tests in this run assert on `today`'s HUD assuming
+  // an ordinary day, and dayGoals is keyed by day, so this cannot collide.
+  const clearFastDay = currentBackup();
+  delete clearFastDay.settings.dayGoals[fastDay];
+  await importBackup(window, clearFastDay);
+  ok(/^Imported$/.test($("#toast").textContent.trim()), "the fast-day fixture is removed before later tests run");
+
+  // Closeout P1: Sync emits targetKcal-less tombstones; the app.js import
+  // normalizer must accept them (delete, export→import, and Drive cap eviction
+  // all re-enter through this seam).
+  window.confirm = () => true;
+  const makeImportPreset = (id, lastUsedAt) => ({
+    id,
+    label: id,
+    intent: "reduced",
+    targetKcal: 500,
+    veryLowCalorieAcknowledged: true,
+    createdAt: 1,
+    updatedAt: 10,
+    lastUsedAt,
+  });
+  const syncEmittedPresets = Sync.mergeDayPlanPresets(
+    [0, 1, 2, 3, 4].map((i) => makeImportPreset(`imp_a_${i}`, i)),
+    [0, 1, 2, 3, 4].map((i) => makeImportPreset(`imp_b_${i}`, 10 + i))
+  );
+  ok(syncEmittedPresets.some((p) => p.deleted === true && p.targetKcal == null),
+    "Sync cap eviction emits tombstones without targetKcal (the app.js P1 shape)");
+  // Force the generation default the stamp must correct (import maps missing /
+  // omitted epochs to 0). Without stampSettingsGenerations rebasing the array,
+  // a marked non-zero reset rejects this list as privacy-invalid.
+  const syncEmittedAtEpochZero = syncEmittedPresets.map((p) => ({ ...p, resetEpoch: 0 }));
+  ok(syncEmittedAtEpochZero.every((p) => p.resetEpoch === 0),
+    "fixture presets carry resetEpoch:0 before import (stamp is load-bearing)");
+  const presetCapImport = currentBackup();
+  presetCapImport.settings.dayPlanPresets = syncEmittedAtEpochZero;
+  await importBackup(window, presetCapImport);
+  await new Promise((r) => setTimeout(r, 120));
+  ok(/^Imported/.test($("#toast").textContent.trim()),
+    "app import accepts Sync-emitted preset tombstones without throwing",
+    $("#toast").textContent.trim());
+  const presetCapStored = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
+  const presetImportEpoch = Sync.getResetAt();
+  ok(presetImportEpoch > 0,
+    "preset import runs under a non-zero privacy epoch (not the unmarked zero that hid fix 2)");
+  ok(String(window.localStorage.getItem(Sync.GENERATION_SCHEMA_KEY)) === String(Sync.GENERATION_SCHEMA_VERSION),
+    "preset import marks the generation schema so validateDocGenerations is live");
+  ok((presetCapStored.dayPlanPresets || []).length > 0 &&
+      (presetCapStored.dayPlanPresets || []).every((p) => p.resetEpoch === presetImportEpoch),
+    "stampSettingsGenerations rebases every imported preset (actives + tombstones) to the live epoch",
+    `epoch=${presetImportEpoch} sample=${JSON.stringify((presetCapStored.dayPlanPresets || []).slice(0, 2))}`);
+  ok(Sync.activeDayPlanPresets(presetCapStored.dayPlanPresets || []).length === Sync.DAY_PLAN_PRESET_ACTIVE_CAP,
+    "imported cap result keeps exactly five active presets",
+    `got ${Sync.activeDayPlanPresets(presetCapStored.dayPlanPresets || []).length}`);
+  ok((presetCapStored.dayPlanPresets || []).some((p) => p.deleted === true && p.id.startsWith("imp_")),
+    "imported cap losers remain as deleted tombstones");
+  ok((presetCapStored.dayPlanPresets || []).filter((p) => p.deleted).every((p) => p.resetEpoch === presetImportEpoch),
+    "tombstones are rebased alongside actives (validateDocGenerations does not exempt them)");
+  await importBackup(window, currentBackup());
+  await new Promise((r) => setTimeout(r, 120));
+  ok(/^Imported/.test($("#toast").textContent.trim()),
+    "export→import round-trip of presets-with-tombstones does not throw",
+    $("#toast").textContent.trim());
+
+  // Delete UI + commit: chip × must persist a tombstone through commitSettingsCandidate.
+  const presetSeed = currentBackup();
+  presetSeed.settings.dayPlanPresets = [
+    {
+      id: "dpp_alive", label: "500 kcal", intent: "reduced", targetKcal: 500,
+      veryLowCalorieAcknowledged: true, createdAt: 1, updatedAt: 10, lastUsedAt: 5,
+    },
+  ];
+  await importBackup(window, presetSeed);
+  await new Promise((r) => setTimeout(r, 120));
+  ok(/^Imported/.test($("#toast").textContent.trim()),
+    "active preset seed imports before delete UI coverage", $("#toast").textContent.trim());
+  $("#btn-day-goals").click();
+  ok(!$("#sheet-day-goals").hidden, "day plan sheet opens for preset delete coverage");
+  const fastSeg = $("#dg-intent-seg [data-dg-intent='fast']");
+  if (fastSeg) fastSeg.click();
+  ok($("#dg-presets") && !$("#dg-presets").hidden,
+    "#dg-presets is visible on Fast (not nested inside the Reduced panel)");
+  const reducedSeg = $("#dg-intent-seg [data-dg-intent='reduced']");
+  if (reducedSeg) reducedSeg.click();
+  const delBtn = $("#dg-preset-chips [data-preset-delete='dpp_alive']");
+  ok(delBtn && delBtn.tagName === "BUTTON",
+    "preset delete is a real <button> (keyboard-reachable, not a nested span)",
+    delBtn ? delBtn.outerHTML : `chips=${($("#dg-preset-chips") && $("#dg-preset-chips").innerHTML) || "(missing)"}`);
+  window.confirm = () => true;
+  if (delBtn) delBtn.click();
+  await new Promise((r) => setTimeout(r, 80));
+  const afterDelete = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
+  const gone = (afterDelete.dayPlanPresets || []).find((p) => p.id === "dpp_alive");
+  ok(gone && gone.deleted === true && gone.targetKcal == null,
+    "chip × commits a Sync-shaped deleted tombstone (no silent no-op)",
+    gone ? JSON.stringify(gone) : "missing");
+  ok(gone && gone.resetEpoch === Sync.getResetAt(),
+    "chip × tombstone carries the live privacy epoch (commitSettingsCandidate stamp path)");
+  ok(Sync.activeDayPlanPresets(afterDelete.dayPlanPresets || []).every((p) => p.id !== "dpp_alive"),
+    "deleted preset is no longer active after commit");
+  await importBackup(window, currentBackup());
+  await new Promise((r) => setTimeout(r, 120));
+  ok(/^Imported/.test($("#toast").textContent.trim()),
+    "post-delete settings export→import accepts the tombstone",
+    $("#toast").textContent.trim());
+  const clearPresets = currentBackup();
+  clearPresets.settings.dayPlanPresets = [];
+  await importBackup(window, clearPresets);
+  await new Promise((r) => setTimeout(r, 80));
+  ok(/^Imported/.test($("#toast").textContent.trim()),
+    "preset fixtures cleared before later tests run");
+  window.eval("UI").closeSheet("sheet-day-goals");
+  window.confirm = () => true;
+
+  // Part IX.1: VIII.1 fixed dayGoalLock provenance at getDayGoalLock, the
+  // ledger's own validator, migrateDayGoals and healLoggedDayGoals's rebuild
+  // of out[day] — but normalizeImportedEvent (the fifth site) still rebuilt
+  // out.dayGoalLock from a fixed field list that dropped intent and
+  // fastAcknowledged, and still accepted a bare targetKcal 0 with no
+  // declaration. Reproduce it through the real chain: declare a fast, log
+  // real food against it (which stamps the *event's* own lock via the live
+  // getDayGoalLock context, not just settings.dayGoals), export through the
+  // app's real exporter, and reimport through the app's real importer.
+  const ix1Day = "2026-01-18";
+  const ix1Declare = currentBackup();
+  ix1Declare.settings.dayGoals = {
+    ...ix1Declare.settings.dayGoals,
+    [ix1Day]: { targetKcal: 0, baseKcal: 2200, updatedAt: 60, intent: "fast", fastAcknowledged: true },
+  };
+  await importBackup(window, ix1Declare);
+  ok(/^Imported$/.test($("#toast").textContent.trim()),
+    "IX.1 setup: a fast is declared ahead of logging so the root add can stamp its own event lock");
+
+  const ix1RootEvent = Ledger.addEntry(ix1Day, {
+    name: "Black coffee", displayQty: "1 cup", grams: 240, meal: "snack",
+    macros: { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: 5, k: 50 }, sd: 0.1,
+  });
+  ok(ix1RootEvent.dayGoalLock && ix1RootEvent.dayGoalLock.targetKcal === 0 &&
+      ix1RootEvent.dayGoalLock.intent === "fast" && ix1RootEvent.dayGoalLock.fastAcknowledged === true,
+    "the live logged root stamps a declared-fast event lock with intent intact");
+
+  const ix1Export = currentBackup();
+  await importBackup(window, ix1Export);
+  ok(/^Imported$/.test($("#toast").textContent.trim()),
+    "IX.1: re-importing the app's own real export of a declared fast is accepted");
+  const ix1ReimportedEvent = Ledger.allEvents()
+    .find((event) => event.day === ix1Day && event.type === "add" && event.dayGoalLock);
+  ok(ix1ReimportedEvent && ix1ReimportedEvent.dayGoalLock.targetKcal === 0,
+    "IX.1a: the reimported root event still carries a zero-calorie lock");
+  ok(ix1ReimportedEvent && ix1ReimportedEvent.dayGoalLock.intent === "fast" &&
+      ix1ReimportedEvent.dayGoalLock.fastAcknowledged === true,
+    "IX.1a: normalizeImportedEvent carries intent/fastAcknowledged into the reimported event lock instead of dropping them");
+
+  // IX.1b, chained on the same data: a Drive-style merge (the real
+  // Sync.mergeDocs, exactly as a sync round would run it) must not let the
+  // event lock's provenance regress even after surviving reimport.
+  const ix1LocalDoc = {
+    version: Sync.DOC_VERSION,
+    generationSchemaVersion: Sync.GENERATION_SCHEMA_VERSION,
+    updatedAt: Date.now(),
+    resetAt: Sync.getResetAt(),
+    events: Ledger.allEvents(),
+    personalFoods: App.state.personalFoods,
+    dayGoals: App.state.settings.dayGoals,
+    dayPlans: App.state.settings.dayPlans,
+    gapDrafts: App.state.settings.gapDrafts,
+    phases: App.state.settings.phases,
+    weights: App.state.settings.weights,
+    profile: App.state.settings.profile,
+    goals: App.state.settings.goals,
+    goalsUpdatedAt: App.state.settings.goalsUpdatedAt,
+    goalsResetEpoch: App.state.settings.goalsResetEpoch,
+  };
+  const ix1Merged = Sync.mergeDocs(ix1LocalDoc, ix1LocalDoc).doc;
+  const ix1HealedLock = ix1Merged.dayGoals[ix1Day];
+  ok(ix1HealedLock && ix1HealedLock.intent === "fast" && ix1HealedLock.fastAcknowledged === true &&
+      ix1HealedLock.targetKcal === 0,
+    "IX.1b: healLoggedDayGoals preserves the fast declaration through a real merge");
+  const ix1Resolved = Phases.goalsForDay(ix1Day, { ...ix1Merged, dayGoals: ix1Merged.dayGoals });
+  ok(ix1Resolved.kcal === 0,
+    "IX.1: end to end — Ledger.addEntry -> export -> import -> mergeDocs -> goalsForDay still resolves the " +
+    "declared fast to kcal 0, not a full-phase miss");
+
+  // Clean up: later assertions in this run assume today is an ordinary day
+  // and this fixture lives on a different day, but leaving it declared could
+  // still confuse a later full-backup comparison.
+  const ix1Clear = currentBackup();
+  delete ix1Clear.settings.dayGoals[ix1Day];
+  await importBackup(window, ix1Clear);
+  ok(/^Imported$/.test($("#toast").textContent.trim()), "the IX.1 fixture is removed before later tests run");
+
+  // Part X.5 supersedes IX.2 here. IX.2 had App.importedPlannedKcal *reject*
+  // intent "fast" paired with a nonzero target for settings.dayGoals — the
+  // one validator of the four that hard-failed instead of downgrading.
+  // Sync.normalizeDayGoal, Phases.bumpsForDay and Ledger._normalizedDayGoalLock
+  // (and, below, this same import path's event-lock mirror) all already drop
+  // the stray "fast" label and keep the record as an ordinary reduced-day
+  // plan rather than failing outright — so one hand-edited record was taking
+  // an entire backup restore down with it for no reason. This assertion is
+  // changed, loudly, to require the same downgrade-and-keep behaviour the
+  // other three validators already have, not to weaken what it checks.
+  const incoherentFastImport = currentBackup();
+  incoherentFastImport.settings.dayGoals = {
+    ...incoherentFastImport.settings.dayGoals,
+    [ix1Day]: { targetKcal: 1500, baseKcal: 2200, updatedAt: 61, intent: "fast", fastAcknowledged: true },
+  };
+  await importBackup(window, incoherentFastImport);
+  ok(/^Imported$/.test($("#toast").textContent.trim()),
+    "X.5: App.importedPlannedKcal downgrades intent \"fast\" paired with a nonzero target to an ordinary reduced-day plan instead of failing the whole import");
+  const incoherentFastSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
+  const incoherentFastGoal = incoherentFastSettings.dayGoals[ix1Day];
+  ok(incoherentFastGoal && incoherentFastGoal.targetKcal === 1500 &&
+      incoherentFastGoal.intent === undefined && incoherentFastGoal.fastAcknowledged === undefined,
+    "X.5: the downgraded record drops intent/fastAcknowledged and keeps the numeric plan, mirroring Ledger._normalizedDayGoalLock");
+
+  // The same incoherent combination can also arrive on an *event*'s
+  // dayGoalLock (normalizeImportedEvent, the site IX.1 fixed) rather than on
+  // settings.dayGoals — that reconstruction has to mirror
+  // Ledger._normalizedDayGoalLock's own IX.2 fix, or a nonzero-target lock
+  // could still come back out the other side carrying intent "fast".
+  const incoherentLockImport = currentBackup();
+  incoherentLockImport.events = [
+    ...incoherentLockImport.events,
+    {
+      id: "incoherent-lock-event", ts: Date.now(), day: "2026-01-19", type: "add", resetEpoch: 0,
+      dayGoalLock: { targetKcal: 1500, baseKcal: 2200, intent: "fast", fastAcknowledged: true },
+      entry: {
+        id: "incoherent-lock-entry", name: "not a fast", displayQty: "1 item", grams: 100, meal: "snack",
+        macros: { kcal: 100, p: 5, c: 10, f: 2, fb: 1, na: 20, k: 40 }, sd: 0.1,
+      },
+    },
+  ];
+  await importBackup(window, incoherentLockImport);
+  ok(/^Imported$/.test($("#toast").textContent.trim()),
+    "IX.2 event-lock mirror: a nonzero-target lock with intent \"fast\" imports as an ordinary lock rather than being rejected outright");
+  const incoherentLockEvent = Ledger.allEvents().find((event) => event.id === "incoherent-lock-event");
+  ok(incoherentLockEvent && incoherentLockEvent.dayGoalLock &&
+      incoherentLockEvent.dayGoalLock.targetKcal === 1500 && incoherentLockEvent.dayGoalLock.intent === undefined &&
+      incoherentLockEvent.dayGoalLock.fastAcknowledged === undefined,
+    "IX.2: normalizeImportedEvent never writes intent \"fast\" alongside a nonzero targetKcal, mirroring Ledger._normalizedDayGoalLock");
+
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "foods").click();
   await new Promise((r) => setTimeout(r, 20));
   $("#foods-list .food-item").click();
@@ -2363,6 +2679,39 @@ async function runImportSecurity() {
     "day detail does not compare incomplete sodium with the full goal");
   ok(!$("#quick-xss") && /<img id="quick-xss"/.test($("#day-log").textContent),
     "quick-entry markup is escaped in the diary");
+
+  // Part IX.5: notScored() lacked incompleteMineral's empty-day guard, so a
+  // declared fast with nothing logged at all printed "0 mg* · not scored
+  // today" plus a spurious "N% covered" footnote — there was no food to
+  // cover a percentage of. Call the real UI.updateHUD directly against a
+  // genuinely empty day, so this does not depend on Today's current viewDay
+  // (which already carries this run's other fixtures).
+  const UI = window.eval("UI");
+  const emptyFastDay = "2018-03-11";
+  ok(Ledger.totalsFor(emptyFastDay).count === 0, "IX.5 fixture sanity: the empty-fast day has no logged entries");
+  const emptyFastSettings = {
+    ...App.state.settings,
+    dayGoals: {
+      ...App.state.settings.dayGoals,
+      [emptyFastDay]: { targetKcal: 0, baseKcal: 2200, updatedAt: 1, intent: "fast", fastAcknowledged: true },
+    },
+  };
+  const emptyFastGoals = Phases.goalsForDay(emptyFastDay, emptyFastSettings);
+  UI.updateHUD(Ledger.totalsFor(emptyFastDay), emptyFastGoals, {
+    viewDay: emptyFastDay, todayKey: Ledger.todayKey(),
+  });
+  ok($("#v-sodium").textContent.trim() === "—" && $("#v-potassium").textContent.trim() === "—",
+    "IX.5: a declared fast with nothing logged shows a plain dash, not \"0 mg* · not scored today\"");
+  ok($("#v-p").textContent.trim() === "—",
+    "IX.5: the same empty-day guard applies to the shared notScored() path used by macros, not just minerals");
+  ok($("#v-na").hidden && $("#v-na").textContent.trim() === "",
+    "IX.5: no food logged means no coverage footnote either — a \"% covered\" figure would misstate that nothing was measured");
+  // Part X.3: one line below the row IX.5 fixed. The unscored.naK branch
+  // short-circuited ahead of the ratio == null → hidden branch, so the same
+  // empty day that shows a plain dash on every other row read "Na:K — not
+  // scored today" here instead.
+  ok($("#v-nak").textContent.trim() === "—",
+    "X.3: the naK line gets the same empty-day guard — a fast with nothing logged reads a plain dash, not \"Na:K — not scored today\"");
 
   // Once durable replacement succeeds, a renderer failure must not be called
   // an import failure, and Drive sync must still be scheduled.
@@ -2552,6 +2901,154 @@ async function runRevisionDeletionGuard() {
   dom.window.close();
 }
 
+// --- day-intent release gate: X.2 disclosure/contradiction, X.4 sodium ceiling
+async function runDayIntentReleaseGate() {
+  console.log("\n[day-intent release gate] Part X.2 / X.4");
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8")
+    .replace(/<script src="https:\/\/accounts\.google\.com[^"]*"[^>]*><\/script>/, "");
+  const vc = new VirtualConsole();
+  vc.on("jsdomError", (e) => errors.push(String(e.message || e)));
+  const dom = new JSDOM(html, { url: "http://localhost/", runScripts: "dangerously", virtualConsole: vc, pretendToBeVisual: true });
+  const { window } = dom;
+  installPrimaryLock(window);
+  window.HTMLCanvasElement.prototype.getContext = function () { const c = fakeCtx(); c.canvas = this; return c; };
+  Object.defineProperty(window.HTMLElement.prototype, "clientWidth", { get() { return 360; }, configurable: true });
+  window.Element.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, width: 360, height: 200, right: 360, bottom: 200, x: 0, y: 0, toJSON() {} }; };
+  window.HTMLElement.prototype.scrollIntoView = () => {};
+
+  const today = new Date();
+  const k = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return dayKey(d); };
+
+  // 9 ordinary eating days, every target hit exactly, plus 4 declared fasts
+  // (logged as black coffee: zero kcal, zero-but-known sodium) at the recent
+  // end of the default 14-day range. 13 logged days, matching the numbers
+  // measured live in Part X.4/X.2's report.
+  const eatingDays = [];
+  for (let i = 5; i <= 13; i++) eatingDays.push(k(i));
+  const fastDays = [k(1), k(2), k(3), k(4)];
+
+  const events = [];
+  for (const day of eatingDays) {
+    events.push({
+      id: `eat-${day}`, ts: Date.now(), day, type: "add",
+      entry: {
+        id: `eat-entry-${day}`, name: "Eating day meal", displayQty: "300 g", grams: 300, meal: "lunch",
+        macros: { kcal: 2000, p: 150, c: 200, f: 65, fb: 30, na: 1500 }, sd: 0.1,
+      },
+    });
+  }
+  for (const day of fastDays) {
+    events.push({
+      id: `fast-${day}`, ts: Date.now(), day, type: "add",
+      entry: {
+        id: `fast-entry-${day}`, name: "Black coffee", displayQty: "1 cup", grams: 240, meal: "snack",
+        macros: { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: 0 }, sd: 0.1,
+      },
+    });
+  }
+  const dayGoals = {};
+  for (const day of fastDays) {
+    dayGoals[day] = { targetKcal: 0, baseKcal: 2200, updatedAt: 1, intent: "fast", fastAcknowledged: true };
+  }
+
+  window.localStorage.setItem("nd_events_v1", JSON.stringify(events));
+  window.localStorage.setItem("nd_settings_v1", JSON.stringify({
+    goals: { kcal: 2200, protein: 150, carbs: 250, fat: 70, fiber: 30, sodium: 2300 },
+    weights: {}, weightUnit: "kg", phases: [], profile: {}, dayGoals,
+  }));
+
+  for (const src of [...window.document.querySelectorAll("script[src]")].map((s) => s.getAttribute("src"))) {
+    if (!src || /^https?:/.test(src)) continue;
+    inject(window, src);
+  }
+  await bootApp(window);
+  const $ = (s) => window.document.querySelector(s);
+  const text = (s) => ($(s) ? $(s).textContent : "");
+
+  const tab = [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights");
+  tab.click();
+  await new Promise((r) => setTimeout(r, 60));
+
+  // --- X.4: constraint() must exclude exempted days from the sodium ceiling
+  // average, not credit them. 9 eating days at 1,500 mg each; 4 declared
+  // fasts logged at 0 mg (sodiumCovered true). Pre-fix this blends to
+  // (9*1500 + 4*0) / 13 ≈ 1,038 mg across 13 "usable" days.
+  const nakText = text("#nak-card");
+  ok(/Sodium 1,500 mg\/day across 9 usable days/.test(nakText),
+    "X.4: the sodium ceiling average excludes declared-fast days from the denominator, not just credits them at 0",
+    nakText);
+  ok(!/across 13 usable days/.test(nakText),
+    "X.4: fast days do not inflate the usable-day count for the sodium ceiling");
+
+  // --- X.2a: statusFor must not print a band verdict for an exempted cell.
+  // Use an untouched honoured fast (fastDays[0]); P1 below mutates a different
+  // fast day so these assertions keep a true exempted cell.
+  const proteinPill = window.document.querySelector('#insight-nutrient [data-nutrient="protein"]');
+  proteinPill.click();
+  await new Promise((r) => setTimeout(r, 30));
+  const trendDetails = $("#trend-data details");
+  trendDetails.open = true;
+  const fastBtn = $(`#trend-data button.chart-day-link[data-day="${fastDays[0]}"]`);
+  ok(!!fastBtn, "X.2a fixture sanity: the day list exposes a row for the declared-fast day");
+  if (fastBtn) {
+    const cells = [...fastBtn.closest("tr").querySelectorAll("td")];
+    const statusCell = cells[cells.length - 1];
+    ok(!/\bshort\b/i.test(statusCell.textContent),
+      "X.2a: the day list does not print 'short' for a protein cell the plan exempted",
+      statusCell.textContent);
+    ok(/not scored/i.test(statusCell.textContent),
+      "X.2a: the day list instead discloses the exemption, matching Today's own wording",
+      statusCell.textContent);
+  }
+
+  // --- X.2a: renderDayDetail must agree with the day list and Today.
+  if (fastBtn) {
+    fastBtn.click();
+    await new Promise((r) => setTimeout(r, 20));
+    const detailText = text("#day-detail");
+    ok(!/\d+\s*g short/i.test(detailText),
+      "X.2a: renderDayDetail does not print '150 g short' for the same exempted protein cell",
+      detailText);
+    ok(/not scored today/i.test(detailText),
+      "X.2a: renderDayDetail says not scored today, agreeing with Today and the day list",
+      detailText);
+  }
+
+  // --- X.2b: the scorecard discloses the exemption instead of dropping the
+  // row silently — the label VI.2 step 4 specified, sourced from the same
+  // exemptByPlan fact scoreDayTotals already stamps.
+  // Run while all four honoured fasts remain (before the P1 mutation).
+  const pRow = [...window.document.querySelectorAll(".score-list li")]
+    .find((li) => /Protein/.test(li.textContent));
+  ok(!!pRow && /not scored on 4 planned days/i.test(pRow.textContent),
+    "X.2b: the scorecard's protein row discloses 'not scored on 4 planned days'",
+    pRow && pRow.textContent);
+
+  // P1 regression: a declared fast that ate food must ENTER the sodium usable
+  // set (effectiveGoals clears _unscored). Mutate one already-in-range
+  // honoured fast day (fastDays[3], not the X.2a day) so the Insights window
+  // and dayGoals stay put — usable should become 10 at
+  // (9*1500 + 5200)/10 = 1870, not stay 9.
+  const Ledger = window.eval("Ledger");
+  const revertedDay = fastDays[3];
+  Ledger.removeEntry(revertedDay, `fast-entry-${revertedDay}`);
+  Ledger.addEntry(revertedDay, {
+    name: "Reverted fast meal", displayQty: "400 g", grams: 400, meal: "dinner",
+    macros: { kcal: 3000, p: 150, c: 300, f: 100, fb: 30, na: 5200 }, sd: 0.1,
+  });
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+  await new Promise((r) => setTimeout(r, 60));
+  const nakReverted = text("#nak-card");
+  ok(/across 10 usable days/.test(nakReverted),
+    "P1: a declared fast that recorded food re-enters the sodium usable set via effectiveGoals",
+    nakReverted);
+  ok(/Sodium 1,870 mg\/day across 10 usable days/.test(nakReverted),
+    "P1: sodium average includes the reverted fast's 5200 mg rather than dropping the day",
+    nakReverted);
+
+  dom.window.close();
+}
+
 (async () => {
   await run("main", 90);
   await run("short", 21);
@@ -2561,6 +3058,7 @@ async function runRevisionDeletionGuard() {
   await runGenerationRolloutIntegration();
   await runImportSecurity();
   await runRevisionDeletionGuard();
+  await runDayIntentReleaseGate();
 
   console.log("\n[console errors]");
   const real = errors.filter((e) => !/Could not load|Not implemented|css/i.test(e));

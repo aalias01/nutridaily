@@ -43,7 +43,7 @@
         <button id="btn-day-prev" class="iconbtn" type="button" aria-label="Previous day">‹</button>
         <div class="day-meta">
           <button type="button" class="day day-btn" id="day-label" title="Jump to today"></button>
-          <button type="button" class="linkbtn day-goals-link" id="btn-day-goals" title="Plan a calorie adjustment before logging your first food">Energy adjustment</button>
+          <button type="button" class="linkbtn day-goals-link" id="btn-day-goals" title="Plan a reduced-energy day or declare a fast">Day plan</button>
         </div>
         <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
       </div>
@@ -54,22 +54,30 @@
   </header>
 
   <section id="hud" aria-label="Day totals">
-    <div class="kcal-block hud-nut" data-hud-nutrient="kcal" tabindex="0" role="button" aria-label="Show calorie contributors" title="Tap to see where calories came from">
-      <div><span id="v-kcal-big">0</span><span class="kcal-unit"> kcal</span></div>
-      <div class="range" id="kcal-range">—</div>
-      <div class="bar big"><div class="fill" id="f-kcal"></div></div>
-      <div class="m-val small" id="v-kcal"></div>
+    <div id="hud-fasting" class="hud-fasting" hidden>
+      <div class="hud-fasting-title">Fasting</div>
+      <div class="hud-fasting-meta" id="hud-fasting-meta"></div>
+      <p class="muted small" id="hud-fasting-copy">Only zero-calorie drinks keep the day a fast. Logging food ends it and scores the day normally.</p>
+      <button type="button" class="btn" id="btn-hud-fasting-log">Log food</button>
     </div>
-    <div class="macros">
-      <div class="macro hud-nut" data-hud-nutrient="protein" tabindex="0" role="button" aria-label="Show protein contributors" title="Tap to see where protein came from"><div class="m-top"><span>Protein</span><span class="m-val" id="v-p"></span></div><div class="bar"><div class="fill p" id="f-p"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="carbs" tabindex="0" role="button" aria-label="Show carb contributors" title="Tap to see where carbs came from"><div class="m-top"><span>Carbs</span><span class="m-val" id="v-c"></span></div><div class="bar"><div class="fill c" id="f-c"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="fat" tabindex="0" role="button" aria-label="Show fat contributors" title="Tap to see where fat came from"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="fiber" tabindex="0" role="button" aria-label="Show fiber contributors" title="Tap to see where fiber came from"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="sodium" tabindex="0" role="button" aria-label="Show sodium contributors" title="Tap to see where sodium came from"><div class="m-top"><span>Sodium</span><span class="m-val" id="v-sodium"></span></div><div class="bar"><div class="fill na" id="f-sodium"></div></div></div>
-      <div class="macro hud-nut" data-hud-nutrient="potassium" tabindex="0" role="button" aria-label="Show potassium contributors" title="Tap to see where potassium came from"><div class="m-top"><span>Potassium</span><span class="m-val" id="v-potassium"></span></div><div class="bar"><div class="fill k" id="f-potassium"></div></div></div>
+    <div id="hud-nutrients" class="hud-nutrients">
+      <div class="kcal-block hud-nut" data-hud-nutrient="kcal" tabindex="0" role="button" aria-label="Show calorie contributors" title="Tap to see where calories came from">
+        <div><span id="v-kcal-big">0</span><span class="kcal-unit"> kcal</span></div>
+        <div class="range" id="kcal-range">—</div>
+        <div class="bar big"><div class="fill" id="f-kcal"></div></div>
+        <div class="m-val small" id="v-kcal"></div>
+      </div>
+      <div class="macros">
+        <div class="macro hud-nut" data-hud-nutrient="protein" tabindex="0" role="button" aria-label="Show protein contributors" title="Tap to see where protein came from"><div class="m-top"><span>Protein</span><span class="m-val" id="v-p"></span></div><div class="bar"><div class="fill p" id="f-p"></div></div></div>
+        <div class="macro hud-nut" data-hud-nutrient="carbs" tabindex="0" role="button" aria-label="Show carb contributors" title="Tap to see where carbs came from"><div class="m-top"><span>Carbs</span><span class="m-val" id="v-c"></span></div><div class="bar"><div class="fill c" id="f-c"></div></div></div>
+        <div class="macro hud-nut" data-hud-nutrient="fat" tabindex="0" role="button" aria-label="Show fat contributors" title="Tap to see where fat came from"><div class="m-top"><span>Fat</span><span class="m-val" id="v-f"></span></div><div class="bar"><div class="fill f" id="f-f"></div></div></div>
+        <div class="macro hud-nut" data-hud-nutrient="fiber" tabindex="0" role="button" aria-label="Show fiber contributors" title="Tap to see where fiber came from"><div class="m-top"><span>Fiber</span><span class="m-val" id="v-fb"></span></div><div class="bar"><div class="fill fb" id="f-fb"></div></div></div>
+        <div class="macro hud-nut" data-hud-nutrient="sodium" tabindex="0" role="button" aria-label="Show sodium contributors" title="Tap to see where sodium came from"><div class="m-top"><span>Sodium</span><span class="m-val" id="v-sodium"></span></div><div class="bar"><div class="fill na" id="f-sodium"></div></div></div>
+        <div class="macro hud-nut" data-hud-nutrient="potassium" tabindex="0" role="button" aria-label="Show potassium contributors" title="Tap to see where potassium came from"><div class="m-top"><span>Potassium</span><span class="m-val" id="v-potassium"></span></div><div class="bar"><div class="fill k" id="f-potassium"></div></div></div>
+      </div>
+      <div class="nak-line small" id="v-nak" hidden></div>
+      <div class="hud-footnote muted small" id="v-na" hidden></div>
     </div>
-    <div class="nak-line small" id="v-nak" hidden></div>
-    <div class="hud-footnote muted small" id="v-na" hidden></div>
   </section>
 
   <main>
@@ -325,7 +333,7 @@
           <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
           <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
         </div>
-        <p class="muted small" style="margin-top:10px"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, energy adjustments, weight, and goals.</p>
+        <p class="muted small" style="margin-top:10px"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, day plans, weight, and goals.</p>
         <div class="row">
           <button id="btn-clear" class="btn ghost danger" type="button">Clear logs</button>
           <button id="btn-factory-reset" class="btn ghost danger" type="button">Start fresh</button>
@@ -573,19 +581,52 @@
     </div>
   </div>
 
-  <!-- Planned calorie adjustment (frozen absolute target for today) -->
+  <!-- Day intent: Normal / Reduced / Fast (frozen before first add on reduced) -->
   <div id="sheet-day-goals" class="sheet" hidden>
     <div class="sheet-backdrop" data-close="sheet-day-goals"></div>
     <div class="sheet-card">
       <div class="sheet-grab"></div>
-      <h3>Energy adjustment</h3>
-      <p class="muted small" id="day-goals-blurb">Plan a calorie adjustment for today before logging. It locks after your first food so the target cannot be changed to fit the result.</p>
-      <p class="muted small" id="energy-adjustment-preview"></p>
-      <div class="goals-grid energy-adjustment-grid">
-        <div><label class="small muted" for="dg-kcal">Planned target</label><input id="dg-kcal" type="number" min="800" max="6000" step="50" placeholder="2200"></div>
+      <h3 id="day-goals-title">Today&apos;s plan</h3>
+      <p class="muted small" id="day-goals-blurb">Plan this day before logging. Reduced plans lock after the first food so the target cannot be changed to fit the result.</p>
+      <p class="muted small" id="dg-window-note">Eating in a window — 16:8, or Ramadan — is a normal day. Don&apos;t mark it.</p>
+      <div class="phase-kind-seg seg" id="dg-intent-seg" role="group" aria-label="Day intent">
+        <button type="button" data-dg-intent="normal" class="on" aria-pressed="true">Normal</button>
+        <button type="button" data-dg-intent="reduced" aria-pressed="false">Reduced</button>
+        <button type="button" data-dg-intent="fast" aria-pressed="false">Fast</button>
       </div>
+
+      <div id="dg-panel-normal" hidden>
+        <p class="muted small">No calorie plan for this day. Existing plans can be cleared below.</p>
+      </div>
+
+      <div id="dg-panel-reduced">
+        <p class="muted small" id="energy-adjustment-preview"></p>
+        <div class="goals-grid energy-adjustment-grid">
+          <div><label class="small muted" for="dg-kcal">Planned target</label><input id="dg-kcal" type="number" min="200" max="6000" step="10" placeholder="2200"></div>
+        </div>
+        <p class="muted small" id="dg-plan-disclosure"></p>
+      </div>
+
+      <div id="dg-panel-fast" hidden>
+        <p class="muted small" id="dg-fast-copy"></p>
+        <label class="check-row small" for="dg-fast-ack">
+          <input id="dg-fast-ack" type="checkbox">
+          <span>I understand this is a zero-calorie day plan</span>
+        </label>
+        <p class="muted small">Very-low-calorie and fasting plans require clinician supervision. This app does not give medical advice.</p>
+      </div>
+
+      <div id="dg-presets" class="dg-presets" hidden>
+        <div class="dg-presets-head">
+          <span class="small muted">Presets</span>
+          <button type="button" class="linkbtn" id="dg-preset-save">Save as preset</button>
+        </div>
+        <div id="dg-preset-chips" class="unit-chips" role="group" aria-label="Day plan presets"></div>
+        <p class="muted small" id="dg-preset-hint">Tap to apply · × removes</p>
+      </div>
+
       <div class="row end">
-        <button id="dg-clear" class="btn ghost" type="button">Clear adjustment</button>
+        <button id="dg-clear" class="btn ghost" type="button">Clear plan</button>
         <button id="dg-save" class="btn" type="button">Save plan</button>
       </div>
     </div>

@@ -44,8 +44,105 @@ const Phases = (() => {
   };
   const MAJOR_KCAL_DELTA = 200;
   const MAJOR_PROTEIN_DELTA = 25;
-  const MIN_DAY_TARGET_KCAL = 800;
+  // A planned day is either an eating day or a declared fast. Values between 1
+  // and MIN_PLANNED_KCAL are not a smaller eating day, they are a typo: every
+  // published low-energy protocol (5:2, alternate-day) sits at 500-800 kcal, and
+  // a dropped digit on any of those lands below 200. The real typo defence is
+  // the acknowledgement ladder (LOW_KCAL_ACK_KCAL), not this floor — this only
+  // has to catch the impossible values, not the merely-implausible ones.
+  const MIN_PLANNED_KCAL = 200;
   const MAX_DAY_TARGET_KCAL = 6000;
+  const LOW_KCAL_ACK_KCAL = 1200;   // at or above this, no acknowledgement is required
+  const FAST_KCAL = 0;
+  const DAY_INTENTS = ["reduced", "fast"];
+
+  // Copy for the Fast control in the day-plan sheet. UI reads this via
+  // Phases.FAST_DECLARATION_COPY so the wording stays decided in one place.
+  // The threshold it describes is a hard cliff on a mean, not a fuzzy zone:
+  // effectiveGoals/scoreDayTotals treat any totals.kcal.mean > 0 as having
+  // eaten, so 5 kcal of milk in black coffee reverts the whole day to an
+  // ordinary one scored against the full phase target.
+  const FAST_DECLARATION_COPY =
+    "A fast means 0 kcal for the entire day. Logging anything with calories — even a splash of milk — ends the fast, and the day is scored normally instead.";
+
+  /** A declared fast (0) or a real planned-day range; never the gap between.
+   *  A phase target (baseKcal) is a different quantity with its own literal
+   *  800 floor — see bumpsForDay, which checks the two ranges separately on
+   *  purpose so the base side is never silently widened along with this one. */
+  function isPlannedKcal(n) {
+    return Number.isFinite(n) && (n === FAST_KCAL || (n >= MIN_PLANNED_KCAL && n <= MAX_DAY_TARGET_KCAL));
+  }
+
+  /** Local midnight that ends `dayKey` (start of the next calendar day). */
+  function endOfLocalDayMs(dayKey) {
+    if (!dayKey || !/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey))) return null;
+    const end = new Date(String(dayKey) + "T12:00:00");
+    if (Number.isNaN(end.getTime())) return null;
+    end.setHours(24, 0, 0, 0);
+    return end.getTime();
+  }
+
+  /**
+   * True when a declaration's plannedAt lands after the target day ended.
+   * Used only for fasts (they have no first-add lock); reduced days close on
+   * the first food add instead. The boolean rides on modern records only —
+   * never on stampMap clocks.
+   */
+  function isDeclaredAfterDay(dayKey, plannedAt) {
+    const end = endOfLocalDayMs(dayKey);
+    const at = Number(plannedAt);
+    return Number.isFinite(end) && Number.isFinite(at) && at > end;
+  }
+
+  /**
+   * Declaration window for a target day (§10).
+   * Reduced: from the previous calendar day through the target day, closing
+   * on the first food add. Fast: previous day through the following day;
+   * declarations after the target day ends get declaredAfterDay stamped.
+   */
+  function dayIntentWindow(targetDay, opts) {
+    const o = opts || {};
+    const todayKey = o.todayKey || dayKeyFromDate(new Date());
+    const intent = o.intent === "fast" ? "fast" : "reduced";
+    const hasEverAdded = typeof o.hasEverAdded === "function" ? !!o.hasEverAdded(targetDay) : !!o.hasEverAdded;
+    const prev = (() => {
+      const d = new Date(String(targetDay) + "T12:00:00");
+      d.setDate(d.getDate() - 1);
+      return dayKeyFromDate(d);
+    })();
+    const next = (() => {
+      const d = new Date(String(targetDay) + "T12:00:00");
+      d.setDate(d.getDate() + 1);
+      return dayKeyFromDate(d);
+    })();
+    let ok = false;
+    let reason = "";
+    if (intent === "fast") {
+      ok = todayKey >= prev && todayKey <= next;
+      if (!ok) {
+        reason = todayKey < prev
+          ? "Fasts can only be planned from the day before through the day after."
+          : "The grace window for this fast has closed.";
+      }
+    } else {
+      ok = todayKey >= prev && todayKey <= targetDay;
+      if (!ok) {
+        reason = todayKey < prev
+          ? "Day plans can only be set from the day before or on the day itself."
+          : "Day plans can only be set for this day before it ends.";
+      } else if (hasEverAdded) {
+        ok = false;
+        reason = "Planned calories lock after the first food is logged.";
+      }
+    }
+    return {
+      ok,
+      reason,
+      declaredAfterDay: intent === "fast" && isDeclaredAfterDay(targetDay, o.plannedAt != null ? o.plannedAt : Date.now()),
+      prevDay: prev,
+      nextDay: next,
+    };
+  }
   const SEX_OPTIONS = ["male", "female", "other"];
   const ACTIVITY_OPTIONS = ["sedentary", "light", "moderate", "active", "very_active"];
   const ACTIVITY_LABEL = {
@@ -86,6 +183,19 @@ const Phases = (() => {
     minFatShare: 0.20,
     maxFatShare: 0.45,
   });
+
+  /**
+   * A protein floor that would take more than the app's own maximum protein
+   * share of a planned day is not a target that day, it is a contradiction.
+   * validatePersistentGoals already refuses to SAVE that combination; scoring
+   * against it would grade someone on a configuration the app calls invalid.
+   * The floor itself is never lowered — only the scoring cell drops out.
+   */
+  function proteinScorableOnPlan(plannedKcal, proteinG) {
+    const needed = 4 * Number(proteinG) * (1 - BANDS.protein.pct);
+    const allowed = Number(plannedKcal) * PERSISTENT_ENERGY_POLICY.maxProteinShare;
+    return Number.isFinite(needed) && Number.isFinite(allowed) && needed <= allowed;
+  }
 
   /**
    * Minimum share of a day's calories that must come from foods with a known
@@ -183,39 +293,82 @@ const Phases = (() => {
     const ov = dayGoalOverride(settings, day);
     if (!ov) return null;
     const base = phaseGoals || normalizeGoals(DEFAULT_GOALS);
+    // targetKcal has to be known before intent can be decided: "fast" is only
+    // ever the resolved target's own shape, not a label that can ride along
+    // independently of it (Part IX.2) — a nonzero target with intent "fast"
+    // is honoured by neither Sync.normalizeDayGoal nor
+    // App.importedPlannedKcal, and this is the last gate before a number
+    // becomes a grade, so it must not diverge from either.
     const targetKcal = Number(ov.targetKcal);
+    // Absent on every record generation that predates this feature; a missing
+    // intent is an ordinary planned day, not a fast nobody declared. A bare
+    // ov.intent alone is not a declaration — this is the last gate before a
+    // number becomes a grade, so it checks every part of the declaration
+    // itself rather than trusting an ack (or a target of 0) enforced
+    // somewhere upstream (Part VIII.2, Part IX.2).
+    const intent = ov.intent === "fast" && ov.fastAcknowledged === true && targetKcal === 0 ? "fast" : "reduced";
     const frozenBase = Number(ov.baseKcal);
-    if (Number.isFinite(targetKcal) && targetKcal >= MIN_DAY_TARGET_KCAL && targetKcal <= MAX_DAY_TARGET_KCAL &&
-        Number.isFinite(frozenBase) && frozenBase >= MIN_DAY_TARGET_KCAL && frozenBase <= MAX_DAY_TARGET_KCAL) {
+    // This shape carries ov.intent directly, so it is the one place 0 can be
+    // gated on an explicit declaration rather than merely falling in range
+    // (Part VII.3) — isPlannedKcal alone can't see intent, so check it here.
+    const targetKcalOk = targetKcal === 0
+      ? intent === "fast"
+      : Number.isFinite(targetKcal) && targetKcal >= MIN_PLANNED_KCAL && targetKcal <= MAX_DAY_TARGET_KCAL;
+    if (targetKcalOk &&
+        Number.isFinite(frozenBase) && frozenBase >= 800 && frozenBase <= MAX_DAY_TARGET_KCAL) {
+      // A locked no-op (targetKcal === frozenBase) is a healed restatement of
+      // the phase's own target, not a plan, and must not need an
+      // acknowledgement it was never offered the chance to give — mirrors
+      // Sync.normalizeDayGoal's identical exemption.
+      if (targetKcal !== frozenBase && targetKcal > 0 && targetKcal < LOW_KCAL_ACK_KCAL &&
+          ov.veryLowCalorieAcknowledged !== true) {
+        return null;
+      }
       const kcal = targetKcal - frozenBase;
       return kcal !== 0 || ov.locked
         ? {
           kcal, targetKcal, baseKcal: frozenBase,
           plannedAt: Number(ov.plannedAt) || 0,
           locked: ov.locked === true,
+          intent,
+          ...(intent === "fast" && ov.declaredAfterDay === true ? { declaredAfterDay: true } : {}),
         }
         : null;
     }
+    // Neither the delta-bump nor the legacy-absolute shape below can express
+    // intent (sync.js's normalizeDayGoal never lets it ride along on either),
+    // so a resolved target of exactly 0 here is an arithmetic accident, not a
+    // declaration — [MIN_PLANNED_KCAL, MAX_DAY_TARGET_KCAL] only, never the
+    // {0} ∪ … helper (Part VII.3: this was a laundering path into a fully
+    // unscored day with no fast ever declared).
     if (ov.bumps && typeof ov.bumps === "object") {
       const kcal = Number(ov.bumps.kcal);
       const baseKcal = Number(base.kcal);
       const target = baseKcal + kcal;
-      return Number.isFinite(kcal) && kcal !== 0 &&
-        Number.isFinite(baseKcal) && baseKcal >= MIN_DAY_TARGET_KCAL && baseKcal <= MAX_DAY_TARGET_KCAL &&
-        target >= MIN_DAY_TARGET_KCAL && target <= MAX_DAY_TARGET_KCAL
-        ? { kcal }
-        : null;
+      if (!(Number.isFinite(kcal) && kcal !== 0 &&
+          Number.isFinite(baseKcal) && baseKcal >= 800 && baseKcal <= MAX_DAY_TARGET_KCAL &&
+          target >= MIN_PLANNED_KCAL && target <= MAX_DAY_TARGET_KCAL)) {
+        return null;
+      }
+      // A stale delta bump can resolve to a live very-low target after a
+      // phase revision walks its base down — a record does not always
+      // originate from a compliant client, so the ladder is enforced at the
+      // point the number is finally concrete rather than trusted upstream
+      // (Part VIII.2; this is the exact scenario VII.4 described).
+      if (target < LOW_KCAL_ACK_KCAL && ov.veryLowCalorieAcknowledged !== true) return null;
+      return { kcal, intent: "reduced" };
     }
     // Legacy absolute dayGoals → derive the calorie delta only. Historical
     // macro/electrolyte keys are intentionally ignored: a one-day adjustment
     // must never move protein, sodium or any other nutrient target.
     const absolute = Number(ov.kcal);
     const baseKcal = Number(base.kcal);
-    if (!Number.isFinite(absolute) || absolute < MIN_DAY_TARGET_KCAL || absolute > MAX_DAY_TARGET_KCAL ||
-        !Number.isFinite(baseKcal) || baseKcal < MIN_DAY_TARGET_KCAL || baseKcal > MAX_DAY_TARGET_KCAL) return null;
+    if (!Number.isFinite(absolute) || absolute < MIN_PLANNED_KCAL || absolute > MAX_DAY_TARGET_KCAL ||
+        !Number.isFinite(baseKcal) || baseKcal < 800 || baseKcal > MAX_DAY_TARGET_KCAL) return null;
+    if (absolute < LOW_KCAL_ACK_KCAL && ov.veryLowCalorieAcknowledged !== true) return null;
     const kcal = absolute - baseKcal;
     return kcal !== 0
-      ? { kcal, targetKcal: absolute, baseKcal, plannedAt: Number(ov.plannedAt) || 0 }
+      ? { kcal, targetKcal: absolute, baseKcal, plannedAt: Number(ov.plannedAt) || 0, intent: "reduced" }
       : null;
   }
 
@@ -556,23 +709,91 @@ const Phases = (() => {
     };
   }
 
-  /** Resolve targets for a day. Only kcal can receive a one-day adjustment. */
+  /**
+   * Resolve targets for a day. A one-day plan never moves a floor or a
+   * ceiling — protein, fiber, sodium and potassium keep their numbers under
+   * every intent. Carbs and fat follow energy by the same retarget policy a
+   * phase revision uses. A target the plan makes arithmetically incoherent is
+   * not scored that day (see _unscored below), and says so before you log.
+   */
   function goalsForDay(day, settings) {
     const base = normalizeGoals((settings && settings.goals) || DEFAULT_GOALS);
     const phase = phaseForDay((settings && settings.phases) || [], day);
     const rev = revisionForDay(phase, day);
     const fromPhase = rev ? normalizeGoals(rev.goals) : base;
     const bumps = bumpsForDay(day, settings, fromPhase);
-    if (!bumps) return { ...fromPhase, _bumps: null, _phase: fromPhase };
+    if (!bumps) return { ...fromPhase, _bumps: null, _phase: fromPhase, _unscored: null };
     const resolved = { ...fromPhase };
     if (Number.isFinite(bumps.targetKcal)) {
       resolved.kcal = bumps.targetKcal;
       resolved._phase = { ...fromPhase, kcal: bumps.baseKcal };
     } else {
-      resolved.kcal = Math.max(0, fromPhase.kcal + bumps.kcal);
+      // bumpsForDay's delta branch already validated fromPhase.kcal + bumps.kcal
+      // into [MIN_PLANNED_KCAL, MAX_DAY_TARGET_KCAL] before returning, so this
+      // can never land at or below 0 — no clamp needed, and one would read as
+      // a second sanctioned route to a zero target alongside the fast branch.
+      resolved.kcal = fromPhase.kcal + bumps.kcal;
       resolved._phase = fromPhase;
     }
     resolved._bumps = bumps;
+
+    const intent = bumps.intent === "fast" ? "fast" : "reduced";
+    if (intent === "fast") {
+      // Phase values stay on the resolved object — Today and the phase editor
+      // still need something to read — but nothing is graded: there is no
+      // meaningful target to hold anyone to against zero calories. kcal
+      // itself carries the same reason even though classify() already skips
+      // a 0 target mechanically — without it, nutritionScore's exemptByPlan
+      // never fires for kcal, and the row silently drops out of an all-fast
+      // range instead of disclosing why, the one nutrient VII.6's mineral
+      // disclosure fix missed (Part IX.3).
+      const unscoredFast = { kcal: "declared fast" };
+      for (const key of GOAL_KEYS) {
+        if (key === "kcal") continue;
+        unscoredFast[key] = "declared fast";
+      }
+      unscoredFast.naK = "declared fast";
+      resolved._unscored = unscoredFast;
+      return resolved;
+    }
+
+    // healLoggedDayGoals writes a {targetKcal === baseKcal, locked: true}
+    // record for every logged day, even when the plan changed nothing — so
+    // bumpsForDay returns a non-null record on every logged day, not just
+    // planned ones. Retargeting carbs/fat (and evaluating the protein floor)
+    // against an energy figure that hasn't actually moved would silently
+    // drift those two numbers on days the user never planned at all (see
+    // Part VII.1). A locked no-op must resolve byte-identically to the phase
+    // goals: nothing below this line may run unless the plan moved energy.
+    if (resolved.kcal === fromPhase.kcal) {
+      resolved._unscored = null;
+      return resolved;
+    }
+
+    // Both test harnesses set globalThis.Analytics before any test runs, and
+    // index.html loads phases.js before analytics.js — Analytics is defined
+    // by the time this line executes either way. The guard is not for that;
+    // it is what keeps phases.js loadable on its own if some future caller
+    // requires it without analytics.js, the same way analytics.js guards its
+    // own Phases reference. Absent Analytics, treat retargetForKcal as having
+    // returned null: carbs/fat hold at phase values and drop out of scoring
+    // instead of silently contradicting the day's calorie plan.
+    const retargetForKcal = typeof Analytics !== "undefined" && typeof Analytics.retargetForKcal === "function"
+      ? Analytics.retargetForKcal
+      : null;
+    const retargeted = retargetForKcal ? retargetForKcal(fromPhase, resolved.kcal) : null;
+    const unscored = {};
+    if (retargeted) {
+      resolved.carbs = retargeted.carbs;
+      resolved.fat = retargeted.fat;
+    } else {
+      unscored.carbs = "energy too low to retarget carbs and fat coherently";
+      unscored.fat = "energy too low to retarget carbs and fat coherently";
+    }
+    if (!proteinScorableOnPlan(resolved.kcal, fromPhase.protein)) {
+      unscored.protein = "protein floor exceeds the plan's maximum protein share";
+    }
+    resolved._unscored = Object.keys(unscored).length ? unscored : null;
     return resolved;
   }
 
@@ -1034,8 +1255,27 @@ const Phases = (() => {
     return hudState(mean, goal, band) !== "ok";
   }
 
+  /**
+   * A declared fast that actually recorded food reverts to an ordinary day
+   * everywhere: the data always beats the declaration. This is the one
+   * place that sees both the declaration (goals._unscored, stamped from
+   * goals._bumps.intent === "fast") and the data (totals), so it is where the
+   * two get reconciled — and the only place, so Insights (via scoreDayTotals)
+   * and the Today HUD (via updateHUD) cannot disagree about the same day.
+   * Zero-kcal logging (black coffee, water) leaves totals.kcal.mean at 0 and
+   * keeps the day a fast — there is no threshold constant here, only that one
+   * comparison.
+   */
+  function effectiveGoals(totals, goals) {
+    const declaredFast = !!(goals && goals._bumps && goals._bumps.intent === "fast");
+    const ateOnAFast = declaredFast && totals && totals.count > 0 &&
+      Number(totals.kcal && totals.kcal.mean) > 0;
+    return ateOnAFast && goals._phase ? goals._phase : goals;
+  }
+
   function scoreDayTotals(totals, goals) {
     if (!totals || !totals.count) return null;
+    const goalsForScoring = effectiveGoals(totals, goals);
     const out = {};
     const kCovered = potassiumCovered(totals);
     const naCovered = sodiumCovered(totals);
@@ -1052,22 +1292,33 @@ const Phases = (() => {
     for (const k of GOAL_KEYS) {
       const band = BANDS[k];
       const actual = map[k];
-      const target = goals[k];
-      const status = actual === undefined ? "skip" : classify(actual, target, band);
+      const target = goalsForScoring[k];
+      const computed = actual === undefined ? "skip" : classify(actual, target, band);
+      const unscoredReason = goalsForScoring && goalsForScoring._unscored && goalsForScoring._unscored[k];
       out[k] = {
-        status,
+        status: unscoredReason ? "skip" : computed,
         actual,
         target,
         delta: actual === undefined ? 0 : actual - target,
       };
+      // A plan exemption and a missing-coverage skip are different facts, and
+      // a real fast has near-zero mineral coverage by nature — both can be
+      // true on the same cell (VIII.4). exemptByPlan records the plan fact
+      // unconditionally whenever the plan named this key; skipReason records
+      // only that the *coverage* skip happened to also be a disclosed
+      // exemption, so a day that just lacks sodium data (no plan involved)
+      // never carries it. Nothing may conflate the two.
+      if (unscoredReason) out[k].exemptByPlan = true;
+      if (unscoredReason && computed !== "skip") out[k].skipReason = "unscored-plan";
     }
 
     const paired = pairedMinerals(totals);
     const jointCovered = nakCovered(totals);
     const ratio = jointCovered ? naKRatio(paired.na, paired.k) : null;
-    const ratioTarget = Number(goals.naK) || 1.0;
+    const ratioTarget = Number(goalsForScoring.naK) || 1.0;
+    const naKUnscoredReason = goalsForScoring && goalsForScoring._unscored && goalsForScoring._unscored.naK;
     out.naK = {
-      status: ratio == null ? "skip" : classify(ratio, ratioTarget, BANDS.naK),
+      status: naKUnscoredReason ? "skip" : (ratio == null ? "skip" : classify(ratio, ratioTarget, BANDS.naK)),
       actual: ratio,
       target: ratioTarget,
       delta: ratio == null ? 0 : ratio - ratioTarget,
@@ -1075,6 +1326,8 @@ const Phases = (() => {
         ? totals.naKCoverage
         : Math.min(Number(totals.naCoverage) || 0, Number(totals.kCoverage) || 0),
     };
+    if (naKUnscoredReason) out.naK.exemptByPlan = true;
+    if (naKUnscoredReason && ratio != null) out.naK.skipReason = "unscored-plan";
     return out;
   }
 
@@ -1123,7 +1376,7 @@ const Phases = (() => {
   function scoreRange(keys, totalsForDay, settings, opts) {
     const excludeDay = (opts && opts.excludeDay) || null;
     const rows = {};
-    for (const k of GOAL_KEYS) rows[k] = { hit: 0, under: 0, over: 0, skip: 0, sumDelta: 0, n: 0 };
+    for (const k of GOAL_KEYS) rows[k] = { hit: 0, under: 0, over: 0, skip: 0, exempt: 0, sumDelta: 0, n: 0 };
 
     let logged = 0;
     for (const day of keys) {
@@ -1136,7 +1389,15 @@ const Phases = (() => {
       if (!scored) continue;
       for (const k of GOAL_KEYS) {
         const s = scored[k];
-        if (!s || s.status === "skip") { rows[k].skip += 1; continue; }
+        if (!s || s.status === "skip") {
+          rows[k].skip += 1;
+          // A plan exemption and a missing-coverage skip are different facts
+          // (Part VIII.4) — this is the surface renderScorecard actually
+          // renders, so it needs the same disclosure nutritionScore already
+          // carries, not a silently smaller row (Part X.2b / VI.2 step 4).
+          if (s && s.exemptByPlan) rows[k].exempt += 1;
+          continue;
+        }
         rows[k][s.status] += 1;
         rows[k].sumDelta += s.delta;
         rows[k].n += 1;
@@ -1145,7 +1406,7 @@ const Phases = (() => {
 
     const nutrients = GOAL_KEYS.map((k) => {
       const r = rows[k];
-      return {
+      const row = {
         key: k,
         label: k === "kcal" ? "Calories" : k === "sodium" ? "Sodium" : k[0].toUpperCase() + k.slice(1),
         hit: r.hit,
@@ -1154,6 +1415,8 @@ const Phases = (() => {
         avgDelta: r.n ? r.sumDelta / r.n : 0,
         n: r.n,
       };
+      if (r.exempt) row.exemptN = r.exempt;
+      return row;
     });
 
     return { logged, days: keys.length, nutrients };
@@ -1176,11 +1439,15 @@ const Phases = (() => {
       return `${v}${u}`;
     };
 
+    // n is the count of *scored* days, not every logged day — a fast that
+    // recorded a zero-kcal item (or a reduced day with an unscored cell) is
+    // logged but exempt on some or all keys, so calling n "logged days" here
+    // would claim a total scoreRange never actually used for this row.
     const need = needCands[0]
-      ? `Needs work: ${needCands[0].label.toLowerCase()}, under on ${needCands[0].under} of ${needCands[0].n} logged days (avg ${fmtD(needCands[0])} short).`
+      ? `Needs work: ${needCands[0].label.toLowerCase()}, under on ${needCands[0].under} of ${needCands[0].n} scored days (avg ${fmtD(needCands[0])} short).`
       : null;
     const over = overCands[0]
-      ? `Overdid: ${overCands[0].label.toLowerCase()}, over on ${overCands[0].over} of ${overCands[0].n} logged days (avg +${fmtD(overCands[0])}).`
+      ? `Overdid: ${overCands[0].label.toLowerCase()}, over on ${overCands[0].over} of ${overCands[0].n} scored days (avg +${fmtD(overCands[0])}).`
       : null;
     return { need, over };
   }
@@ -1456,14 +1723,26 @@ const Phases = (() => {
     return { first, last, delta: last - first, n: entries.length };
   }
 
+  /**
+   * Cumulative intake vs the phase calorie target (not the day's plan target).
+   * A planned refeed at 2500 that is eaten to 2500 is +500 against the phase,
+   * not a perfect 0 — hiding that surplus was the old bug. An honoured
+   * declared fast with nothing logged contributes actual 0 vs the phase.
+   */
   function kcalBalance(keys, totalsForDay, settings) {
     let sum = 0;
     let n = 0;
     for (const day of keys) {
       const t = totalsForDay(day);
-      if (!t || !t.count) continue;
       const g = goalsForDay(day, settings);
-      sum += t.kcal.mean - g.kcal;
+      const isHonouredFast = !!(g && g._bumps && g._bumps.intent === "fast") &&
+        (!t || !t.count || !(t.kcal && Number(t.kcal.mean) > 0));
+      if ((!t || !t.count) && !isHonouredFast) continue;
+      const phaseKcal = Number(g && g._phase && g._phase.kcal);
+      const reference = Number.isFinite(phaseKcal) ? phaseKcal : Number(g && g.kcal);
+      if (!Number.isFinite(reference)) continue;
+      const intake = (t && t.count && t.kcal && Number.isFinite(t.kcal.mean)) ? t.kcal.mean : 0;
+      sum += intake - reference;
       n += 1;
     }
     return n ? { sum, n, avg: sum / n } : null;
@@ -1480,6 +1759,17 @@ const Phases = (() => {
     BANDS,
     PERSISTENT_GOAL_BOUNDS,
     PERSISTENT_ENERGY_POLICY,
+    MIN_PLANNED_KCAL,
+    MAX_DAY_TARGET_KCAL,
+    LOW_KCAL_ACK_KCAL,
+    FAST_KCAL,
+    DAY_INTENTS,
+    FAST_DECLARATION_COPY,
+    isPlannedKcal,
+    endOfLocalDayMs,
+    isDeclaredAfterDay,
+    dayIntentWindow,
+    proteinScorableOnPlan,
     normalizeGoals,
     validatePersistentGoals,
     sanitizePersistentTargets,
@@ -1528,6 +1818,7 @@ const Phases = (() => {
     NAK_MASS_TO_MOLAR,
     hudState,
     hudBarOver,
+    effectiveGoals,
     scoreDayTotals,
     scoreRange,
     callouts,

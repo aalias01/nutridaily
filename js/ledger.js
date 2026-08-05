@@ -76,12 +76,36 @@ const Ledger = (() => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const targetKcal = Number(value.targetKcal);
     const baseKcal = Number(value.baseKcal);
-    if (!Number.isFinite(targetKcal) || targetKcal < 800 || targetKcal > 6000 ||
+    // targetKcal is a planned day ({0} ∪ [200, 6000], a fast or a real
+    // reduced-day protocol); baseKcal is a frozen phase target and keeps its
+    // own unrelated [800, 6000] floor. ledger.js has no require()s of its own
+    // and never reads a Phases global — the range is inlined, not delegated
+    // to Phases.isPlannedKcal, so this module keeps loading standalone (same
+    // reason sync.js inlines it).
+    // A 0 target is only ever a real declaration, never bare arithmetic — a
+    // lock that recorded targetKcal 0 without its own fast acknowledgement
+    // would be the one shape the rest of the system refuses to honour
+    // (Part VIII.1). Reject the whole lock rather than write a half
+    // declaration. The reverse direction matters too: intent "fast" paired
+    // with a nonzero target is not a fast either, just an ordinary planned
+    // day with a stray label — Sync.normalizeDayGoal and
+    // App.importedPlannedKcal already refuse that combination, and this is
+    // the validator that writes the immutable event log, so it must not be
+    // the one place that honours it (Part IX.2).
+    const declaredFast = value.intent === "fast" && value.fastAcknowledged === true && targetKcal === 0;
+    const targetOk = Number.isFinite(targetKcal) &&
+      (targetKcal === 0 ? declaredFast : (targetKcal >= 200 && targetKcal <= 6000));
+    if (!targetOk ||
         !Number.isFinite(baseKcal) || baseKcal < 800 || baseKcal > 6000) return null;
     const out = { targetKcal, baseKcal };
     const plannedAt = Number(value.plannedAt);
     if (Number.isFinite(plannedAt) && plannedAt >= 0) out.plannedAt = plannedAt;
     if (value.veryLowCalorieAcknowledged === true) out.veryLowCalorieAcknowledged = true;
+    if (declaredFast) {
+      out.intent = "fast";
+      out.fastAcknowledged = true;
+      if (value.declaredAfterDay === true) out.declaredAfterDay = true;
+    }
     return out;
   }
 

@@ -536,7 +536,7 @@ const GDrive = (() => {
     if (String(name).startsWith(SHARD_PREFIX) && version !== 4) {
       throw driveDataError(`Drive shard ${name} has the wrong schema version. Nothing was changed.`, "drive-malformed-shard");
     }
-    const arrays = ["events", "personalFoods", "phases"];
+    const arrays = ["events", "personalFoods", "phases", "dayPlanPresets"];
     const objects = ["dayGoals", "dayPlans", "gapDrafts", "weights", "profile", "goals"];
     if (arrays.some((key) => doc[key] != null && !Array.isArray(doc[key])) ||
         objects.some((key) => doc[key] != null && (typeof doc[key] !== "object" || Array.isArray(doc[key])))) {
@@ -554,7 +554,7 @@ const GDrive = (() => {
         throw driveDataError(`Drive file ${name} has an invalid event. Nothing was changed.`, "drive-malformed-shard");
       }
     }
-    for (const key of ["personalFoods", "phases"]) {
+    for (const key of ["personalFoods", "phases", "dayPlanPresets"]) {
       for (const item of (doc[key] || [])) {
         if (!item || typeof item !== "object" || Array.isArray(item) || typeof item.id !== "string" || !item.id) {
           throw driveDataError(`Drive file ${name} has an invalid ${key} record. Nothing was changed.`, "drive-malformed-shard");
