@@ -173,4 +173,4 @@ npm run test:ui   # boots index.html headless and exercises the Insights tab
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Copyright © 2026 Alvin Alias. Portfolio project. Source is available for viewing and personal/non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use requires prior written permission.
