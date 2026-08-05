@@ -87,11 +87,12 @@ const Analytics = (() => {
    * @param {Function} opts.totalsForDay    day → Ledger totals
    * @param {Function} opts.goalsForDay     day → resolved goals for that day
    * @param {Function} [opts.weightKgForDay] day → body weight in kg (or null)
-   * @param {Function} [opts.bumpForDay] day → calorie-plan record | null
+   * @param {Function} [opts.dayPlanForDay] day → calorie-plan record | null
+   * @param {Function} [opts.bumpForDay] legacy alias of dayPlanForDay (one release)
    * @param {Function} [opts.firstAddAt] day → immutable first-add timestamp | null
    * @returns {Array<Object>} rows: { day, dow, weekend, logged, intent,
    *   accounted, itemCount, kcal, protein, carbs, fat, fiber, sodium, goals,
-   *   weightKg, bump }
+   *   weightKg, dayPlan, firstAddAt }
    */
   function buildDays(opts) {
     const o = opts || {};
@@ -99,7 +100,7 @@ const Analytics = (() => {
     const totalsForDay = o.totalsForDay || (() => null);
     const goalsForDay = o.goalsForDay || (() => ({}));
     const weightKgForDay = o.weightKgForDay || (() => null);
-    const bumpForDay = o.bumpForDay || (() => null);
+    const dayPlanForDay = o.dayPlanForDay || o.bumpForDay || (() => null);
     const firstAddAt = o.firstAddAt || (() => null);
 
     return keys.map((day) => {
@@ -109,7 +110,7 @@ const Analytics = (() => {
       const goals = goalsForDay(day) || {};
       // The resolved bump (not the raw stored record) is the only reliable
       // source for intent: an improperly-flagged fast (e.g. missing
-      // fastAcknowledged) fails validation inside Phases.bumpsForDay and
+      // fastAcknowledged) fails validation inside Phases.dayPlanForDay and
       // resolves to no bump at all, so trusting the raw record here would
       // read a rejected declaration as a real one.
       //
@@ -118,7 +119,7 @@ const Analytics = (() => {
       // restatement of the phase target, not a reduced-day declaration.
       // Treating it as intent "reduced" would make partialDays exclude every
       // healed day and silence the unfinished-log gate.
-      const resolvedBump = goals._bumps;
+      const resolvedBump = goals._dayPlan;
       const intent = !resolvedBump
         ? null
         : resolvedBump.intent === "fast"
@@ -144,7 +145,7 @@ const Analytics = (() => {
         // by the `logged` term on the left.
         accounted: logged || (intent === "fast" && kcalMean === 0),
         weightKg: numOrNull(weightKgForDay(day)),
-        bump: bumpForDay(day) || null,
+        dayPlan: dayPlanForDay(day) || null,
         firstAddAt: numOrNull(firstAddAt(day)),
       };
       for (const k of NUTRIENTS) {
@@ -1269,18 +1270,23 @@ const Analytics = (() => {
       });
     }
 
-    const bumps = bumpAudit(days, opts);
+    const bumps = dayPlanAudit(days, opts);
     if (bumps.total) {
-      const retro = bumps.retroactive
-        ? ` ${bumps.retroactive} ${bumps.retroactive === 1 ? "was" : "were"} set after logging began.`
+      const late = bumps.declaredLate
+        ? ` ${bumps.declaredLate} ${bumps.declaredLate === 1 ? "was" : "were"} set after logging began.`
         : "";
-      const unknown = bumps.unknown
-        ? ` Planning provenance is unknown for ${bumps.unknown} legacy ${bumps.unknown === 1 ? "record" : "records"}.`
+      const unlogged = bumps.unlogged
+        ? ` ${bumps.unlogged} planned day${bumps.unlogged === 1 ? "" : "s"} recorded no food, so there is nothing to compare the plan against.`
+        : "";
+      const legacy = bumps.legacy
+        ? ` Planning provenance is unknown for ${bumps.legacy} legacy ${bumps.legacy === 1 ? "record" : "records"}.`
         : "";
       out.push({
         id: "bumps",
-        tone: bumps.retroactive || bumps.unknown ? "watch" : "info",
-        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used a day plan, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted calorie target.${retro}${unknown}`,
+        // Unlogged and legacy (no usable plannedAt) are disclosures, not
+        // integrity alarms. Only a plan set after logging began escalates.
+        tone: bumps.declaredLate ? "watch" : "info",
+        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used a day plan, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted calorie target.${late}${unlogged}${legacy}`,
       });
     }
     if (bumps.fasts) {
@@ -1350,12 +1356,55 @@ const Analytics = (() => {
     };
   }
 
-  /** True when a day's bump was recorded after that day had already ended. */
-  function bumpIsRetroactive(dayKey, updatedAt) {
-    if (!updatedAt) return false;
-    const end = dateOf(dayKey);
-    end.setHours(24, 0, 0, 0);
-    return updatedAt > end.getTime();
+  /**
+   * Single definition of day-plan provenance for reduced plans and fasts.
+   *
+   * Precedence:
+   *   1. persisted declaredAfterDay === true → "declaredLate" (fast testimony)
+   *   2. plannedAt vs firstAddAt → "planned" | "declaredLate"
+   *      (plannedAt <= firstAddAt counts as planned; equality is not late)
+   *   3. plannedAt present, no firstAddAt:
+   *        intent === "fast" → "planned" (empty day is expected for a fast)
+   *        otherwise → "unlogged" (modern reduced plan, nothing to compare)
+   *   4. no usable plannedAt → "legacy"
+   *
+   * Only bump.plannedAt participates in the derived compare. updatedAt is a
+   * mutation clock — heal/sync can rewrite it to the first-add timestamp —
+   * and must not decide lateness. Non-positive timestamps are absent
+   * (Phases.dayPlanForDay writes plannedAt: 0 when the stored record has none);
+   * callers must not pass goals._dayPlan expecting that placeholder to classify
+   * as a real plan time.
+   *
+   * Accepts only `{ dayPlan, firstAddAt?, intent? }`. `dayPlan` must be present
+   * as an own property (may be null → `"legacy"`). No duck-typing of wrapper
+   * vs record, and no legacy `bump` key — the only authorised one-release
+   * alias is `opts.bumpForDay` on `buildDays`. `declaredAfterDay` is read only
+   * from the plan record, not from the wrapper.
+   *
+   * @returns {"planned"|"declaredLate"|"unlogged"|"legacy"}
+   */
+  function dayPlanProvenance(row) {
+    const r = row || {};
+    if (!Object.prototype.hasOwnProperty.call(r, "dayPlan")) return "legacy";
+    const bump = r.dayPlan;
+    if (!bump || typeof bump !== "object") return "legacy";
+    if (bump.declaredAfterDay === true) return "declaredLate";
+    // Derive from plannedAt only. updatedAt is intentionally ignored (heal
+    // can set it equal to firstAddAt and would falsify "late").
+    const candidate = numOrNull(bump.plannedAt);
+    // plannedAt: 0 is the dayPlanForDay placeholder for "missing", not epoch.
+    const plannedAt = Number.isFinite(candidate) && candidate > 0 ? candidate : null;
+    const firstAdd = numOrNull(r.firstAddAt);
+    if (plannedAt != null && Number.isFinite(firstAdd)) {
+      return plannedAt <= firstAdd ? "planned" : "declaredLate";
+    }
+    if (plannedAt != null) {
+      const intent = r.intent || bump.intent;
+      // A declared fast with no food is the happy path, not a provenance gap.
+      if (intent === "fast") return "planned";
+      return "unlogged";
+    }
+    return "legacy";
   }
 
   /**
@@ -1365,8 +1414,8 @@ const Analytics = (() => {
    *
    * An energy adjustment is legitimate — a planned refeed or a wedding can
    * genuinely have a different calorie target. Because it can convert an
-   * "over" day into a "hit", recording planned versus retroactive adjustments
-   * keeps the feature useful without making adherence self-marking.
+   * "over" day into a "hit", recording planned versus late (declaredLate)
+   * adjustments keeps the feature useful without making adherence self-marking.
    *
    * A fast is not an energy adjustment and is counted separately: its kcal
    * cell is exempt, not scored against a target of 0, so folding its
@@ -1374,29 +1423,29 @@ const Analytics = (() => {
    * `kcalTotal` would misreport an exemption as a deliberate multi-thousand
    * calorie cut. What is worth auditing for a fast is *when* it was
    * declared — a late declaration buys only streak credit, never a better
-   * grade, so it is reported rather than folded into `retroactive`, which
-   * means something different (a target moved after logging began).
+   * grade, so it is reported rather than folded into `declaredLate` on the
+   * energy-adjustment side, which means something different (a target moved
+   * after logging began). Both intents still classify through
+   * `dayPlanProvenance`.
    */
-  function bumpAudit(days, opts) {
+  function dayPlanAudit(days, opts) {
     const excludeDay = opts && (opts.excludeDay || opts.todayKey);
     const rows = [];
-    let retroactive = 0;
+    let declaredLate = 0;
     let planned = 0;
-    let unknown = 0;
+    let unlogged = 0;
+    let legacy = 0;
     let kcalTotal = 0;
     const fastRows = [];
     let fastsDeclaredAfterDay = 0;
     for (const d of days || []) {
       if (excludeDay && d.day === excludeDay) continue;
-      const b = d.bump;
+      const b = d.dayPlan;
       if (!b) continue;
-      const intent = d.goals && d.goals._bumps && d.goals._bumps.intent === "fast" ? "fast" : "reduced";
+      const intent = d.goals && d.goals._dayPlan && d.goals._dayPlan.intent === "fast" ? "fast" : "reduced";
       if (intent === "fast") {
         const declaredAfterDay = b.declaredAfterDay === true;
-        const recordedAt = numOrNull(b.plannedAt != null ? b.plannedAt : b.updatedAt);
-        let provenance = "unknown";
-        if (declaredAfterDay) provenance = "declaredAfterDay";
-        else if (Number.isFinite(recordedAt)) provenance = "planned";
+        const provenance = dayPlanProvenance({ dayPlan: b, firstAddAt: d.firstAddAt, intent: "fast" });
         if (declaredAfterDay) fastsDeclaredAfterDay += 1;
         fastRows.push({ day: d.day, provenance, declaredAfterDay, logged: d.logged });
         continue;
@@ -1404,30 +1453,26 @@ const Analytics = (() => {
       // Resolved goals carry the phase-aware delta even for the oldest
       // absolute `{kcal: ...}` dayGoal shape. Fall back to the raw modern bump
       // so callers that provide audit rows directly remain compatible.
-      const resolvedKcal = d.goals && d.goals._bumps && d.goals._bumps.kcal;
+      const resolvedKcal = d.goals && d.goals._dayPlan && d.goals._dayPlan.kcal;
       const rawKcal = b.bumps && b.bumps.kcal;
       const kcal = Number(resolvedKcal != null ? resolvedKcal : rawKcal);
       if (!Number.isFinite(kcal) || kcal === 0) continue;
-      const recordedAt = numOrNull(b.plannedAt != null ? b.plannedAt : b.updatedAt);
-      const firstAdd = numOrNull(d.firstAddAt);
-      let provenance = "unknown";
-      if (Number.isFinite(recordedAt) && Number.isFinite(firstAdd)) {
-        provenance = recordedAt < firstAdd ? "planned" : "retroactive";
-      }
-      if (provenance === "retroactive") retroactive += 1;
+      const provenance = dayPlanProvenance({ dayPlan: b, firstAddAt: d.firstAddAt, intent: "reduced" });
+      if (provenance === "declaredLate") declaredLate += 1;
       else if (provenance === "planned") planned += 1;
-      else unknown += 1;
+      else if (provenance === "unlogged") unlogged += 1;
+      else legacy += 1;
       kcalTotal += kcal;
       rows.push({
         day: d.day,
         bumps: { kcal },
-        retroactive: provenance === "retroactive",
+        declaredLate: provenance === "declaredLate",
         provenance,
         logged: d.logged,
       });
     }
     return {
-      total: rows.length, retroactive, planned, unknown, kcalTotal, days: rows,
+      total: rows.length, declaredLate, planned, unlogged, legacy, kcalTotal, days: rows,
       fasts: fastRows.length, fastsDeclaredAfterDay, fastDays: fastRows,
     };
   }
@@ -1580,7 +1625,7 @@ const Analytics = (() => {
     weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods,
     proteinPerKg, heatmapCells, heatmapWeeks, extremes, momentum, observations,
     phaseKcalOf,
-    partialDays, bumpAudit, bumpIsRetroactive,
+    partialDays, dayPlanAudit, dayPlanProvenance,
     rangeSummary, compareSummaries, retargetForKcal,
     fmtNum, fmtSigned, kgToDisplay,
   };

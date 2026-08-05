@@ -1081,8 +1081,8 @@ body.has-info-banner #toast { bottom: calc(var(--tab-h) + 96px); }
 }
 /* A planned energy adjustment moved this day's calorie target. The corner
    notch discloses that without hiding the status underneath. */
-.hm-bumped { position: relative; }
-.hm-bumped::after {
+.hm-planned { position: relative; }
+.hm-planned::after {
   content: ""; position: absolute; top: 0; right: 0;
   border-width: 0 5px 5px 0; border-style: solid;
   border-color: transparent var(--ink) transparent transparent;

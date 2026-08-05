@@ -226,7 +226,7 @@ const UI = (() => {
     // (which calls the same reconciliation) scores the day normally. Route
     // through the one shared implementation so the two tabs cannot disagree.
     const resolvedGoals = typeof Phases !== "undefined" ? Phases.effectiveGoals(totals, goals) : goals;
-    const bumps = resolvedGoals && resolvedGoals._bumps;
+    const bumps = resolvedGoals && resolvedGoals._dayPlan;
     const unscored = (resolvedGoals && resolvedGoals._unscored) || null;
     const o = opts || {};
     const viewDay = o.viewDay || null;
@@ -235,7 +235,7 @@ const UI = (() => {
       : null);
     const hud = $("#hud");
     const fastingRoot = $("#hud-fasting");
-    const declaredFast = !!(goals && goals._bumps && goals._bumps.intent === "fast");
+    const declaredFast = !!(goals && goals._dayPlan && goals._dayPlan.intent === "fast");
     const ateOnAFast = declaredFast && totals && totals.count > 0 &&
       Number(totals.kcal && totals.kcal.mean) > 0;
     // Honoured fast (including empty day and black-coffee-only): replace the
@@ -247,7 +247,7 @@ const UI = (() => {
       if (showFasting) {
         const meta = $("#hud-fasting-meta");
         if (meta) {
-          const plannedAt = Number(goals && goals._bumps && goals._bumps.plannedAt);
+          const plannedAt = Number(goals && goals._dayPlan && goals._dayPlan.plannedAt);
           const declared = Number.isFinite(plannedAt) && plannedAt > 0
             ? new Date(plannedAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
             : null;
@@ -372,10 +372,10 @@ const UI = (() => {
     $("#v-kcal-big").textContent = fmt(totals.kcal.mean);
     const lo = Math.max(0, Math.round(totals.kcal.mean - totals.kcal.sd));
     const hi = Math.round(totals.kcal.mean + totals.kcal.sd);
-    const bumpNote = bumps && bumps.kcal
+    const dayPlanNote = bumps && bumps.kcal
       ? ` · planned ${fmt(resolvedGoals.kcal)} kcal (${bumps.kcal > 0 ? "+" : ""}${fmt(bumps.kcal)})`
       : "";
-    $("#kcal-range").textContent = totals.count ? `likely ${fmt(lo)}–${fmt(hi)}${bumpNote}` : "—";
+    $("#kcal-range").textContent = totals.count ? `likely ${fmt(lo)}–${fmt(hi)}${dayPlanNote}` : "—";
     set("kcal", totals.kcal.mean, resolvedGoals.kcal, "kcal", "");
     if (unscored && unscored.protein) notScored("p", totals.p.mean, "g");
     else set("p", totals.p.mean, resolvedGoals.protein, "protein", "g");
@@ -1283,7 +1283,7 @@ const UI = (() => {
       goalsForDay,
       weightKgForDay: (day) =>
         (typeof Phases !== "undefined" ? Phases.weightForDay(settings, day) : null),
-      bumpForDay: (day) => (settings.dayGoals && settings.dayGoals[day]) || null,
+      dayPlanForDay: (day) => (settings.dayGoals && settings.dayGoals[day]) || null,
       firstAddAt: (day) => Ledger.firstAddAt(day),
     });
     const viewingPastPhase = daysBack === "phase" && !!selectedPhase && selectedPhase.endDay != null;
@@ -1830,10 +1830,10 @@ const UI = (() => {
     const cells = Analytics.heatmapCells(ctx.days, ctx.nutrient, ctx.scoreDay, ctx.scoreOpts);
     // An energy adjustment only moves the calorie target. Marking that day on
     // protein, sodium, or potassium heatmaps implies targets that never moved.
-    const bumpDays = ctx.nutrient === "kcal"
-      ? new Set(Analytics.bumpAudit(ctx.days, ctx.scoreOpts).days.map((b) => b.day))
+    const plannedDays = ctx.nutrient === "kcal"
+      ? new Set(Analytics.dayPlanAudit(ctx.days, ctx.scoreOpts).days.map((b) => b.day))
       : new Set();
-    for (const c of cells) c.bumped = bumpDays.has(c.day);
+    for (const c of cells) c.planned = plannedDays.has(c.day);
     const weeks = Analytics.heatmapWeeks(cells);
     if (!weeks.length) { root.innerHTML = ""; return; }
     const cons = ctx.consistency;
@@ -1852,18 +1852,18 @@ const UI = (() => {
           // Declared fast that recorded food: keep the real grade and name both
           // facts — the declaration marker and the intake vs target.
           const stateWord = bt2[c.status] || c.status;
-          title = `${c.day} · fasted · recorded food · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.bumped ? " · planned calorie target" : ""}`;
+          title = `${c.day} · fasted · recorded food · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.planned ? " · planned calorie target" : ""}`;
         } else {
           const stateWord = c.logged ? (bt2[c.status] || c.status) : "not logged";
           title = c.logged
-            ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.bumped ? " · planned calorie target" : ""}`
+            ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.planned ? " · planned calorie target" : ""}`
             : `${c.day} · not logged`;
         }
         // Status is carried by shape as well as colour: green/orange alone
         // fails for red-green colour blindness, and this grid has no text or
         // position fallback the way the bars and scorecard do.
         const fastMark = c.fasted && c.status !== "fast" ? " hm-fasted" : "";
-        return `<button type="button" class="hm-cell hm-${esc(c.status)}${c.bumped ? " hm-bumped" : ""}${fastMark}" data-action="heatmap-day" data-day="${esc(c.day)}" title="${esc(title)}" aria-label="${esc(title)}"></button>`;
+        return `<button type="button" class="hm-cell hm-${esc(c.status)}${c.planned ? " hm-planned" : ""}${fastMark}" data-action="heatmap-day" data-day="${esc(c.day)}" title="${esc(title)}" aria-label="${esc(title)}"></button>`;
       }).join("");
       return `<div class="hm-col">${inner}</div>`;
     }).join("");
@@ -2412,7 +2412,7 @@ const UI = (() => {
         totalsForDay: (day) => Ledger.totalsFor(day),
         goalsForDay: (day) => Phases.goalsForDay(day, ctx.settings),
         weightKgForDay: (day) => Phases.weightForDay(ctx.settings, day),
-        bumpForDay: (day) => (ctx.settings.dayGoals && ctx.settings.dayGoals[day]) || null,
+        dayPlanForDay: (day) => (ctx.settings.dayGoals && ctx.settings.dayGoals[day]) || null,
         firstAddAt: (day) => Ledger.firstAddAt(day),
       });
     };
@@ -2872,7 +2872,7 @@ const UI = (() => {
     if (!remaining) return "";
     const resolved = typeof Phases !== "undefined" ? Phases.effectiveGoals(totals, goals) : goals;
     const unscored = (resolved && resolved._unscored) || null;
-    if (resolved && resolved._bumps && resolved._bumps.intent === "fast" && unscored) {
+    if (resolved && resolved._dayPlan && resolved._dayPlan.intent === "fast" && unscored) {
       return "Declared fast — nothing to close today.";
     }
     const bits = [];

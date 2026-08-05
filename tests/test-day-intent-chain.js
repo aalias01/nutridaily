@@ -54,7 +54,7 @@ function memoryStore() {
 /** Mirrors app.js's getDayGoalLock: the snapshot handed to Ledger on first add. */
 function dayGoalLockFor(day, settings) {
   const resolved = Phases.goalsForDay(day, settings);
-  const bumps = resolved && resolved._bumps;
+  const bumps = resolved && resolved._dayPlan;
   if (!bumps || !Number.isFinite(bumps.targetKcal)) return null;
   const out = {
     targetKcal: bumps.targetKcal,
@@ -261,7 +261,7 @@ console.log("\n[8] Scoring discloses every exemption and never credits one");
     keys,
     totalsForDay: totals,
     goalsForDay: (d) => Phases.goalsForDay(d, settings),
-    bumpForDay: (d) => settings.dayGoals[d] || null,
+    dayPlanForDay: (d) => settings.dayGoals[d] || null,
   });
   const score = Analytics.nutritionScore(days, Phases.scoreDayTotals, {});
   const row = (k) => score.nutrients.find((n) => n.key === k);

@@ -440,7 +440,7 @@ console.log("\n[5d] Causal ledger convergence");
 
   // Part VIII.1: a lock at targetKcal 0 is only honoured alongside its own
   // intent/fastAcknowledged — that is the one shape the rest of the system
-  // (Sync.normalizeDayGoal, Phases.bumpsForDay) refuses to score, so writing
+  // (Sync.normalizeDayGoal, Phases.dayPlanForDay) refuses to score, so writing
   // it undeclared would just move the laundering path into the ledger.
   Ledger.configureContext({
     getResetEpoch: () => 0,
@@ -725,13 +725,13 @@ console.log("\n[7] Phases / goalsForDay");
   settings.dayGoals["2026-08-01"] = { bumps: { kcal: 200, protein: 20 }, updatedAt: 200 };
   ok(Phases.goalsForDay("2026-08-01", settings).kcal === 3050, "day bump adds to phase kcal (2850+200)");
   ok(Phases.goalsForDay("2026-08-01", settings).protein === 160, "legacy day bump cannot move the protein floor");
-  ok(Phases.goalsForDay("2026-08-01", settings)._bumps.kcal === 200, "resolved goals expose _bumps");
-  ok(Phases.goalsForDay("2026-08-01", settings)._bumps.protein == null, "resolved one-day bump contains calories only");
+  ok(Phases.goalsForDay("2026-08-01", settings)._dayPlan.kcal === 200, "resolved goals expose _dayPlan");
+  ok(Phases.goalsForDay("2026-08-01", settings)._dayPlan.protein == null, "resolved one-day bump contains calories only");
 
   settings.dayGoals["2026-08-02"] = { kcal: 3050, protein: 999, sodium: 9999, updatedAt: 210 }; // legacy absolute
   // phase for 08-02 still 2850/160 from revision
   ok(Phases.goalsForDay("2026-08-02", settings).kcal === 3050, "legacy absolute dayGoals still resolve");
-  ok(Phases.goalsForDay("2026-08-02", settings)._bumps.kcal === 200, "legacy absolute converts to bump vs phase");
+  ok(Phases.goalsForDay("2026-08-02", settings)._dayPlan.kcal === 200, "legacy absolute converts to bump vs phase");
   ok(Phases.goalsForDay("2026-08-02", settings).protein === 160 && Phases.goalsForDay("2026-08-02", settings).sodium === 2300,
     "legacy absolute dayGoals cannot move floor or safety targets");
 
@@ -743,7 +743,7 @@ console.log("\n[7] Phases / goalsForDay");
     ...Phases.goalsForDay("2026-08-03", { ...frozenSettings, dayGoals: {} }), kcal: 2600,
   }, "2026-08-03");
   const frozen = Phases.goalsForDay("2026-08-03", frozenSettings);
-  ok(frozen.kcal === 3100 && frozen._phase.kcal === 2850 && frozen._bumps.kcal === 250,
+  ok(frozen.kcal === 3100 && frozen._phase.kcal === 2850 && frozen._dayPlan.kcal === 250,
     "absolute day plan and its baseline stay frozen across a same-day phase revision");
   ok(Phases.DEFAULT_GOALS.potassium === 3510,
     "new installs use the generic WHO adult potassium reference, not a personal prescription");
@@ -3485,30 +3485,30 @@ END`;
 
     // baseKcal is a phase target and keeps its own 800 floor no matter how far
     // the target side widens — the asymmetry is the whole point of this slice.
-    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    ok(Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       targetKcal: 500, baseKcal: 799, updatedAt: 1,
     }), { kcal: 799 }) === null, "baseKcal below 800 is still rejected on the modern shape");
-    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    ok(Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       kcal: 500, updatedAt: 1,
     }), { kcal: 799 }) === null, "baseKcal below 800 is still rejected on the legacy absolute shape");
 
     // 1–199 is a dead zone on every shape that carries an explicit target.
-    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    ok(Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       targetKcal: 199, baseKcal: 2000, updatedAt: 1,
     }), { kcal: 2000 }) === null, "the modern shape rejects 199 kcal");
-    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    ok(Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       kcal: 199, updatedAt: 1,
     }), { kcal: 2000 }) === null, "the legacy absolute shape rejects 199 kcal");
-    ok(Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    ok(Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       bumps: { kcal: -1801 }, updatedAt: 1,
     }), { kcal: 2000 }) === null, "the delta-bump shape rejects a resolved target inside the 1-199 dead zone");
 
     // A planned day of 500 (5:2 / ADF territory) is now expressible.
-    const fiveTwo = Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    const fiveTwo = Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       targetKcal: 500, baseKcal: 2000, updatedAt: 1, veryLowCalorieAcknowledged: true,
     }), { kcal: 2000 });
     ok(fiveTwo && fiveTwo.targetKcal === 500 && fiveTwo.intent === "reduced",
-      "a 500 kcal planned day round-trips through bumpsForDay as a reduced day");
+      "a 500 kcal planned day round-trips through dayPlanForDay as a reduced day");
 
     // Part VIII.2's exact scenario: a legacy {bumps:{kcal:-800}} record was
     // written while the phase stood at 2200 kcal. Nobody acknowledged
@@ -3517,19 +3517,19 @@ END`;
     // and the same stale bump now resolves to a live 400 kcal plan no one
     // ever confirmed. The scoring layer must catch this itself rather than
     // trust that an ack was enforced somewhere upstream.
-    const staleBumpLaundered = Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    const staleBumpLaundered = Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       bumps: { kcal: -800 }, updatedAt: 1,
     }), { kcal: 1200 });
     ok(staleBumpLaundered === null,
       "a stale delta bump that resolves below 1200 kcal after a phase cut is rejected without acknowledgement");
-    const staleBumpAcknowledged = Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    const staleBumpAcknowledged = Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       bumps: { kcal: -800 }, updatedAt: 1, veryLowCalorieAcknowledged: true,
     }), { kcal: 1200 });
     ok(staleBumpAcknowledged && staleBumpAcknowledged.kcal === -800,
       "the same stale delta bump resolves once acknowledgement is present");
     // Before the cut, the same record needed no ack at all — 2200 - 800 =
     // 1400 sits above the ladder threshold.
-    const staleBumpBeforeCut = Phases14.bumpsForDay("2026-08-01", dayGoalsFor("2026-08-01", {
+    const staleBumpBeforeCut = Phases14.dayPlanForDay("2026-08-01", dayGoalsFor("2026-08-01", {
       bumps: { kcal: -800 }, updatedAt: 1,
     }), { kcal: 2200 });
     ok(staleBumpBeforeCut && staleBumpBeforeCut.kcal === -800,
@@ -3565,7 +3565,7 @@ END`;
       ok(g.kcal === 2500 && g.protein === 150 && g.fiber === 30 && g.sodium === 2300 && g.potassium === 3510,
         "every legacy dayGoals generation still resolves kcal-only; floors and ceilings are untouched");
     }
-    ok(tombstoneGoals.kcal === 2000 && tombstoneGoals._bumps === null && tombstoneGoals._unscored === null,
+    ok(tombstoneGoals.kcal === 2000 && tombstoneGoals._dayPlan === null && tombstoneGoals._unscored === null,
       "a cleared tombstone resolves to the phase target with no plan and no exemptions");
   }
 
@@ -3601,22 +3601,22 @@ END`;
       bumps: { kcal: 500 }, intent: "fast", fastAcknowledged: true, updatedAt: 1,
     }).intent === undefined, "intent does not survive through the legacy delta-bump shape");
 
-    // Phases.bumpsForDay carries intent through to the resolved record.
+    // Phases.dayPlanForDay carries intent through to the resolved record.
     const fastSettings = {
       goals: { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 },
       phases: [],
       dayGoals: { "2026-08-01": { targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 } },
     };
-    const fastBumps = Phases15.bumpsForDay("2026-08-01", fastSettings, fastSettings.goals);
+    const fastBumps = Phases15.dayPlanForDay("2026-08-01", fastSettings, fastSettings.goals);
     ok(fastBumps && fastBumps.intent === "fast" && fastBumps.targetKcal === 0,
-      "bumpsForDay carries a declared fast through to its resolved record");
+      "dayPlanForDay carries a declared fast through to its resolved record");
     const reducedSettings = { ...fastSettings, dayGoals: { "2026-08-01": { targetKcal: 1500, baseKcal: 2000, updatedAt: 1 } } };
-    const reducedBumps = Phases15.bumpsForDay("2026-08-01", reducedSettings, reducedSettings.goals);
-    ok(reducedBumps && reducedBumps.intent === "reduced", "bumpsForDay defaults intent to reduced when absent");
+    const reducedBumps = Phases15.dayPlanForDay("2026-08-01", reducedSettings, reducedSettings.goals);
+    ok(reducedBumps && reducedBumps.intent === "reduced", "dayPlanForDay defaults intent to reduced when absent");
 
     // Part IX.2: intent "fast" with a nonzero target is honoured by neither
     // Sync.normalizeDayGoal (asserted above) nor App.importedPlannedKcal
-    // (asserted in the real-import smoke suite) — bumpsForDay, which decides
+    // (asserted in the real-import smoke suite) — dayPlanForDay, which decides
     // the grade, and Ledger._normalizedDayGoalLock (asserted in [5c]), which
     // writes the immutable event log, must agree with both. Eating 1500 kcal
     // and having every other target waved off is the laundering path this
@@ -3627,11 +3627,11 @@ END`;
         "2026-08-01": { targetKcal: 1500, baseKcal: 2000, intent: "fast", fastAcknowledged: true, updatedAt: 1 },
       },
     };
-    const incoherentFastBumps = Phases15.bumpsForDay(
+    const incoherentFastBumps = Phases15.dayPlanForDay(
       "2026-08-01", incoherentFastSettings, incoherentFastSettings.goals
     );
     ok(incoherentFastBumps && incoherentFastBumps.intent === "reduced" && incoherentFastBumps.targetKcal === 1500,
-      "bumpsForDay never honours intent \"fast\" unless the resolved target is exactly 0 kcal");
+      "dayPlanForDay never honours intent \"fast\" unless the resolved target is exactly 0 kcal");
     const incoherentFastGoals = Phases15.goalsForDay("2026-08-01", incoherentFastSettings);
     ok(incoherentFastGoals.kcal === 1500 && incoherentFastGoals._unscored === null,
       "goalsForDay scores every target on the incoherent record instead of unscoring seven cells for free");
@@ -3688,9 +3688,9 @@ END`;
       goals: fastSettings.goals, phases: [],
       dayGoals: { "2026-08-01": lateFast },
     };
-    const lateBumps = Phases15.bumpsForDay("2026-08-01", lateSettings, lateSettings.goals);
+    const lateBumps = Phases15.dayPlanForDay("2026-08-01", lateSettings, lateSettings.goals);
     ok(lateBumps && lateBumps.declaredAfterDay === true,
-      "bumpsForDay carries declaredAfterDay onto the resolved bump");
+      "dayPlanForDay carries declaredAfterDay onto the resolved bump");
 
     // §10 declaration window.
     ok(Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-01", intent: "reduced" }).ok,

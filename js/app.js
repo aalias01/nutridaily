@@ -207,7 +207,7 @@ const App = (() => {
     const btn = UI.$("#btn-day-goals");
     if (!btn) return;
     const resolved = Phases.goalsForDay(state.viewDay, state.settings);
-    const bumps = resolved && resolved._bumps;
+    const bumps = resolved && resolved._dayPlan;
     const isFast = !!(bumps && bumps.intent === "fast");
     const kcal = Number(bumps && bumps.kcal);
     const hasPlan = isFast || (Number.isFinite(kcal) && kcal !== 0);
@@ -237,16 +237,37 @@ const App = (() => {
     let label = "Day plan";
     if (isFast) label = "Fast · declared";
     else if (hasPlan) label = `Planned calories · ${Math.round(resolved.kcal)} kcal`;
+    // Late disclosure parity with Insights (S3). Same classifier as the
+    // observation audit — reported, not punished; no colour or warning icon.
+    const ov = dayGoalOverride(state.viewDay);
+    const late = !!(hasPlan && ov && typeof Analytics !== "undefined" &&
+      typeof Analytics.dayPlanProvenance === "function" &&
+      Analytics.dayPlanProvenance({ dayPlan: ov,
+        firstAddAt: Ledger.firstAddAt(state.viewDay),
+        intent: isFast ? "fast" : "reduced",
+      }) === "declaredLate");
     btn.classList.toggle("has-override", hasPlan);
     btn.classList.toggle("is-locked", locked);
-    btn.textContent = `${label}${locked ? " · locked" : ""}`;
-    btn.title = locked
-      ? (lockReason || reducedWin.reason || fastWin.reason || "This day plan cannot be changed right now.")
+    btn.textContent = `${label}${late ? " · late" : ""}${locked ? " · locked" : ""}`;
+    // Title must name the fact that made it late. Persisted declaredAfterDay
+    // means after local midnight; derived declaredLate means after first add.
+    // Same-day post-log fasts leave kcal unscored — do not claim they are
+    // "scored against the adjusted target" (R2-a).
+    const afterDay = !!(ov && ov.declaredAfterDay === true);
+    const lateTitle = afterDay
+      ? "Declared after the day ended — reported, not punished."
       : (isFast
-        ? "Declared fast for this day"
-        : (hasPlan
-          ? "Edit or clear this day's calorie plan"
-          : "Plan a reduced-energy day or declare a fast"));
+        ? "Set after logging began — reported, not punished."
+        : "Set after logging began — still scored against the adjusted target.");
+    const idleTitle = isFast
+      ? "Declared fast for this day"
+      : (hasPlan
+        ? "Edit or clear this day's calorie plan"
+        : "Plan a reduced-energy day or declare a fast");
+    const lockTitle = lockReason || reducedWin.reason || fastWin.reason || "This day plan cannot be changed right now.";
+    btn.title = locked
+      ? (late ? `${lateTitle} ${lockTitle}` : lockTitle)
+      : (late ? `${lateTitle} ${idleTitle}` : idleTitle);
   }
 
   let deferredInstall = null;
@@ -1171,7 +1192,7 @@ const App = (() => {
     const goals = goalsForView();
     const resolved = typeof Phases !== "undefined" ? Phases.effectiveGoals(totals, goals) : goals;
     // An honoured fast has nothing to close — do not print P150 against 0 kcal.
-    if (resolved && resolved._bumps && resolved._bumps.intent === "fast" && resolved._unscored) {
+    if (resolved && resolved._dayPlan && resolved._dayPlan.intent === "fast" && resolved._unscored) {
       el.textContent = "Declared fast — targets for this day are not scored, so Close the Gap has nothing to fill.";
       return;
     }
@@ -1425,7 +1446,7 @@ const App = (() => {
     const totals = Ledger.totalsFor(state.viewDay);
     const goals = goalsForView();
     const resolved = Phases.effectiveGoals(totals, goals);
-    if (resolved && resolved._bumps && resolved._bumps.intent === "fast" && resolved._unscored) {
+    if (resolved && resolved._dayPlan && resolved._dayPlan.intent === "fast" && resolved._unscored) {
       UI.toast("Declared fast — Close the Gap has nothing to fill while the day stays unscored.");
       return;
     }
@@ -4468,7 +4489,7 @@ const App = (() => {
         const copy = UI.$("#dg-fast-copy");
         if (copy) copy.textContent = Phases.FAST_DECLARATION_COPY;
       }
-      if (showReduced) refreshBumpPreview();
+      if (showReduced) refreshDayPlanPreview();
       // Presets sit outside the intent panels so Reduced and Fast both see them.
       refreshPresetChips();
     };
@@ -4497,7 +4518,7 @@ const App = (() => {
       }
       el.textContent = lines.join(" ");
     };
-    const refreshBumpPreview = () => {
+    const refreshDayPlanPreview = () => {
       const phaseBase = Phases.goalsForDay(state.viewDay, { ...state.settings, dayGoals: {} });
       const raw = UI.$("#dg-kcal").value.trim();
       const typed = raw === "" ? null : parseAmount(raw);
@@ -4559,7 +4580,7 @@ const App = (() => {
       }
       setDayIntentSeg("reduced");
       UI.$("#dg-kcal").value = String(Math.round(preset.targetKcal));
-      refreshBumpPreview();
+      refreshDayPlanPreview();
     };
     const touchPresetUsed = (id) => {
       const now = Date.now();
@@ -4605,7 +4626,7 @@ const App = (() => {
     };
     const openDayGoalsSheet = () => {
       const g = Phases.goalsForDay(state.viewDay, state.settings);
-      const bumps = g && g._bumps;
+      const bumps = g && g._dayPlan;
       const isFast = !!(bumps && bumps.intent === "fast");
       const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
       // An existing plan reopens only while its own intent window is open.
@@ -4657,7 +4678,7 @@ const App = (() => {
         setDayIntentSeg(guardDayIntent("reduced").ok ? "reduced" : (guardDayIntent("fast").ok ? "fast" : "normal"));
         UI.$("#dg-kcal").value = "";
       }
-      refreshBumpPreview();
+      refreshDayPlanPreview();
       refreshPresetChips();
       UI.openSheet("sheet-day-goals");
     };
@@ -4668,7 +4689,7 @@ const App = (() => {
         if (!btn) return;
         const intent = btn.dataset.dgIntent;
         const g = Phases.goalsForDay(state.viewDay, state.settings);
-        const bumps = g && g._bumps;
+        const bumps = g && g._dayPlan;
         const isFast = !!(bumps && bumps.intent === "fast");
         const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
         if (intent === "reduced" && !guardDayIntent("reduced").ok) {
@@ -4695,7 +4716,7 @@ const App = (() => {
         setDayIntentSeg(intent);
       });
     }
-    UI.$("#dg-kcal").addEventListener("input", refreshBumpPreview);
+    UI.$("#dg-kcal").addEventListener("input", refreshDayPlanPreview);
     if (UI.$("#dg-preset-chips")) {
       UI.$("#dg-preset-chips").addEventListener("click", (e) => {
         const del = e.target.closest("[data-preset-delete]");
@@ -4781,7 +4802,7 @@ const App = (() => {
       const nextSettings = cloneLocalData(state.settings);
       if (!nextSettings.dayGoals || typeof nextSettings.dayGoals !== "object") nextSettings.dayGoals = {};
       const now = Date.now();
-      const bumps = Phases.goalsForDay(state.viewDay, state.settings)._bumps;
+      const bumps = Phases.goalsForDay(state.viewDay, state.settings)._dayPlan;
       const isFastPlan = !!(bumps && bumps.intent === "fast");
       const hasReducedPlan = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
 
@@ -4868,7 +4889,7 @@ const App = (() => {
     });
     UI.$("#dg-clear").addEventListener("click", () => {
       const g = Phases.goalsForDay(state.viewDay, state.settings);
-      const bumps = g && g._bumps;
+      const bumps = g && g._dayPlan;
       const isFast = !!(bumps && bumps.intent === "fast");
       const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
       // Clearing follows the plan on the day: a locked Reduced plan cannot be

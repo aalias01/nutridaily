@@ -67,7 +67,7 @@ const Phases = (() => {
 
   /** A declared fast (0) or a real planned-day range; never the gap between.
    *  A phase target (baseKcal) is a different quantity with its own literal
-   *  800 floor — see bumpsForDay, which checks the two ranges separately on
+   *  800 floor — see dayPlanForDay, which checks the two ranges separately on
    *  purpose so the base side is never silently widened along with this one. */
   function isPlannedKcal(n) {
     return Number.isFinite(n) && (n === FAST_KCAL || (n >= MIN_PLANNED_KCAL && n <= MAX_DAY_TARGET_KCAL));
@@ -289,7 +289,7 @@ const Phases = (() => {
   }
 
   /** One-day energy adjustment (legacy absolute kcal converted vs phase). */
-  function bumpsForDay(day, settings, phaseGoals) {
+  function dayPlanForDay(day, settings, phaseGoals) {
     const ov = dayGoalOverride(settings, day);
     if (!ov) return null;
     const base = phaseGoals || normalizeGoals(DEFAULT_GOALS);
@@ -721,21 +721,21 @@ const Phases = (() => {
     const phase = phaseForDay((settings && settings.phases) || [], day);
     const rev = revisionForDay(phase, day);
     const fromPhase = rev ? normalizeGoals(rev.goals) : base;
-    const bumps = bumpsForDay(day, settings, fromPhase);
-    if (!bumps) return { ...fromPhase, _bumps: null, _phase: fromPhase, _unscored: null };
+    const bumps = dayPlanForDay(day, settings, fromPhase);
+    if (!bumps) return { ...fromPhase, _dayPlan: null, _phase: fromPhase, _unscored: null };
     const resolved = { ...fromPhase };
     if (Number.isFinite(bumps.targetKcal)) {
       resolved.kcal = bumps.targetKcal;
       resolved._phase = { ...fromPhase, kcal: bumps.baseKcal };
     } else {
-      // bumpsForDay's delta branch already validated fromPhase.kcal + bumps.kcal
+      // dayPlanForDay's delta branch already validated fromPhase.kcal + bumps.kcal
       // into [MIN_PLANNED_KCAL, MAX_DAY_TARGET_KCAL] before returning, so this
       // can never land at or below 0 — no clamp needed, and one would read as
       // a second sanctioned route to a zero target alongside the fast branch.
       resolved.kcal = fromPhase.kcal + bumps.kcal;
       resolved._phase = fromPhase;
     }
-    resolved._bumps = bumps;
+    resolved._dayPlan = bumps;
 
     const intent = bumps.intent === "fast" ? "fast" : "reduced";
     if (intent === "fast") {
@@ -759,7 +759,7 @@ const Phases = (() => {
 
     // healLoggedDayGoals writes a {targetKcal === baseKcal, locked: true}
     // record for every logged day, even when the plan changed nothing — so
-    // bumpsForDay returns a non-null record on every logged day, not just
+    // dayPlanForDay returns a non-null record on every logged day, not just
     // planned ones. Retargeting carbs/fat (and evaluating the protein floor)
     // against an energy figure that hasn't actually moved would silently
     // drift those two numbers on days the user never planned at all (see
@@ -797,7 +797,7 @@ const Phases = (() => {
     return resolved;
   }
 
-  function formatBumpSummary(bumps) {
+  function formatDayPlanSummary(bumps) {
     if (!bumps) return "";
     const kcal = Number(bumps.kcal);
     return Number.isFinite(kcal) && kcal !== 0
@@ -1259,7 +1259,7 @@ const Phases = (() => {
    * A declared fast that actually recorded food reverts to an ordinary day
    * everywhere: the data always beats the declaration. This is the one
    * place that sees both the declaration (goals._unscored, stamped from
-   * goals._bumps.intent === "fast") and the data (totals), so it is where the
+   * goals._dayPlan.intent === "fast") and the data (totals), so it is where the
    * two get reconciled — and the only place, so Insights (via scoreDayTotals)
    * and the Today HUD (via updateHUD) cannot disagree about the same day.
    * Zero-kcal logging (black coffee, water) leaves totals.kcal.mean at 0 and
@@ -1267,7 +1267,7 @@ const Phases = (() => {
    * comparison.
    */
   function effectiveGoals(totals, goals) {
-    const declaredFast = !!(goals && goals._bumps && goals._bumps.intent === "fast");
+    const declaredFast = !!(goals && goals._dayPlan && goals._dayPlan.intent === "fast");
     const ateOnAFast = declaredFast && totals && totals.count > 0 &&
       Number(totals.kcal && totals.kcal.mean) > 0;
     return ateOnAFast && goals._phase ? goals._phase : goals;
@@ -1735,7 +1735,7 @@ const Phases = (() => {
     for (const day of keys) {
       const t = totalsForDay(day);
       const g = goalsForDay(day, settings);
-      const isHonouredFast = !!(g && g._bumps && g._bumps.intent === "fast") &&
+      const isHonouredFast = !!(g && g._dayPlan && g._dayPlan.intent === "fast") &&
         (!t || !t.count || !(t.kcal && Number(t.kcal.mean) > 0));
       if ((!t || !t.count) && !isHonouredFast) continue;
       const phaseKcal = Number(g && g._phase && g._phase.kcal);
@@ -1775,8 +1775,8 @@ const Phases = (() => {
     sanitizePersistentTargets,
     goalsEqual,
     goalsForDay,
-    bumpsForDay,
-    formatBumpSummary,
+    dayPlanForDay,
+    formatDayPlanSummary,
     phaseForDay,
     activePhase,
     revisionForDay,

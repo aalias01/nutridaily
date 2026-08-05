@@ -511,7 +511,7 @@ async function run(label, days) {
   // --- new analytics surfaces --------------------------------------------
   ok(/day plan/i.test(text("#insight-observations")), "planned calorie adjustments are disclosed");
   ok(!/after the day ended/i.test(text("#insight-observations")), "planned-only fixture is not described as retroactive");
-  ok(window.document.querySelectorAll(".hm-bumped").length >= 1, "adjusted calorie days are marked on the heatmap");
+  ok(window.document.querySelectorAll(".hm-planned").length >= 1, "adjusted calorie days are marked on the heatmap");
 
   // Heatmap must not rely on colour alone.
   const hmStyles = [...window.document.querySelectorAll(".hm-cell[data-day]")]
@@ -1146,6 +1146,8 @@ async function runEmpty() {
   ok(after.kcal === before.kcal + 300, "planned calorie adjustment changes today's calorie target");
   ok(after.protein === before.protein && after.sodium === before.sodium && after.potassium === before.potassium,
     "energy adjustment does not change protein, sodium, or potassium targets");
+  ok(!/· late/.test($("#btn-day-goals").textContent),
+    "on-time day plan does not show a late marker");
 
   const firstAdd = Ledger.addEntry(todayKey, {
     name: "First log", displayQty: "100 kcal", grams: 0, meal: "snack",
@@ -1155,6 +1157,27 @@ async function runEmpty() {
   await new Promise((r) => setTimeout(r, 20));
   ok(/Planned calories.*locked/i.test($("#btn-day-goals").textContent),
     "existing planned calories remain visible after logging begins");
+  ok(!/· late/.test($("#btn-day-goals").textContent),
+    "a plan set before the first log is not labeled late after food is logged");
+  // S3: rewrite plannedAt after first-add to force declaredLate provenance and
+  // confirm Today's link discloses the same fact Insights would report.
+  const App = window.eval("App");
+  const firstTs = Ledger.firstAddAt(todayKey);
+  App.state.settings.dayGoals[todayKey].plannedAt = firstTs + 60e3;
+  App.state.settings.dayGoals[todayKey].updatedAt = firstTs + 60e3;
+  window.localStorage.setItem("nd_settings_v1", JSON.stringify(App.state.settings));
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(/· late/.test($("#btn-day-goals").textContent) && /locked/i.test($("#btn-day-goals").textContent),
+    "Today's day-plan link shows · late when provenance is declaredLate");
+  ok(/after logging began/i.test($("#btn-day-goals").title),
+    "late marker title explains the disclosure without punishing");
+  // Restore on-time plannedAt so the remainder of the lock scenario stays stable.
+  App.state.settings.dayGoals[todayKey].plannedAt = planned.plannedAt;
+  App.state.settings.dayGoals[todayKey].updatedAt = planned.updatedAt;
+  window.localStorage.setItem("nd_settings_v1", JSON.stringify(App.state.settings));
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+  await new Promise((r) => setTimeout(r, 20));
   $("#btn-day-goals").click();
   ok(!$("#sheet-day-goals").classList.contains("open"), "logging locks the existing planned calorie adjustment");
   ok(/lock after the first food/i.test($("#toast").textContent), "locked adjustment gives a clear explanation");
@@ -1180,6 +1203,25 @@ async function runEmpty() {
   ok(/lock after the first food|day before|before it ends|cannot be changed|grace window/i.test($("#toast").textContent) ||
       $("#dg-intent-seg button[data-dg-intent='reduced']").getAttribute("aria-pressed") !== "true",
     "previous-day Reduced stays blocked even though Fast grace is still open");
+
+  // F4 / S3: declare yesterday's Fast through the live producer and assert the
+  // persisted declaredAfterDay path — label + "day ended" title, not the
+  // derived "after logging began" copy used for reduced late plans.
+  $("#dg-intent-seg button[data-dg-intent='fast']").click();
+  const fastAck = $("#dg-fast-ack");
+  ok(!!fastAck, "fast acknowledgement control is present for a late Fast declare");
+  if (fastAck) fastAck.checked = true;
+  $("#dg-save").click();
+  await new Promise((r) => setTimeout(r, 40));
+  const yesterdayKey = App.state.viewDay;
+  const lateFastRec = (App.state.settings.dayGoals || {})[yesterdayKey];
+  ok(lateFastRec && lateFastRec.intent === "fast" && lateFastRec.declaredAfterDay === true,
+    "live Fast declare for yesterday stamps declaredAfterDay");
+  ok(/Fast · declared · late/i.test($("#btn-day-goals").textContent),
+    "Today's day-plan link shows · late for a declared-after-day Fast");
+  ok(/after the day ended/i.test($("#btn-day-goals").title) &&
+      !/after logging began/i.test($("#btn-day-goals").title),
+    "late Fast title names the day-ended fact, not the first-add wording");
 
   dom.window.close();
 }
@@ -2601,7 +2643,7 @@ async function runImportSecurity() {
   // Part X.5 supersedes IX.2 here. IX.2 had App.importedPlannedKcal *reject*
   // intent "fast" paired with a nonzero target for settings.dayGoals — the
   // one validator of the four that hard-failed instead of downgrading.
-  // Sync.normalizeDayGoal, Phases.bumpsForDay and Ledger._normalizedDayGoalLock
+  // Sync.normalizeDayGoal, Phases.dayPlanForDay and Ledger._normalizedDayGoalLock
   // (and, below, this same import path's event-lock mirror) all already drop
   // the stray "fast" label and keep the record as an ordinary reduced-day
   // plan rather than failing outright — so one hand-edited record was taking

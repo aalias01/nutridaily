@@ -783,26 +783,85 @@ console.log("\n[20] Bump audit");
   ok(atwater <= adjusted.kcal && adjusted.kcal - atwater <= 3,
     "reduced-day carbs/fat stay Atwater-consistent within retargetForKcal's tolerance",
     `sum ${atwater} vs ${adjusted.kcal}`);
-  ok(Object.keys(adjusted._bumps).sort().join(",") === "intent,kcal" && adjusted._bumps.kcal === 500 &&
-      adjusted._bumps.intent === "reduced",
+  ok(Object.keys(adjusted._dayPlan).sort().join(",") === "intent,kcal" && adjusted._dayPlan.kcal === 500 &&
+      adjusted._dayPlan.intent === "reduced",
     "legacy multi-nutrient bump keys are dropped from resolved metadata; intent defaults to reduced");
   const legacyAbsolute = Phases.goalsForDay(keys[1], settings);
   ok(legacyAbsolute.kcal === 2300, "legacy absolute day goal derives a calorie adjustment");
   ok(legacyAbsolute.protein === base.protein && legacyAbsolute.sodium === base.sodium && legacyAbsolute.potassium === base.potassium,
     "legacy absolute macro and electrolyte targets are ignored");
-  ok(Phases.formatBumpSummary({ kcal: 500, protein: 50, sodium: -500 }) === "+500 kcal",
+  ok(Phases.formatDayPlanSummary({ kcal: 500, protein: 50, sodium: -500 }) === "+500 kcal",
     "energy-adjustment summary contains calories only");
 
-  ok(Analytics.bumpIsRetroactive(keys[0], endOf(keys[0]) + 3600e3) === true, "set after midnight is retroactive");
-  ok(Analytics.bumpIsRetroactive(keys[0], endOf(keys[0]) - 3600e3) === false, "set during the day is planned");
-  ok(Analytics.bumpIsRetroactive(keys[0], null) === false, "an untimestamped bump is not assumed retroactive");
+  ok(Analytics.dayPlanProvenance({ dayPlan: { bumps: { kcal: 500 }, plannedAt: endOf(keys[0]) - 7200e3 },
+    firstAddAt: endOf(keys[0]) - 3600e3,
+  }) === "planned", "plan recorded before first add is planned");
+  ok(Analytics.dayPlanProvenance({ dayPlan: { bumps: { kcal: 500 }, plannedAt: endOf(keys[0]) + 3600e3 },
+    firstAddAt: endOf(keys[0]),
+  }) === "declaredLate", "plan recorded after first add is declaredLate");
+  ok(Analytics.dayPlanProvenance({ dayPlan: { bumps: { kcal: 500 }, plannedAt: endOf(keys[0]) - 3600e3 },
+    firstAddAt: null,
+  }) === "unlogged", "timestamped plan with no food is unlogged, not legacy");
+  ok(Analytics.dayPlanProvenance({ dayPlan: { bumps: { kcal: 500 } },
+    firstAddAt: endOf(keys[0]),
+  }) === "legacy", "no plannedAt is legacy");
+  ok(Analytics.dayPlanProvenance({ dayPlan: { intent: "fast", declaredAfterDay: true, plannedAt: 1 },
+    firstAddAt: null,
+  }) === "declaredLate", "persisted declaredAfterDay is authoritative declaredLate");
+  // F2: dayPlanForDay placeholder plannedAt: 0 must not classify as epoch time.
+  ok(Analytics.dayPlanProvenance({ dayPlan: { kcal: -200, plannedAt: 0, intent: "reduced" },
+    firstAddAt: endOf(keys[0]) - 3600e3,
+  }) === "legacy", "plannedAt: 0 is absent, not an on-time plan");
+  // F3: equality at the first-add boundary is planned; updatedAt-only is legacy.
+  ok(Analytics.dayPlanProvenance({ dayPlan: { bumps: { kcal: 500 }, plannedAt: endOf(keys[0]) - 3600e3 },
+    firstAddAt: endOf(keys[0]) - 3600e3,
+  }) === "planned", "plannedAt equal to firstAddAt is planned, not late");
+  ok(Analytics.dayPlanProvenance({ dayPlan: { bumps: { kcal: 500 }, updatedAt: endOf(keys[0]) + 86400e3 },
+    firstAddAt: endOf(keys[0]),
+  }) === "legacy", "updatedAt-only records fall through to legacy");
+  // R2-b: missing declaration clock is disclosure, not a watch integrity alarm.
+  const legacyOnlyDay = Analytics.addDays(END, -5);
+  const legacyOnlyDays = Analytics.buildDays({
+    keys: [legacyOnlyDay],
+    totalsForDay: () => ({ count: 2, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 60 }, fb: { mean: 25 }, na: { mean: 2000 } }),
+    goalsForDay: () => ({ ...GOALS, _dayPlan: { kcal: 300, intent: "reduced" }, _phase: GOALS }),
+    dayPlanForDay: () => ({ kcal: 2300, updatedAt: endOf(legacyOnlyDay) - 3600e3 }),
+    firstAddAt: () => endOf(legacyOnlyDay) - 7200e3,
+  });
+  const legacyObs = Analytics.observations(legacyOnlyDays, {}).find((o) => o.id === "bumps");
+  ok(legacyObs && legacyObs.tone === "info" && /legacy/i.test(legacyObs.text),
+    "legacy-only observation stays info (missing clock is not laundering evidence)");
+
+  ok(Analytics.dayPlanProvenance({
+    bump: { bumps: { kcal: 500 }, plannedAt: endOf(keys[0]) - 7200e3 },
+    firstAddAt: endOf(keys[0]) - 3600e3,
+  }) === "legacy", "legacy bump key is not accepted — pass dayPlan");
+  ok(Analytics.dayPlanProvenance({
+    day: keys[0], goals: GOALS, logged: true, firstAddAt: endOf(keys[0]),
+  }) === "legacy", "buildDays row without dayPlan refuses to invent a label");
+  // B3: a plan record that itself carries a `day` key must still classify when
+  // wrapped as { dayPlan } — duck-typing on the wrapper used to poison this.
+  ok(Analytics.dayPlanProvenance({
+    dayPlan: {
+      day: keys[0], targetKcal: 0, baseKcal: 2000, intent: "fast",
+      fastAcknowledged: true, plannedAt: 1, declaredAfterDay: true,
+    },
+    firstAddAt: null,
+  }) === "declaredLate", "dayPlan with a day key still uses declaredAfterDay on the plan");
+  // B4: wrapper-level declaredAfterDay alone is not testimony.
+  ok(Analytics.dayPlanProvenance({
+    dayPlan: { targetKcal: 0, baseKcal: 2000, intent: "fast", plannedAt: 1 },
+    declaredAfterDay: true,
+    firstAddAt: null,
+  }) === "planned", "declaredAfterDay on the wrapper is ignored; only the plan counts");
 
   const bumps = {
-    [keys[2]]: { bumps: { kcal: 500, protein: 50, sodium: -500 }, updatedAt: endOf(keys[2]) - 7200e3 }, // legacy multi-key, planned
-    [keys[5]]: { bumps: { kcal: 800 }, updatedAt: endOf(keys[5]) + 86400e3 },  // after the fact
-    [keys[7]]: { bumps: { kcal: 0 }, updatedAt: endOf(keys[7]) },              // empty, ignored
-    [keys[8]]: { bumps: { protein: 100, sodium: -1000 }, updatedAt: endOf(keys[8]) }, // no energy adjustment, ignored
-    [keys[9]]: { kcal: 2300, protein: 999, updatedAt: endOf(keys[9]) - 3600e3 }, // legacy absolute; resolved delta is +300
+    [keys[2]]: { bumps: { kcal: 500, protein: 50, sodium: -500 }, plannedAt: endOf(keys[2]) - 7200e3, updatedAt: endOf(keys[2]) - 7200e3 },
+    [keys[5]]: { bumps: { kcal: 800 }, plannedAt: endOf(keys[5]) + 86400e3, updatedAt: endOf(keys[5]) + 86400e3 },
+    [keys[7]]: { bumps: { kcal: 0 }, plannedAt: endOf(keys[7]), updatedAt: endOf(keys[7]) },
+    [keys[8]]: { bumps: { protein: 100, sodium: -1000 }, plannedAt: endOf(keys[8]), updatedAt: endOf(keys[8]) },
+    // Absolute shape with plannedAt but no firstAdd → unlogged (updatedAt alone would be legacy).
+    [keys[9]]: { kcal: 2300, protein: 999, plannedAt: endOf(keys[9]) - 3600e3, updatedAt: endOf(keys[9]) - 3600e3 },
   };
   const firstAdds = {
     [keys[2]]: endOf(keys[2]) - 3600e3,
@@ -813,22 +872,22 @@ console.log("\n[20] Bump audit");
     keys,
     totalsForDay: () => ({ count: 3, kcal: { mean: 2500 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } }),
     goalsForDay: (d) => d === keys[9]
-      ? { ...GOALS, _bumps: { kcal: 300 }, _phase: GOALS }
+      ? { ...GOALS, _dayPlan: { kcal: 300 }, _phase: GOALS }
       : GOALS,
     weightKgForDay: () => null,
-    bumpForDay: (d) => bumps[d] || null,
+    dayPlanForDay: (d) => bumps[d] || null,
     firstAddAt: (d) => firstAdds[d] || null,
   });
-  const audit = Analytics.bumpAudit(days);
+  const audit = Analytics.dayPlanAudit(days);
   ok(audit.total === 3, "counts only energy adjustments with a non-zero calorie delta", `got ${audit.total}`);
-  ok(audit.retroactive === 1 && audit.planned === 1 && audit.unknown === 1,
-    "compares plan time with first-add time and keeps unsupported legacy provenance unknown");
+  ok(audit.declaredLate === 1 && audit.planned === 1 && audit.unlogged === 1 && audit.legacy === 0,
+    "compares plan time with first-add time; timestamped-with-no-food is unlogged, not legacy");
   ok(audit.kcalTotal === 1600, "sums modern and legacy calorie deltas");
-  ok(audit.days.every((r) => r.day && typeof r.retroactive === "boolean"), "rows carry day and flag");
+  ok(audit.days.every((r) => r.day && typeof r.declaredLate === "boolean"), "rows carry day and declaredLate flag");
   ok(audit.days.every((r) => Object.keys(r.bumps).length === 1 && Number.isFinite(r.bumps.kcal)),
     "audit sanitizes legacy records to their energy adjustment");
-  ok(Analytics.bumpAudit(makeDays(keys, () => null)).total === 0, "no bumps, empty audit");
-  const completedAudit = Analytics.bumpAudit(days, { todayKey: END });
+  ok(Analytics.dayPlanAudit(makeDays(keys, () => null)).total === 0, "no bumps, empty audit");
+  const completedAudit = Analytics.dayPlanAudit(days, { todayKey: END });
   ok(completedAudit.total === 2 && !completedAudit.days.some((r) => r.day === END),
     "current day is excluded from completed-day adjustment audits");
 
@@ -836,9 +895,54 @@ console.log("\n[20] Bump audit");
   const bumpObs = obs.find((o) => o.id === "bumps");
   ok(!!bumpObs, "bumps surface as an observation");
   ok(/day plan/.test(bumpObs.text), "audit wording calls it a day plan");
-  ok(bumpObs.tone === "watch", "a retroactive bump raises the tone");
+  ok(bumpObs.tone === "watch", "a declaredLate bump raises the tone");
   ok(/after logging began/.test(bumpObs.text) && !/provenance is unknown/.test(bumpObs.text),
     "completed-day observation uses immutable provenance and excludes today's unfinished audit row");
+
+  // S2 regression: a planned day with no food must not be called legacy or watch.
+  const unloggedPlanDay = Analytics.addDays(END, -3);
+  const loggedNeighbor = Analytics.addDays(END, -2);
+  const unloggedDays = Analytics.buildDays({
+    keys: [unloggedPlanDay, loggedNeighbor],
+    totalsForDay: (day) => day === loggedNeighbor
+      ? { count: 3, kcal: { mean: 2000 }, p: { mean: 150 }, c: { mean: 200 }, f: { mean: 65 }, fb: { mean: 30 }, na: { mean: 2000 } }
+      : { count: 0 },
+    goalsForDay: (day) => day === unloggedPlanDay
+      ? { ...GOALS, _dayPlan: { kcal: -400, intent: "reduced" }, _phase: GOALS }
+      : GOALS,
+    dayPlanForDay: (day) => day === unloggedPlanDay
+      ? {
+          targetKcal: 1600, baseKcal: 2000, plannedAt: endOf(unloggedPlanDay) - 7200e3,
+          updatedAt: endOf(unloggedPlanDay) - 7200e3,
+        }
+      : null,
+    firstAddAt: () => null,
+  });
+  const unloggedAudit = Analytics.dayPlanAudit(unloggedDays);
+  ok(unloggedAudit.total === 1 && unloggedAudit.unlogged === 1 && unloggedAudit.legacy === 0 &&
+      unloggedAudit.declaredLate === 0,
+    "reduced plan with no entries audits as unlogged only");
+  const unloggedObs = Analytics.observations(unloggedDays, {}).find((o) => o.id === "bumps");
+  ok(unloggedObs && unloggedObs.tone === "info", "unlogged planned day is info, not watch");
+  ok(unloggedObs && /recorded no food/.test(unloggedObs.text) && !/legacy/i.test(unloggedObs.text),
+    "unlogged copy names the gap and avoids legacy");
+
+  // Guard against over-correcting S2 into silence: still late → still watch.
+  const lateReducedDay = Analytics.addDays(END, -4);
+  const lateReducedDays = Analytics.buildDays({
+    keys: [lateReducedDay],
+    totalsForDay: () => ({ count: 2, kcal: { mean: 1800 }, p: { mean: 120 }, c: { mean: 180 }, f: { mean: 60 }, fb: { mean: 25 }, na: { mean: 2000 } }),
+    goalsForDay: () => ({ ...GOALS, _dayPlan: { kcal: 500, intent: "reduced" }, _phase: GOALS }),
+    dayPlanForDay: () => ({
+      targetKcal: 2500, baseKcal: 2000,
+      plannedAt: endOf(lateReducedDay) - 1000,
+      updatedAt: endOf(lateReducedDay) - 1000,
+    }),
+    firstAddAt: () => endOf(lateReducedDay) - 7200e3,
+  });
+  const lateObs = Analytics.observations(lateReducedDays, {}).find((o) => o.id === "bumps");
+  ok(lateObs && lateObs.tone === "watch" && /after logging began/.test(lateObs.text),
+    "reduced plan after first add still watch + late disclosure");
 }
 
 console.log("\n[21] Range comparison");
@@ -1417,7 +1521,7 @@ console.log("\n[34] Day-intent: reduced-day retargeting and the protein exemptio
 
   // Part VII.1 regression: healLoggedDayGoals writes a {targetKcal ===
   // baseKcal, locked: true} record for every logged day, even when the plan
-  // changed nothing. bumpsForDay returns a non-null record for that day, so
+  // changed nothing. dayPlanForDay returns a non-null record for that day, so
   // without the resolved.kcal === fromPhase.kcal gate in goalsForDay, this
   // would silently retarget carbs/fat (and evaluate the protein floor)
   // against a healed no-op — drifting past hit rates the user never planned.
@@ -1832,7 +1936,7 @@ console.log("\n[42] Day-intent: partialDays excludes every declared day (H3)");
     "real energy plans still resolve as intent reduced after neighbouring days are healed");
 }
 
-console.log("\n[43] Day-intent: bumpAudit separates fasts from energy adjustments (H4)");
+console.log("\n[43] Day-intent: dayPlanAudit separates fasts from energy adjustments (H4)");
 {
   const phaseGoals = { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2300 };
   const keys = keysEndingAt(END, 8);
@@ -1857,13 +1961,20 @@ console.log("\n[43] Day-intent: bumpAudit separates fasts from energy adjustment
   };
   const days = Analytics.buildDays({
     keys, totalsForDay, goalsForDay: (day) => Phases.goalsForDay(day, settings),
-    bumpForDay: (day) => settings.dayGoals[day] || null,
+    dayPlanForDay: (day) => settings.dayGoals[day] || null,
   });
-  const audit = Analytics.bumpAudit(days);
+  const audit = Analytics.dayPlanAudit(days);
   ok(audit.total === 1, "only the reduced day counts as an energy adjustment", `got ${audit.total}`);
   ok(audit.kcalTotal === 500, "a fast's delta is never summed into kcalTotal — no -2200 per fast", `got ${audit.kcalTotal}`);
   ok(audit.fasts === 2, "both fasts are counted, separately from adjustments", `got ${audit.fasts}`);
   ok(audit.fastsDeclaredAfterDay === 1, "exactly one fast was declared after its day ended", `got ${audit.fastsDeclaredAfterDay}`);
+  ok(audit.fastDays.find((f) => f.day === lateFastDay).provenance === "declaredLate",
+    "late fast provenance comes from dayPlanProvenance as declaredLate");
+  ok(audit.fastDays.find((f) => f.day === fastDay).provenance === "planned",
+    "on-time fast provenance is planned");
+  // Mixed fixture: reduced has plannedAt but no firstAddAt in this builder → unlogged.
+  ok(audit.days[0].provenance === "unlogged",
+    "reduced day without firstAddAt classifies as unlogged via the shared helper");
 
   const obs = Analytics.observations(days, {});
   const bumpObs = obs.find((o) => o.id === "bumps");
@@ -1985,7 +2096,7 @@ console.log("\n[47] Day-intent: reverted fast keeps marker; observations + TDEE 
   };
   const days = Analytics.buildDays({
     keys, totalsForDay, goalsForDay: (day) => Phases.goalsForDay(day, settings),
-    bumpForDay: (day) => settings.dayGoals[day] || null,
+    dayPlanForDay: (day) => settings.dayGoals[day] || null,
   });
   const cells = Analytics.heatmapCells(days, "kcal", Phases.scoreDayTotals);
   const ateCell = cells.find((c) => c.day === ateFast);
@@ -2016,7 +2127,7 @@ console.log("\n[47] Day-intent: reverted fast keeps marker; observations + TDEE 
     keys: allFastKeys,
     totalsForDay: () => ({ count: 0 }),
     goalsForDay: (day) => Phases.goalsForDay(day, settings),
-    bumpForDay: (day) => settings.dayGoals[day] || null,
+    dayPlanForDay: (day) => settings.dayGoals[day] || null,
   });
   const allFastObs = Analytics.observations(allFastDays, {});
   ok(allFastObs.some((o) => o.id === "fasts"),
