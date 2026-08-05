@@ -30,6 +30,7 @@ const UI = (() => {
   function syncModalInert() {
     clearModalInert();
     const id = topSheetId();
+    document.body.classList.toggle("sheet-open", !!id);
     let current = id && $(`#${id}`);
     if (!current) return;
     while (current && current.parentElement) {
@@ -1292,7 +1293,7 @@ const UI = (() => {
       keys, days, settings, todayKey, selectedPhase, daysBack, viewingPastPhase, scoreDay,
       nutrient: o.nutrient || "kcal",
       rollup: o.rollup === "week" ? "week" : "day",
-      topFoodMetric: o.topFoodMetric || "kcal",
+      topFoodMetric: o.topFoodMetric || o.nutrient,
       weightUnit: settings.weightUnit === "kg" ? "kg" : "lb",
       // Today is still in progress; counting it as a miss would be wrong.
       scoreOpts: { todayKey: viewingPastPhase ? null : todayKey },
@@ -1308,6 +1309,9 @@ const UI = (() => {
     ctx.trend = Analytics.trendWeight(days);
     ctx.score = Analytics.nutritionScore(days, scoreDay, ctx.scoreOpts);
     ctx.consistency = ctx.score.consistency;
+    // Counts logged days in the selected range (empty / thin / full first-run tiers).
+    const loggedCount = Analytics.loggedRows(days).length;
+    ctx.maturity = loggedCount === 0 ? "empty" : loggedCount < 3 ? "thin" : "full";
     _insight = ctx;
     return ctx;
   }
@@ -1389,14 +1393,34 @@ const UI = (() => {
       </div>`;
   }
 
-  /** Short factual notes; nothing here praises or scolds. */
+  /** Short factual notes; triage layer with jump links to owning panels. */
   function renderObservations(ctx) {
     const root = $("#insight-observations");
     if (!root) return;
-    const obs = Analytics.observations(ctx.days, ctx.scoreOpts);
-    root.innerHTML = obs.map((o) =>
-      `<p class="obs obs-${esc(o.tone)}">${esc(o.text)}</p>`
-    ).join("");
+    const HONESTY = new Set(["partial-days", "bumps", "fasts"]);
+    const obs = Analytics.observations(ctx.days, ctx.scoreOpts)
+      .slice()
+      .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+    const always = obs.filter((o) => o.tone === "watch" || HONESTY.has(o.id));
+    const alwaysIds = new Set(always.map((o) => o.id));
+    const rest = obs.filter((o) => !alwaysIds.has(o.id));
+    const shownInfo = rest.slice(0, 3);
+    const moreInfo = rest.slice(3);
+
+    const renderNote = (o) => {
+      const cls = `obs obs-${esc(o.tone)}`;
+      const idAttr = ` data-obs-id="${esc(o.id)}"`;
+      if (o.panel) {
+        return `<button type="button" class="${cls} obs-jump"${idAttr} data-jump="${esc(o.panel)}">${esc(o.text)}</button>`;
+      }
+      return `<p class="${cls}"${idAttr}>${esc(o.text)}</p>`;
+    };
+
+    let html = always.map(renderNote).join("") + shownInfo.map(renderNote).join("");
+    if (moreInfo.length) {
+      html += `<details class="obs-more"><summary>More notes (${moreInfo.length})</summary>${moreInfo.map(renderNote).join("")}</details>`;
+    }
+    root.innerHTML = html;
   }
 
   // ---------------------------------------------------------- intake chart
@@ -1608,7 +1632,7 @@ const UI = (() => {
     renderTrendDataTable(ctx, series, roll, weekly);
   }
 
-  /** One-line summary under the intake chart. */
+  /** Chart caption under the intake chart — interaction hint, not a fact dump. */
   function renderTrendSummary(ctx) {
     const el = $("#trend-summary");
     if (!el) return;
@@ -1618,17 +1642,11 @@ const UI = (() => {
       return;
     }
     const meta = nutMeta(ctx.nutrient);
-    const avgSel = Analytics.mean(logged.map((d) => d[ctx.nutrient]));
-    const last7 = Analytics.loggedRows(ctx.days.slice(-7));
-    const weekAvg = Analytics.mean(last7.map((d) => d[ctx.nutrient]));
-    const bits = [
-      `${logged.length} of ${ctx.days.length} days logged (${ctx.rangeLabel})`,
-      `avg ${fmt(avgSel)}${meta.unit} ${meta.label.toLowerCase()}`,
-      `P ${fmt(Analytics.mean(logged.map((d) => d.protein)))} · C ${fmt(Analytics.mean(logged.map((d) => d.carbs)))} · F ${fmt(Analytics.mean(logged.map((d) => d.fat)))}`,
-    ];
-    if (weekAvg != null) bits.push(`last 7 d ${fmt(weekAvg)}${meta.unit}`);
-    if (!ctx.viewingPastPhase) bits.push(`streak ${ctx.consistency.currentStreak} d`);
-    el.textContent = bits.join(" · ");
+    const period = ctx.rollup === "week" ? "week" : "day";
+    const tip = period === "week"
+      ? ""
+      : " · tap a bar for that day's foods";
+    el.textContent = `${meta.label} per ${period} vs target band${tip}`;
   }
 
   /** Distribution stats for the selected nutrient — the spread, not just the mean. */
@@ -2012,7 +2030,8 @@ const UI = (() => {
     const meta = nutMeta(ctx.nutrient);
     const vals = rows.map((r) => r.avg).filter(Number.isFinite);
     if (!vals.length) {
-      root.innerHTML = `<b>By day of week</b><p class="muted small">Appears once you have logged days.</p>`;
+      root.innerHTML = `<div class="card-head-row"><b>By day of week</b><span class="muted small">${esc(meta.label)}</span></div>
+        <p class="muted small">Appears once you have logged days.</p>`;
       return;
     }
     const goalMax = Math.max(...rows.map((r) => r.goal || 0));
@@ -2041,7 +2060,7 @@ const UI = (() => {
       : `<p class="muted small">Needs a few more logged weekdays and weekends to compare.</p>`;
 
     root.innerHTML = `
-      <div class="card-head-row"><b>By day of week</b><span class="muted small">avg ${esc(meta.label.toLowerCase())}</span></div>
+      <div class="card-head-row"><b>By day of week</b><span class="muted small">${esc(meta.label)}</span></div>
       <div class="dow-list">${bars}</div>
       ${note}`;
   }
@@ -2056,14 +2075,8 @@ const UI = (() => {
     const metric = ctx.topFoodMetric;
     const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg", potassium: " mg" }[metric] || "";
     const rows = Analytics.topFoods(ctx.keys, (day) => Ledger.entriesFor(day), metric, 6);
-    const pills = $("#topfood-metric");
-    if (pills) {
-      pills.querySelectorAll("button").forEach((b) => {
-        const on = b.dataset.metric === metric;
-        b.classList.toggle("active", on);
-        b.setAttribute("aria-pressed", String(on));
-      });
-    }
+    const scope = $("#topfoods-scope");
+    if (scope) scope.textContent = nutMeta(metric).label;
     if (!rows.length) {
       root.innerHTML = `<p class="muted small">Top foods appear as you log.</p>`;
       return;
@@ -2387,7 +2400,12 @@ const UI = (() => {
   function renderPhaseCompare(ctx) {
     const root = $("#phase-compare");
     if (!root) return;
-    root.hidden = true;
+    const section = $("#section-compare");
+    const setHidden = (v) => {
+      root.hidden = v;
+      if (section) section.hidden = v;
+    };
+    setHidden(true);
     root.innerHTML = "";
     if (typeof Phases === "undefined") return;
 
@@ -2427,7 +2445,7 @@ const UI = (() => {
     if (prev.loggedDays < 5 || cur.loggedDays < 5) return;
 
     const rows = Analytics.compareSummaries(cur, prev, { weightUnit: ctx.weightUnit });
-    root.hidden = false;
+    setHidden(false);
     root.innerHTML = `
       <div class="card-head-row"><b>vs previous phase</b>
         <span class="muted small">${esc(Phases.labelForDay(prevPhase, prevPhase.endDay || ctx.todayKey))} → ${esc(Phases.labelForDay(currentPhase, currentPhase.endDay || ctx.todayKey))}</span></div>
@@ -2484,19 +2502,95 @@ const UI = (() => {
 
   // ------------------------------------------------------------- entry point
 
+  /**
+   * First-run maturity: hide panels that only refuse until enough days exist.
+   * Does not change any panel's own refusal copy — only visibility.
+   * `#section-compare` stays owned by renderPhaseCompare on `full`.
+   */
+  function applyInsightMaturity(ctx) {
+    const sectionIds = [
+      "section-intake", "section-weight", "section-energy",
+      "section-adherence", "section-composition", "section-compare",
+    ];
+    const dow = $("#dow-pattern");
+    if (ctx.maturity === "empty") {
+      for (const id of sectionIds) {
+        const el = $("#" + id);
+        if (el) el.hidden = true;
+      }
+      if (dow) dow.hidden = true;
+      return;
+    }
+    for (const id of sectionIds) {
+      if (id === "section-compare") continue; // renderPhaseCompare owns this
+      const el = $("#" + id);
+      if (el) el.hidden = false;
+    }
+    if (dow) dow.hidden = false;
+    if (ctx.maturity === "thin") {
+      for (const id of ["section-energy", "section-composition", "section-compare"]) {
+        const el = $("#" + id);
+        if (el) el.hidden = true;
+      }
+      if (dow) dow.hidden = true;
+    }
+  }
+
+  /**
+   * Dock pill hit marks (P6-T1) + roving tabindex seed (P6-T4) + scroll the
+   * active pill into the horizontal lane (P6-T5). Status is filled / ring /
+   * hollow via data-dock-status — never colour alone — and named in aria-label.
+   */
+  function syncDockPills(ctx, scorecard) {
+    const nutPills = $("#insight-nutrient");
+    if (!nutPills) return;
+    const byKey = Object.create(null);
+    for (const n of (scorecard && scorecard.nutrients) || []) {
+      if (n && n.key) byKey[n.key] = n;
+    }
+    const buttons = [...nutPills.querySelectorAll("[data-nutrient]")];
+    let activeBtn = null;
+    for (const b of buttons) {
+      if (!b.dataset.dockName) {
+        b.dataset.dockName = b.getAttribute("aria-label") || (b.textContent || "").trim();
+      }
+      const name = b.dataset.dockName;
+      const row = byKey[b.dataset.nutrient];
+      let status = "none";
+      let detail = "not enough scored days";
+      if (row && row.n >= 3) {
+        const rate = row.hit / row.n;
+        const pct = Math.round(rate * 100);
+        detail = `${pct}% of days on target`;
+        if (rate >= 0.8) status = "good";
+        else if (rate >= 0.5) status = "mid";
+        else status = "bad";
+      }
+      b.dataset.dockStatus = status;
+      const on = b.dataset.nutrient === ctx.nutrient;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("aria-label", `${name}, ${detail}`);
+      b.tabIndex = on ? 0 : -1;
+      if (on) activeBtn = b;
+    }
+    if (activeBtn && typeof activeBtn.scrollIntoView === "function") {
+      const reduce = typeof window.matchMedia === "function"
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      activeBtn.scrollIntoView({
+        inline: "center", block: "nearest",
+        behavior: reduce ? "auto" : "smooth",
+      });
+    }
+  }
+
   /** Single render pass for the whole Insights tab. */
   function renderInsights(opts) {
     if (typeof Analytics === "undefined") return;
     const ctx = buildInsightContext(opts);
 
-    const nutPills = $("#insight-nutrient");
-    if (nutPills) {
-      nutPills.querySelectorAll("button").forEach((b) => {
-        const on = b.dataset.nutrient === ctx.nutrient;
-        b.classList.toggle("active", on);
-        b.setAttribute("aria-pressed", String(on));
-      });
-    }
+    const intakeHead = $("#intake-head");
+    if (intakeHead) intakeHead.textContent = nutMeta(ctx.nutrient).label;
     const rollSeg = $("#rollup-seg");
     if (rollSeg) {
       rollSeg.querySelectorAll("button").forEach((b) => {
@@ -2513,7 +2607,9 @@ const UI = (() => {
     renderTrendSummary(ctx);
     renderIntakeStats(ctx);
     renderTdeeCard(ctx);
-    renderScorecard(renderCallouts(ctx));
+    const scorecard = renderCallouts(ctx);
+    renderScorecard(scorecard);
+    syncDockPills(ctx, scorecard);
     renderNaKCard(ctx);
     renderPhaseCompare(ctx);
     renderHeatmap(ctx);
@@ -2522,6 +2618,7 @@ const UI = (() => {
     renderDowPattern(ctx);
     renderTopFoods(ctx);
     renderWeightChart(ctx);
+    applyInsightMaturity(ctx);
     hideTip("#trend-tip");
     hideTip("#weight-tip");
     // Keep an open day card and re-score it for the newly selected nutrient.

@@ -56,18 +56,22 @@ New installations use a configurable generic adult potassium reference of **3,51
 
 Everything is derived on device from your own log: no server, no model, no guesswork you can't inspect.
 
+Nutrient scope is one control: a docked pill row at the bottom of the Insights tab (Kcal, Protein, Carbs, Fat, Fiber, Na, K). The intake chart and the panels that live with it follow that dock. There is no second nutrient selector.
+
+Order on the tab:
+
 - **Headline score**: a 0–100 number blending logging consistency, target hit rate, and protein specifically, plus average calories, weight trend and streak. A range with too few real scored days behind a target (whether because every cell was exempt or because there just isn't enough data yet) shows "No data yet" instead of a number rather than crediting an unjustified perfect off a single day propped up by consistency credit alone.
-- **Intake chart**: daily bars or weekly averages against that day's own target, with the hit band shaded and a 7-day rolling mean drawn on top. Tap any bar for the detail. Also: median, typical swing, range, and the last 7 days versus the 7 before.
+- **Observations**: a short triage list under the headline (a few notes, honesty flags always shown). Notes that own a panel can jump you there; they report what the numbers say and never grade you on it.
+- **Intake (selected nutrient)**: daily bars or weekly averages against that day's own target, with the hit band shaded and a 7-day rolling mean drawn on top. Tap any bar for the detail. Also: median, typical swing, range, and the last 7 days versus the 7 before. The logging calendar, day-of-week pattern, and top foods for the same nutrient sit here rather than under a separate "breakdown" section.
+- **Weight**: raw weigh-ins as dots with a gap-aware EMA trend line through them, rate per week from a regression on the weigh-ins, and a 4-week projection. Placed above energy so the TDEE card can narrate the chart.
 - **Energy expenditure**: an adaptive TDEE estimate: average intake minus what your weight trend actually did (7700 kcal/kg). Comes with the intake needed to lose 0.5 / 0.25 kg per week, maintain, or gain. Shown only when there is enough data; otherwise the card says exactly what is missing rather than printing a confident-looking number.
-- **Weight**: raw weigh-ins as dots with a gap-aware EMA trend line through them, rate per week from a regression on the weigh-ins, and a 4-week projection.
-- **Consistency**: a calendar heatmap coloured by how each day landed against target, streaks, weekday-versus-weekend logging rates, and a per-nutrient scorecard with under / on-target / over bars.
-- **Breakdown**: macro split as a share of calories against the split your targets imply, calories by meal, day-of-week pattern (where weekend drift shows up), and top foods rankable by any of the seven nutrients: the one that finds your sodium is one soup, or your fat is one spoon of peanut butter.
+- **Adherence**: a per-nutrient scorecard with under / on-target / over bars (streaks still appear with the headline and the logging calendar).
+- **Composition**: macro split as a share of calories against the split your targets imply, calories by meal, and the Na/K card when coverage is honest enough.
+- **Phase comparison**: where a previous phase exists, score, logging, calorie target, weight rate and target hit rates side by side. Calorie average and weight rate are shown without a verdict, because faster loss is progress in a cut and a problem in a bulk.
+
+On a brand-new or very thin log, Insights stays quiet on purpose: energy and composition wait until a few days exist rather than stacking eight "not enough data" cards.
 
 It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), and calorie heatmaps mark days that used a day plan. Declared low-calorie days and declared fasts are user-stamped, not inferred: they stay out of unfinished-log flags and out of eating-day averages; when a low plan makes a floor or ceiling arithmetically incoherent, that nutrient is left unscored and disclosed rather than quietly dropped; fasts count toward consistency at zero calories and are included in the TDEE intake average as zero; and a declaration made after the day ended is reported rather than quietly rewritten. Because a reduced plan locks after the first logged food, it cannot be added later to turn an over-target result into a hit.
-
-Where a previous phase exists, Insights compares it to the current one: score, logging, calorie target, weight rate and target hit rates side by side. Calorie average and weight rate are shown without a verdict, because faster loss is progress in a cut and a problem in a bulk.
-
-Observations under the headline are descriptive only: they report what the numbers say and never grade you on it.
 
 Numbers are estimates from logged data. Nothing here is medical advice; talk to a clinician or dietitian for anything that matters.
 

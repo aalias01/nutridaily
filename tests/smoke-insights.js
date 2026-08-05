@@ -197,6 +197,33 @@ async function run(label, days) {
       "light and dark interactive accent text meets WCAG AA");
     ok(/--hm-size:\s*24px/.test(cssText) && /\.hm-cell\s*\{[^}]*width:\s*var\(--hm-size\)[^}]*height:\s*var\(--hm-size\)/s.test(cssText),
       "interactive heatmap cells expose at least a 24px CSS target");
+    // Dock uses --card at 92% mix; assert the solid --card tokens that feed it.
+    const cardFills = [...cssText.matchAll(/^\s*--card:\s*(#[0-9a-f]{6})/gim)].map((m) => m[1]);
+    ok(cardFills.length >= 2 &&
+        cardFills.every((color) => contrastRatio("#23282d", color) >= 4.5 || contrastRatio("#e8e6e1", color) >= 4.5),
+      "insight-dock card surfaces keep text-level contrast in every theme");
+    ok(/\.insight-section\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText) &&
+        /#dow-pattern\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
+      "insight-section and #dow-pattern [hidden] use display:none !important");
+    ok(/#view-insights\s+\.view-head[^}]*position:\s*sticky/s.test(cssText) &&
+        /#view-insights\s+\.view-head[^}]*z-index:\s*5/s.test(cssText),
+      "Insights view-head is sticky above chart table headers");
+    ok(/\.insight-dock\.is-inactive\s*\{[^}]*\}/s.test(cssText) &&
+        (() => {
+          const m = cssText.match(/\.insight-dock\.is-inactive\s*\{([^}]*)\}/s);
+          if (!m) return false;
+          const props = [...m[1].matchAll(/(?:^|;)\s*([a-z-]+)\s*:/gi)].map((x) => x[1].toLowerCase());
+          return props.length > 0 && props.every((p) => p === "opacity");
+        })(),
+      "dock is-inactive dims via opacity only (no height/padding/margin)");
+    ok(/data-dock-status="good"\]::after[^}]*background:\s*var\(--accent\)/s.test(cssText) &&
+        /data-dock-status="mid"\]::after[^}]*border:/s.test(cssText) &&
+        /data-dock-status="bad"\]::after[^}]*border:/s.test(cssText) &&
+        /data-dock-status="none"\]::after[^}]*dashed/s.test(cssText),
+      "dock status dots use filled / ring / hollow shapes, not colour alone");
+    const uiText = fs.readFileSync(path.join(ROOT, "js/ui.js"), "utf8");
+    ok(/row\.n\s*>=\s*3/.test(uiText) && /rate\s*>=\s*0\.8/.test(uiText) && /rate\s*>=\s*0\.5/.test(uiText),
+      "dock status thresholds stay n>=3 scored days and 0.8/0.5 hit-rate bands");
   }
 
   // Stub canvas + layout before app scripts run.
@@ -205,12 +232,25 @@ async function run(label, days) {
   };
   Object.defineProperty(window.HTMLElement.prototype, "clientWidth", { get() { return 360; }, configurable: true });
   Object.defineProperty(window.HTMLElement.prototype, "offsetWidth", { get() { return 120; }, configurable: true });
-  window.HTMLElement.prototype.scrollIntoView = () => {};
   window.Element.prototype.getBoundingClientRect = function () {
     return { left: 0, top: 0, right: 360, bottom: 200, width: 360, height: 200, x: 0, y: 0, toJSON() {} };
   };
   window.matchMedia = window.matchMedia || (() => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
   window.navigator.serviceWorker = undefined;
+  window.__ndScrollIntoView = [];
+  window.HTMLElement.prototype.scrollIntoView = function (...args) {
+    window.__ndScrollIntoView.push({ el: this, id: this.id, nutrient: this.dataset && this.dataset.nutrient, args });
+  };
+  window.__ndIO = [];
+  window.IntersectionObserver = class {
+    constructor(cb) { this.cb = cb; window.__ndIO.push(this); }
+    observe(el) {
+      this.el = el;
+      this.cb([{ target: el, isIntersecting: true }]);
+    }
+    disconnect() { this.dead = true; }
+    unobserve() {}
+  };
   installPrimaryLock(window);
 
   // Count listeners per element id so a double boot is caught, not tolerated.
@@ -292,6 +332,118 @@ async function run(label, days) {
   await new Promise((r) => setTimeout(r, 60));
 
   ok($("#view-insights").classList.contains("active"), "insights view is active");
+
+  // §3 dock + section-order guards (Phases 1–2 contract).
+  const dock = $("#insight-dock");
+  ok(!!dock, "insight-dock exists");
+  ok(!dock.hidden, "insight-dock visible on Insights");
+  ok(window.document.body.classList.contains("has-insight-dock"), "body.has-insight-dock set on Insights");
+  ok($("#insight-nutrient") && dock.contains($("#insight-nutrient")),
+    "insight-nutrient is a descendant of insight-dock");
+  ok(window.document.querySelectorAll(".nutrient-pills").length === 1 &&
+      window.document.querySelectorAll("#insight-nutrient [data-nutrient]").length === 7,
+    "exactly one nutrient pill group");
+  ok(!$("#topfood-metric"), "topfood-metric removed; Top foods follows the dock");
+  const sectionIds = [...window.document.querySelectorAll("#view-insights .insight-section")].map((s) => s.id);
+  ok(JSON.stringify(sectionIds) === JSON.stringify([
+    "section-intake", "section-weight", "section-energy",
+    "section-adherence", "section-composition", "section-compare",
+  ]), "Insights section order matches Phase 1 layout", sectionIds.join(", "));
+  ok($("#section-compare").hidden === $("#phase-compare").hidden,
+    "section-compare.hidden mirrors phase-compare.hidden");
+  ok($("#day-detail") && $("#section-intake").contains($("#day-detail")),
+    "day-detail lives inside section-intake");
+  ok(!$("#section-intake").hidden && !$("#section-weight").hidden &&
+      !$("#section-energy").hidden && !$("#section-adherence").hidden &&
+      !$("#section-composition").hidden && !$("#dow-pattern").hidden,
+    "full-tier fixture boots with core sections + DOW visible");
+  const dockPills = [...window.document.querySelectorAll("#insight-nutrient [data-nutrient]")];
+  ok(dockPills.length === 7 && dockPills.every((b) => b.dataset.dockStatus),
+    "every dock pill carries a data-dock-status mark");
+  ok(dockPills.every((b) => /,\s*(?:not enough scored days|\d+% of days on target)$/.test(b.getAttribute("aria-label") || "")),
+    "dock pill aria-label names hit-rate state (not colour alone)");
+  ok(dockPills.some((b) => /^(good|mid|bad)$/.test(b.dataset.dockStatus)),
+    "full fixture paints at least one scored dock status (not all none)");
+  {
+    const Ledger = window.eval("Ledger");
+    const Phases = window.eval("Phases");
+    const settings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
+    const todayKey = Ledger.todayKey();
+    const keys = [];
+    const end = new Date(todayKey + "T12:00:00");
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(end); d.setDate(d.getDate() - i);
+      keys.push(Ledger.todayKey(d));
+    }
+    const scorecard = Phases.scoreRange(keys, (day) => Ledger.totalsFor(day), settings, { excludeDay: todayKey });
+    const expectedDockStatus = (row) => {
+      if (!row || !row.n || row.n < 3) return "none";
+      const rate = row.hit / row.n;
+      if (rate >= 0.8) return "good";
+      if (rate >= 0.5) return "mid";
+      return "bad";
+    };
+    for (const b of dockPills) {
+      const row = (scorecard.nutrients || []).find((n) => n.key === b.dataset.nutrient);
+      ok(b.dataset.dockStatus === expectedDockStatus(row),
+        `dock ${b.dataset.nutrient} status matches n>=3 / 0.8 / 0.5 cuts`,
+        `${b.dataset.dockStatus} vs ${expectedDockStatus(row)} (n=${row && row.n}, hit=${row && row.hit})`);
+    }
+  }
+  const activeDock = dockPills.find((b) => b.classList.contains("active"));
+  ok(activeDock && activeDock.tabIndex === 0 &&
+      dockPills.filter((b) => b.tabIndex === 0).length === 1 &&
+      dockPills.every((b) => b === activeDock || b.tabIndex === -1),
+    "dock uses a single roving tabindex on the active pill");
+  const liveIO = window.__ndIO.filter((o) => !o.dead && o.el && o.el.id === "section-intake");
+  ok(liveIO.length >= 1, "IntersectionObserver watches #section-intake for dock dimming");
+  liveIO[liveIO.length - 1].cb([{ target: liveIO[liveIO.length - 1].el, isIntersecting: false }]);
+  ok($("#insight-dock").classList.contains("is-inactive"),
+    "dock gains is-inactive when intake leaves the viewport");
+  liveIO[liveIO.length - 1].cb([{ target: liveIO[liveIO.length - 1].el, isIntersecting: true }]);
+  ok(!$("#insight-dock").classList.contains("is-inactive"),
+    "dock clears is-inactive when intake returns");
+  activeDock.focus();
+  activeDock.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  const afterArrow = window.document.activeElement;
+  ok(afterArrow && afterArrow.dataset && afterArrow.dataset.nutrient && afterArrow !== activeDock &&
+      afterArrow.tabIndex === 0 && activeDock.tabIndex === -1,
+    "ArrowRight moves dock focus and roving tabindex without requiring a click");
+  window.__ndScrollIntoView.length = 0;
+  afterArrow.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 30));
+  ok(afterArrow.classList.contains("active") &&
+      new RegExp(afterArrow.dataset.dockName || afterArrow.dataset.nutrient, "i").test(text("#intake-head")),
+    "Enter activates the focused dock pill");
+  ok(window.__ndScrollIntoView.filter((s) => s.nutrient === afterArrow.dataset.nutrient).length === 1,
+    "Enter activates exactly once (no double refreshInsights)");
+  afterArrow.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  const afterSecondArrow = window.document.activeElement;
+  window.__ndScrollIntoView.length = 0;
+  afterSecondArrow.dispatchEvent(new window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 30));
+  ok(afterSecondArrow.classList.contains("active"),
+    "Space activates the focused dock pill");
+  ok(window.__ndScrollIntoView.filter((s) => s.nutrient === afterSecondArrow.dataset.nutrient).length === 1,
+    "Space activates exactly once (keydown preventDefault suppresses native keyup click)");
+  window.__ndScrollIntoView.length = 0;
+  window.document.querySelector('#insight-nutrient [data-nutrient="potassium"]').click();
+  await new Promise((r) => setTimeout(r, 30));
+  ok(window.__ndScrollIntoView.some((s) => s.nutrient === "potassium" && s.args[0] && s.args[0].behavior === "smooth"),
+    "active potassium pill scrolls with behavior:smooth by default");
+  const prevMatchMedia = window.matchMedia;
+  window.matchMedia = (q) => ({
+    matches: /prefers-reduced-motion:\s*reduce/i.test(String(q)),
+    media: String(q), addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+  });
+  window.__ndScrollIntoView.length = 0;
+  window.document.querySelector('#insight-nutrient [data-nutrient="fiber"]').click();
+  await new Promise((r) => setTimeout(r, 30));
+  ok(window.__ndScrollIntoView.some((s) => s.nutrient === "fiber" && s.args[0] && s.args[0].behavior === "auto"),
+    "active pill scroll uses behavior:auto under prefers-reduced-motion");
+  window.matchMedia = prevMatchMedia;
+  window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
+  await new Promise((r) => setTimeout(r, 20));
 
   // Regression: the app must boot exactly once. A double boot binds every
   // listener twice, so one click runs its handler twice — which is how the
@@ -399,7 +551,9 @@ async function run(label, days) {
   const proteinPill = window.document.querySelector('#insight-nutrient [data-nutrient="protein"]');
   proteinPill.click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(/protein/i.test(text("#trend-summary")), "switching nutrient updates the summary");
+  ok(/Protein per day vs target band/i.test(text("#trend-summary")),
+    "switching nutrient updates the chart caption");
+  ok(/Protein/i.test(text("#intake-head")), "intake heading tracks the dock nutrient");
   ok(proteinPill.classList.contains("active"), "nutrient pill marked active");
   ok($("#trend-data details").open && /Protein/.test($("#trend-data table caption").textContent),
     "open semantic chart data stays open and updates with the selected nutrient");
@@ -409,18 +563,24 @@ async function run(label, days) {
   weekBtn.click();
   await new Promise((r) => setTimeout(r, 20));
   ok(weekBtn.classList.contains("on"), "weekly toggle turns on");
+  ok(/Protein per week vs target band/i.test(text("#trend-summary")),
+    "weekly caption names the week rollup");
+  ok(!/tap a bar/i.test(text("#trend-summary")),
+    "weekly caption does not promise a per-day tap that does nothing");
   ok(!/7-day avg/.test($("#trend-legend").textContent), "weekly view drops the 7-day line from the legend");
   ok(!$("#trend-data [data-action='insight-chart-day']") && /weekly averages/i.test($("#trend-data table caption").textContent),
     "weekly chart table exposes exact periods without inventing a single-day drilldown");
   window.document.querySelector('#rollup-seg [data-rollup="day"]').click();
   await new Promise((r) => setTimeout(r, 20));
 
-  // Top-foods metric switch actually reorders. In this fixture ramen is eaten
-  // only on weekends, so it never tops raw calories — but its sodium load
-  // should push it up the list, which is the whole point of the metric switch.
+  // Top foods follows the dock nutrient. In this fixture ramen is eaten only
+  // on weekends, so it never tops raw calories — but its sodium load should
+  // push it up the list.
   const names = () => [...window.document.querySelectorAll("#top-foods .topfood-list .tf-name")].map((n) => n.textContent.trim());
+  window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
+  await new Promise((r) => setTimeout(r, 20));
   const kcalRank = names().indexOf("Instant ramen");
-  window.document.querySelector('#topfood-metric [data-metric="sodium"]').click();
+  window.document.querySelector('#insight-nutrient [data-nutrient="sodium"]').click();
   await new Promise((r) => setTimeout(r, 20));
   const sodiumNames = names();
   ok(sodiumNames.length > 0, "top foods re-render for sodium");
@@ -428,8 +588,16 @@ async function run(label, days) {
   ok(naRank >= 0 && kcalRank >= 0 && naRank < kcalRank,
     "sodium ranking promotes the salty item above its calorie rank",
     `sodium #${naRank + 1} vs kcal #${kcalRank + 1}`);
-  ok(sodiumNames[0] !== names()[0] || true, "sodium list is ordered by sodium");
-  window.document.querySelector('#topfood-metric [data-metric="kcal"]').click();
+  ok(/Sodium/i.test(text("#topfoods-scope")), "top foods scope chip follows the dock");
+  window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+
+  // Dock clears when leaving Insights.
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#insight-dock").hidden && !window.document.body.classList.contains("has-insight-dock"),
+    "insight-dock hidden and has-insight-dock cleared off Insights");
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
   await new Promise((r) => setTimeout(r, 20));
 
 
@@ -512,6 +680,37 @@ async function run(label, days) {
   ok(/day plan/i.test(text("#insight-observations")), "planned calorie adjustments are disclosed");
   ok(!/after the day ended/i.test(text("#insight-observations")), "planned-only fixture is not described as retroactive");
   ok(window.document.querySelectorAll(".hm-planned").length >= 1, "adjusted calorie days are marked on the heatmap");
+
+  // §3 test #9 (light check on the main fixture) — honesty top-level + jump.
+  // Cap / <details> branch coverage lives in runObservationsTriage().
+  {
+    const HONESTY = new Set(["partial-days", "bumps", "fasts"]);
+    const root = $("#insight-observations");
+    const topNotes = [...root.children].filter((el) => el.matches(".obs"));
+    const moreNotes = [...root.querySelectorAll("details.obs-more .obs")];
+    const visibleInfo = topNotes.filter((el) =>
+      el.classList.contains("obs-info") && !HONESTY.has(el.dataset.obsId));
+    ok(visibleInfo.length <= 3, "at most three non-protected info observations visible",
+      `got ${visibleInfo.length}`);
+    ok(moreNotes.every((el) =>
+      el.classList.contains("obs-info") && !HONESTY.has(el.dataset.obsId)),
+      "More notes only holds surplus non-protected info observations");
+    ok($('#insight-observations > [data-obs-id="bumps"]'),
+      "bumps honesty note stays top-level regardless of the info cap");
+    const jump = root.querySelector("[data-jump]");
+    ok(!!jump, "at least one observation jump control rendered");
+    if (jump) {
+      const sel = jump.dataset.jump;
+      jump.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const target = $(sel);
+      ok(!!target, "observation jump target exists");
+      const heading = target && (target.querySelector(".card-head-row b, h3, b")
+        || (target.closest(".insight-section") && target.closest(".insight-section").querySelector(".section-head")));
+      ok(heading && window.document.activeElement === heading,
+        "observation jump moves focus to the panel heading");
+    }
+  }
 
   // Heatmap must not rely on colour alone.
   const hmStyles = [...window.document.querySelectorAll(".hm-cell[data-day]")]
@@ -700,15 +899,15 @@ END`;
     ok(shared.food.units.serving === 180 && !shared.food.units.piece && shared.food.logAs === "grams",
       "share v4 round-trip retains serving/logging semantics");
 
-    // The real top-food control ranks potassium, not calories.
+    // The dock nutrient control ranks potassium, not calories.
     const Ledger = window.eval("Ledger");
     Ledger.addEntry(todayKey, { name: "High calorie low K", displayQty: "100 g", grams: 100, meal: "snack", macros: { kcal: 900, p: 1, c: 1, f: 1, fb: 0, na: 20, k: 10 }, sd: 0.1 });
     Ledger.addEntry(todayKey, { name: "Low calorie high K", displayQty: "100 g", grams: 100, meal: "snack", macros: { kcal: 100, p: 1, c: 1, f: 1, fb: 0, na: 20, k: 900 }, sd: 0.1 });
     tab.click();
     await new Promise((r) => setTimeout(r, 30));
-    $("#topfood-metric [data-metric='potassium']").click();
+    $("#insight-nutrient [data-nutrient='potassium']").click();
     await new Promise((r) => setTimeout(r, 20));
-    ok($("#top-foods .tf-name").textContent.trim() === "Low calorie high K", "potassium top-food control ranks by K");
+    ok($("#top-foods .tf-name").textContent.trim() === "Low calorie high K", "potassium dock nutrient ranks top foods by K");
 
     const gapText = window.eval("GapPrompt").buildGapPrompt({
       day: todayKey,
@@ -967,6 +1166,207 @@ Projected: 1000000000 kcal | P 0 | C 0 | F 0 | Fiber 0 | Sodium 0 | Potassium 0
   dom.window.close();
 }
 
+/**
+ * §3 #9 rich fixture — force enough notes that the info cap and <details>
+ * branch actually execute (the main seed only fires ~4 notes).
+ */
+async function runObservationsTriage() {
+  console.log("\n[obs-triage] force honesty + watch + surplus cappable info for the cap");
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8")
+    .replace(/<script src="https:\/\/accounts\.google\.com[^"]*"[^>]*><\/script>/, "");
+  const vc = new VirtualConsole();
+  vc.on("jsdomError", (e) => errors.push(String(e.message || e)));
+  const dom = new JSDOM(html, { url: "http://localhost/", runScripts: "dangerously", virtualConsole: vc, pretendToBeVisual: true });
+  const { window } = dom;
+  installPrimaryLock(window);
+  window.HTMLCanvasElement.prototype.getContext = function () { const c = fakeCtx(); c.canvas = this; return c; };
+  Object.defineProperty(window.HTMLElement.prototype, "clientWidth", { get() { return 360; }, configurable: true });
+  Object.defineProperty(window.HTMLElement.prototype, "offsetWidth", { get() { return 120; }, configurable: true });
+  window.HTMLElement.prototype.scrollIntoView = () => {};
+  window.Element.prototype.getBoundingClientRect = function () {
+    return { left: 0, top: 0, right: 360, bottom: 200, width: 360, height: 200, x: 0, y: 0, toJSON() {} };
+  };
+  window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+
+  const today = new Date();
+  const k = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return dayKey(d); };
+  const events = [];
+  const weights = {};
+  const dayGoals = {};
+  let eid = 0;
+  const add = (day, name, macros, meal = "lunch") => {
+    events.push({
+      id: `ot-${eid++}`, ts: Date.now() - eid * 1000, day, type: "add",
+      entry: {
+        id: `ote-${eid}`, name, displayQty: "100 g", grams: 100, meal,
+        macros: { na: 200, fb: 5, ...macros }, sd: 0.1,
+      },
+    });
+  };
+
+  // Build day list with known weekend offsets.
+  const meta = [];
+  for (let i = 27; i >= 1; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    meta.push({ i, key: k(i), weekend: d.getDay() === 0 || d.getDay() === 6 });
+  }
+  const weekendKeys = meta.filter((m) => m.weekend).map((m) => m.key);
+  const weekdayKeys = meta.filter((m) => !m.weekend).map((m) => m.key);
+  // Log two weekends high for weekend-kcal; leave the rest empty for
+  // weekend-logging + sparse coverage.
+  const logWeekends = new Set(weekendKeys.slice(0, 2));
+  // Dense recent weekdays (momentum + weekdayRate), sparse early ones.
+  const logWeekdays = new Set(
+    weekdayKeys.filter((key) => {
+      const age = meta.find((m) => m.key === key).i;
+      return age <= 14 ? true : age % 4 === 0;
+    })
+  );
+  const partialKeys = weekdayKeys.filter((key) => logWeekdays.has(key) && meta.find((m) => m.key === key).i > 14).slice(0, 2);
+
+  for (const m of meta) {
+    if (m.i % 3 === 0) weights[m.key] = { kg: 80 - m.i * 0.02, updatedAt: Date.now() };
+    if (partialKeys.includes(m.key)) {
+      add(m.key, "Bite", { kcal: 180, p: 5, c: 20, f: 5 }, "snack");
+      continue;
+    }
+    if (logWeekends.has(m.key)) {
+      add(m.key, "Brunch", { kcal: 3200, p: 140, c: 320, f: 120 }, "lunch");
+      add(m.key, "Dinner", { kcal: 900, p: 40, c: 80, f: 40 }, "dinner");
+      continue;
+    }
+    if (!logWeekdays.has(m.key)) continue;
+    const late = m.i <= 14;
+    const high = m.i % 3 === 1;
+    const kcal = late ? (high ? 2800 : 2400) : (high ? 1600 : 1300);
+    add(m.key, "Meal A", { kcal: Math.round(kcal * 0.55), p: 60, c: 80, f: 30 }, "lunch");
+    add(m.key, "Meal B", { kcal: Math.round(kcal * 0.45), p: 50, c: 70, f: 25 }, "dinner");
+  }
+
+  // Reduced plan on a logged weekday that isn't partial.
+  const planDay = weekdayKeys.find((key) => logWeekdays.has(key) && !partialKeys.includes(key));
+  if (planDay) {
+    dayGoals[planDay] = {
+      bumps: { kcal: -400 },
+      intent: "reduced",
+      plannedAt: Date.now() - 20 * 86400e3,
+      updatedAt: Date.now() - 20 * 86400e3,
+    };
+  }
+
+  // Honoured fast: targetKcal/baseKcal shape required (bumps:{kcal:0} is not a fast).
+  const fastDay = weekdayKeys.find((key) => !logWeekdays.has(key) && !partialKeys.includes(key));
+  if (fastDay) {
+    dayGoals[fastDay] = {
+      targetKcal: 0,
+      baseKcal: 2200,
+      intent: "fast",
+      fastAcknowledged: true,
+      plannedAt: Date.now() - 15 * 86400e3,
+      updatedAt: Date.now() - 15 * 86400e3,
+    };
+  }
+
+  window.localStorage.setItem("nd_events_v1", JSON.stringify(events));
+  window.localStorage.setItem("nd_settings_v1", JSON.stringify({
+    goals: { kcal: 2200, protein: 150, carbs: 250, fat: 70, fiber: 30, sodium: 2300, potassium: 3400 },
+    weights, weightUnit: "kg", phases: [], profile: {}, dayGoals,
+  }));
+
+  for (const src of [...window.document.querySelectorAll("script[src]")].map((s) => s.getAttribute("src"))) {
+    if (!src || /^https?:/.test(src)) continue;
+    inject(window, src);
+  }
+  await bootApp(window);
+  const $ = (s) => window.document.querySelector(s);
+  const tab = [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights");
+  tab.click();
+  await new Promise((r) => setTimeout(r, 80));
+  window.document.querySelector('#insight-range [data-days="30"]').click();
+  await new Promise((r) => setTimeout(r, 60));
+
+  const Analytics = window.eval("Analytics");
+  const Ledger = window.eval("Ledger");
+  const Phases = window.eval("Phases");
+  const App = window.eval("App");
+  const settings = App.state.settings;
+  const todayKey = Ledger.todayKey();
+  const keys = [];
+  for (let i = 29; i >= 0; i--) keys.push(k(i));
+  const days = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => Ledger.totalsFor(day),
+    goalsForDay: (day) => Phases.goalsForDay(day, settings),
+    weightKgForDay: (day) => Phases.weightForDay(settings, day),
+    dayPlanForDay: (day) => (settings.dayGoals && settings.dayGoals[day]) || null,
+    firstAddAt: (day) => Ledger.firstAddAt(day),
+  });
+  const emitted = Analytics.observations(days, { todayKey });
+  const HONESTY = new Set(["partial-days", "bumps", "fasts"]);
+  const cappable = emitted.filter((o) => o.tone !== "watch" && !HONESTY.has(o.id));
+  ok(cappable.length >= 4, "obs-triage fixture fires ≥4 cappable info notes (enough to force the cap)",
+    emitted.map((o) => o.id).join(", "));
+  ok(cappable.length > 3, "cappable info exceeds the visible cap of 3",
+    `cappable=${cappable.length}`);
+  ok(emitted.some((o) => o.tone === "watch"), "obs-triage fixture includes a watch note");
+  ok(emitted.some((o) => HONESTY.has(o.id)), "obs-triage fixture includes an honesty note");
+  ok(emitted.some((o) => o.id === "partial-days") && emitted.some((o) => o.id === "bumps"),
+    "obs-triage fixture includes partial-days and bumps together");
+
+  const root = $("#insight-observations");
+  const topNotes = [...root.children].filter((el) => el.matches(".obs"));
+  const details = root.querySelector("details.obs-more");
+  const moreNotes = details ? [...details.querySelectorAll(".obs")] : [];
+  const visibleInfo = topNotes.filter((el) =>
+    el.classList.contains("obs-info") && !HONESTY.has(el.dataset.obsId));
+  const alwaysNotes = topNotes.filter((el) =>
+    el.classList.contains("obs-watch") || HONESTY.has(el.dataset.obsId));
+
+  ok(visibleInfo.length === 3, "exactly three non-protected info notes visible when capped",
+    `got ${visibleInfo.length}; ids=${visibleInfo.map((el) => el.dataset.obsId).join(",")}`);
+  ok(!!details, "More notes <details> renders when surplus info exists");
+  ok(moreNotes.length >= 1, "More notes holds at least one surplus info observation",
+    `got ${moreNotes.length}`);
+  const summary = details && details.querySelector("summary");
+  ok(summary && new RegExp(`More notes \\(${moreNotes.length}\\)`).test(summary.textContent),
+    "More notes summary count matches its children", summary && summary.textContent);
+  ok(moreNotes.every((el) =>
+    el.classList.contains("obs-info") && !HONESTY.has(el.dataset.obsId) && !el.classList.contains("obs-watch")),
+    "More notes contains no watch or honesty observations");
+  ok($('#insight-observations > [data-obs-id="bumps"]') ||
+      $('#insight-observations > [data-obs-id="partial-days"]') ||
+      $('#insight-observations > [data-obs-id="fasts"]'),
+    "at least one honesty note is top-level outside More notes");
+  ok(!!$('#insight-observations > [data-obs-id="bumps"]') &&
+      !!$('#insight-observations > [data-obs-id="partial-days"]'),
+    "partial-days and bumps both stay top-level regardless of the info cap");
+
+  const pri = { "partial-days": 0, bumps: 0, fasts: 0, coverage: 10, "weekend-logging": 20,
+    "weekend-kcal": 30, variability: 40, momentum: 50, "protein-per-kg": 60 };
+  const priOk = (ids) => {
+    for (let i = 1; i < ids.length; i++) {
+      if ((pri[ids[i]] ?? 99) < (pri[ids[i - 1]] ?? 99)) return false;
+    }
+    return true;
+  };
+  ok(priOk(alwaysNotes.map((el) => el.dataset.obsId)),
+    "protected notes are ordered non-decreasing by priority",
+    alwaysNotes.map((el) => el.dataset.obsId).join(" → "));
+  ok(priOk(visibleInfo.map((el) => el.dataset.obsId)),
+    "visible info notes are ordered non-decreasing by priority",
+    visibleInfo.map((el) => el.dataset.obsId).join(" → "));
+  const weJump = $('#insight-observations [data-obs-id="weekend-kcal"]');
+  ok(weJump && /\d+\s*kcal/.test(weJump.textContent) && !/\d+\s*→\s*\d+/.test(weJump.textContent),
+    "rendered weekend-kcal keeps magnitude without weekday→weekend restatement");
+  const varJump = $('#insight-observations [data-obs-id="variability"]');
+  ok(varJump && /\d+\s*kcal/.test(varJump.textContent) && !/around \d+/.test(varJump.textContent),
+    "rendered variability keeps ±sd kcal without restating the average");
+  ok(root.querySelectorAll("[data-jump]").length >= 1,
+    "obs-triage fixture renders at least one jump control");
+
+  dom.window.close();
+}
+
 // --- sparse-data run: nothing should throw, gates should explain ----------
 async function runSparse() {
   console.log("\n[sparse] 14 days, 2 logged, no weigh-ins");
@@ -1004,12 +1404,37 @@ async function runSparse() {
   const $ = (s) => window.document.querySelector(s);
 
   ok(!$(".tdee-big"), "no TDEE number when there are no weigh-ins");
-  ok(/weigh-ins|logged days|enough/i.test($("#tdee-card").textContent), "energy card explains the gap");
+  ok(/weigh-ins|logged days|enough/i.test($("#tdee-card").textContent),
+    "energy card keeps its refusal copy intact behind the thin-tier gate");
   ok(/2\+ weigh-ins|Log weight/i.test($("#weight-summary").textContent), "weight chart asks for weigh-ins");
   ok($("#insight-headline").innerHTML.trim().length > 0, "headline still renders on thin data");
   const sparseText = $("#view-insights").textContent;
   ok(!/NaN|undefined|Infinity|\[object/.test(sparseText), "no NaN/undefined leaks on thin data");
-  ok(/2 of \d+ days logged/.test(sparseText), "headline states how thin the data is");
+  ok(/2 of \d+ days logged/.test(sparseText), "thin maturity: exactly 2 logged days in range");
+  ok(!$("#section-intake").hidden && !$("#section-adherence").hidden && !$("#section-weight").hidden,
+    "thin maturity keeps intake, weight, and adherence");
+  ok($("#section-energy").hidden && $("#section-composition").hidden && $("#section-compare").hidden,
+    "thin maturity hides energy, composition, and compare");
+  ok($("#dow-pattern").hidden, "thin maturity hides day-of-week pattern");
+
+  // P5-N1/N2: recovery path must unhide after crossing the <3 boundary mid-session.
+  // Logging a 3rd day and re-entering Insights is the only way the full state is
+  // reached through applyInsightMaturity's unhide loop (HTML defaults stay full).
+  const Ledger = window.eval("Ledger");
+  Ledger.addEntry(k(2), {
+    name: "Eggs", displayQty: "100 g", grams: 100, meal: "breakfast",
+    macros: { kcal: 155, p: 13, c: 1, f: 11, fb: 0, na: 140 }, sd: 0.1,
+  });
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+  await new Promise((r) => setTimeout(r, 20));
+  tab.click();
+  await new Promise((r) => setTimeout(r, 60));
+  const afterText = $("#view-insights").textContent;
+  ok(/3 of \d+ days logged/.test(afterText), "full maturity: exactly 3 logged days after the 2→3 transition");
+  ok(!$("#section-energy").hidden && !$("#section-composition").hidden && !$("#dow-pattern").hidden,
+    "maturity unhide restores energy, composition, and DOW after 2→3");
+  ok($("#section-compare").hidden, "section-compare stays owned by renderPhaseCompare after 2→3");
+  ok(!/NaN|undefined|Infinity|\[object/.test(afterText), "no NaN/undefined leaks after maturity recovery");
   dom.window.close();
 }
 
@@ -1074,7 +1499,12 @@ async function runEmpty() {
   await new Promise((r) => setTimeout(r, 60));
   const emptyHeadline = $("#insight-headline").textContent;
   ok(/No logged days/i.test(emptyHeadline), "empty state gives a clear first-run message");
+  ok(/fills in/i.test(emptyHeadline), "empty headline promises the tab will fill in after logging");
   ok(!/NaN|undefined|Infinity/.test($("#view-insights").textContent), "no NaN/undefined leaks into the empty view");
+  const visibleEmptySections = [...window.document.querySelectorAll("#view-insights .insight-section")]
+    .filter((s) => !s.hidden);
+  ok(visibleEmptySections.length === 0, "empty maturity hides every insight-section");
+  ok($("#dow-pattern").hidden, "empty maturity hides day-of-week pattern");
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
 
@@ -3094,6 +3524,7 @@ async function runDayIntentReleaseGate() {
 (async () => {
   await run("main", 90);
   await run("short", 21);
+  await runObservationsTriage();
   await runSparse();
   await runEmpty();
   await runActiveTabLock();

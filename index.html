@@ -129,16 +129,7 @@
       <div id="insight-observations" class="obs-list"></div>
 
       <section class="insight-section" id="section-intake">
-        <h3 class="section-head">Intake</h3>
-        <div class="range-pills nutrient-pills" id="insight-nutrient" aria-label="Chart nutrient">
-          <button type="button" data-nutrient="kcal" class="active">Kcal</button>
-          <button type="button" data-nutrient="protein">Protein</button>
-          <button type="button" data-nutrient="carbs">Carbs</button>
-          <button type="button" data-nutrient="fat">Fat</button>
-          <button type="button" data-nutrient="fiber">Fiber</button>
-          <button type="button" data-nutrient="sodium" aria-label="Sodium">Na</button>
-          <button type="button" data-nutrient="potassium" aria-label="Potassium">K</button>
-        </div>
+        <h3 class="section-head" id="intake-head" aria-live="polite">Calories</h3>
         <div class="chart-toolbar">
           <span class="seg" id="rollup-seg" role="group" aria-label="Chart grouping">
             <button type="button" data-rollup="day" class="on">Daily</button>
@@ -153,12 +144,16 @@
         <div id="trend-data" class="chart-data-region"></div>
         <p id="trend-summary" class="muted"></p>
         <div id="intake-stats" class="stat-grid"></div>
-      </section>
-
-      <section class="insight-section" id="section-energy">
-        <h3 class="section-head">Energy balance</h3>
-        <div id="tdee-card" class="card-block tdee-card"></div>
-        <div id="insight-callouts"></div>
+        <div id="day-detail" aria-live="polite"></div>
+        <div id="insight-heatmap" class="card-block heatmap-card"></div>
+        <div id="dow-pattern" class="card-block"></div>
+        <div class="card-block" id="top-foods-card">
+          <div class="card-head-row">
+            <b>Top foods</b>
+            <span class="muted small" id="topfoods-scope"></span>
+          </div>
+          <div id="top-foods"></div>
+        </div>
       </section>
 
       <section class="insight-section" id="section-weight">
@@ -175,39 +170,28 @@
         <div id="weight-stats" class="stat-grid"></div>
       </section>
 
-      <div id="phase-compare" class="card-block" hidden></div>
+      <section class="insight-section" id="section-energy">
+        <h3 class="section-head">Energy balance</h3>
+        <div id="tdee-card" class="card-block tdee-card"></div>
+        <div id="insight-callouts"></div>
+      </section>
 
-      <div id="nak-card" class="card-block nak-card" hidden></div>
-
-      <section class="insight-section" id="section-consistency">
-        <h3 class="section-head">Consistency</h3>
-        <div id="insight-heatmap" class="card-block heatmap-card"></div>
+      <section class="insight-section" id="section-adherence">
+        <h3 class="section-head">Adherence</h3>
         <div id="insight-scorecard" class="card-block"></div>
       </section>
 
-      <section class="insight-section" id="section-breakdown">
-        <h3 class="section-head">Breakdown</h3>
+      <section class="insight-section" id="section-composition">
+        <h3 class="section-head">Composition</h3>
         <div id="macro-split" class="card-block"></div>
         <div id="meal-split" class="card-block"></div>
-        <div id="dow-pattern" class="card-block"></div>
-        <div class="card-block" id="top-foods-card">
-          <div class="card-head-row">
-            <b>Top foods</b>
-            <span class="range-pills mini-pills" id="topfood-metric" aria-label="Rank foods by">
-              <button type="button" data-metric="kcal" class="active">Kcal</button>
-              <button type="button" data-metric="protein">Protein</button>
-              <button type="button" data-metric="carbs">Carbs</button>
-              <button type="button" data-metric="fat">Fat</button>
-              <button type="button" data-metric="fiber">Fiber</button>
-              <button type="button" data-metric="sodium" aria-label="Sodium">Na</button>
-              <button type="button" data-metric="potassium" aria-label="Potassium">K</button>
-            </span>
-          </div>
-          <div id="top-foods"></div>
-        </div>
+        <div id="nak-card" class="card-block nak-card" hidden></div>
       </section>
 
-      <div id="day-detail" aria-live="polite"></div>
+      <section class="insight-section" id="section-compare" hidden>
+        <h3 class="section-head">Phase comparison</h3>
+        <div id="phase-compare" class="card-block" hidden></div>
+      </section>
     </section>
 
     <section id="view-settings" class="view">
@@ -346,6 +330,19 @@
       </div>
     </section>
   </main>
+
+  <div id="insight-dock" class="insight-dock" hidden>
+    <div class="range-pills nutrient-pills" id="insight-nutrient"
+         role="toolbar" aria-label="Chart nutrient" aria-controls="section-intake">
+      <button type="button" data-nutrient="kcal" class="active">Kcal</button>
+      <button type="button" data-nutrient="protein">Protein</button>
+      <button type="button" data-nutrient="carbs">Carbs</button>
+      <button type="button" data-nutrient="fat">Fat</button>
+      <button type="button" data-nutrient="fiber">Fiber</button>
+      <button type="button" data-nutrient="sodium" aria-label="Sodium">Na</button>
+      <button type="button" data-nutrient="potassium" aria-label="Potassium">K</button>
+    </div>
+  </div>
 
   <nav class="bottom-tabs" aria-label="Main">
     <button class="tab active" data-view="today" type="button">

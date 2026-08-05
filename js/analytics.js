@@ -1192,7 +1192,10 @@ const Analytics = (() => {
    * Short, factual observations ranked by how much they'd change a decision.
    * Descriptive only — no praise, no scolding.
    *
-   * @returns {Array<{id, tone, text}>} tone: info | watch | good
+   * @returns {Array<{id, tone, text, priority?, panel?}>}
+   *   tone: info | watch | good
+   *   priority: lower sorts first (honesty notes are 0)
+   *   panel: optional `#id` of the owning Insights panel for jump navigation
    */
   function observations(days, opts) {
     const o = opts || {};
@@ -1208,6 +1211,8 @@ const Analytics = (() => {
       out.push({
         id: "coverage",
         tone: "info",
+        priority: 10,
+        panel: "#insight-heatmap",
         text: `${cons.loggedDays} of ${cons.totalDays} days accounted for. Averages below are drawn from logged eating days only.`,
       });
     }
@@ -1215,6 +1220,8 @@ const Analytics = (() => {
       out.push({
         id: "weekend-logging",
         tone: "info",
+        priority: 20,
+        panel: "#insight-heatmap",
         text: `Weekends are logged less often (${Math.round(cons.weekendRate * 100)}% vs ${Math.round(cons.weekdayRate * 100)}% on weekdays), so the averages lean weekday.`,
       });
     }
@@ -1225,7 +1232,11 @@ const Analytics = (() => {
       out.push({
         id: "weekend-kcal",
         tone: "watch",
-        text: `Weekend calories run ${Math.abs(Math.round(we.delta))} kcal ${dir} than weekdays (${Math.round(we.weekdayAvg)} → ${Math.round(we.weekendAvg)}).`,
+        priority: 30,
+        panel: "#dow-pattern",
+        // Keep the magnitude here (kcal-locked). Drop only the redundant
+        // weekday→weekend pair that #dow-pattern still prints when on Kcal.
+        text: `Weekend calories run ${Math.abs(Math.round(we.delta))} kcal ${dir} than weekdays.`,
       });
     }
 
@@ -1234,7 +1245,11 @@ const Analytics = (() => {
       out.push({
         id: "variability",
         tone: "info",
-        text: `Daily calories swing a lot (±${Math.round(kcalStats.sd)} kcal around ${Math.round(kcalStats.avg)}). Weekly view is the steadier read.`,
+        priority: 40,
+        panel: "#intake-stats",
+        // Keep ±sd kcal here; Typical swing owns the same figure when the
+        // dock is on Kcal, and this note stays self-sufficient otherwise.
+        text: `Daily calories swing a lot (±${Math.round(kcalStats.sd)} kcal). Weekly view is the steadier read.`,
       });
     }
 
@@ -1243,6 +1258,8 @@ const Analytics = (() => {
       out.push({
         id: "protein-per-kg",
         tone: "info",
+        priority: 60,
+        panel: "#insight-scorecard",
         text: `Protein averages ${ppk.gPerKg.toFixed(1)} g per kg of body weight.`,
       });
     }
@@ -1253,6 +1270,8 @@ const Analytics = (() => {
       out.push({
         id: "momentum",
         tone: "info",
+        priority: 50,
+        panel: "#intake-stats",
         text: `Last 7 logged days are ${dir} ${Math.abs(Math.round(mom.delta))} kcal/day vs the week before.`,
       });
     }
@@ -1266,6 +1285,7 @@ const Analytics = (() => {
       out.push({
         id: "partial-days",
         tone: "info",
+        priority: 0,
         text: `${n} day${n === 1 ? "" : "s"} logged under ${Math.round(partial.threshold)} kcal with one or two items — possibly unfinished logs rather than light days. They are still counted.${adj}`,
       });
     }
@@ -1286,6 +1306,7 @@ const Analytics = (() => {
         // Unlogged and legacy (no usable plannedAt) are disclosures, not
         // integrity alarms. Only a plan set after logging began escalates.
         tone: bumps.declaredLate ? "watch" : "info",
+        priority: 0,
         text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used a day plan, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted calorie target.${late}${unlogged}${legacy}`,
       });
     }
@@ -1305,6 +1326,7 @@ const Analytics = (() => {
         // being the exception: more than half the fasts in range declared
         // after the fact is worth a second look.
         tone: late * 2 > bumps.fasts ? "watch" : "info",
+        priority: 0,
         text: `${bumps.fasts} declared fast${bumps.fasts === 1 ? "" : "s"} in this range.${lateText}${revertedText}`,
       });
     }

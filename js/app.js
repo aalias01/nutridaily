@@ -730,7 +730,9 @@ const App = (() => {
       todayKey: Ledger.todayKey(),
       goalsForDay: (day) => Phases.goalsForDay(day, state.settings),
       rollup: state.insightRollup,
-      topFoodMetric: state.insightTopFoodMetric,
+      // One-release alias: prefer nutrient; accept insightTopFoodMetric if a
+      // caller still passes it through buildInsightContext.
+      topFoodMetric: state.insightNutrient || state.insightTopFoodMetric,
     };
     UI.renderInsights(opts);
   }
@@ -900,7 +902,9 @@ const App = (() => {
     if (el) {
       el.setAttribute("role", "region");
       el.setAttribute("aria-label", `Nutrition details for ${day}`);
-      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const reduceMotion = !!(window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      el.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
       if (o.focus) {
         if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
         try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (_e) {} }
@@ -1849,10 +1853,15 @@ const App = (() => {
     });
     document.querySelectorAll("main .view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
     const onToday = name === "today";
+    const onInsights = name === "insights";
     const hud = UI.$("#hud");
     if (hud) hud.hidden = !onToday;
     const dayControls = UI.$("#day-controls");
     if (dayControls) dayControls.hidden = !onToday;
+    const dock = UI.$("#insight-dock");
+    if (dock) dock.hidden = !onInsights;
+    document.body.classList.toggle("has-insight-dock", onInsights);
+    wireDockIntakeObserver(onInsights);
     if (name === "foods") refreshFoods();
     if (name === "insights") refreshInsights();
     if (name === "today") refreshDay();
@@ -1862,6 +1871,25 @@ const App = (() => {
       refreshInstallCard();
       refreshSettingsTabNudge();
     }
+  }
+
+  /** Dim the dock while #section-intake is offscreen (P6-T3). Opacity only. */
+  let _dockIntakeObserver = null;
+  function wireDockIntakeObserver(on) {
+    const dock = UI.$("#insight-dock");
+    const intake = UI.$("#section-intake");
+    if (_dockIntakeObserver) {
+      _dockIntakeObserver.disconnect();
+      _dockIntakeObserver = null;
+    }
+    if (dock) dock.classList.remove("is-inactive");
+    if (!on || !dock || !intake || typeof IntersectionObserver !== "function") return;
+    _dockIntakeObserver = new IntersectionObserver((entries) => {
+      const entry = entries[0];
+      if (!entry || !dock) return;
+      dock.classList.toggle("is-inactive", !entry.isIntersecting);
+    }, { threshold: 0 });
+    _dockIntakeObserver.observe(intake);
   }
 
   function isSettingsView() {
@@ -5155,8 +5183,34 @@ const App = (() => {
         const btn = e.target.closest("[data-nutrient]");
         if (!btn) return;
         state.insightNutrient = btn.dataset.nutrient;
-        nutPills.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+        // Keep the one-release top-foods alias in sync with the dock.
+        state.insightTopFoodMetric = btn.dataset.nutrient;
+        nutPills.querySelectorAll("button").forEach((b) => {
+          const on = b === btn;
+          b.classList.toggle("active", on);
+          b.tabIndex = on ? 0 : -1;
+        });
         refreshInsights();
+      });
+      // Roving tabindex: one tab stop; arrows move focus; Enter/Space activate (P6-T4).
+      nutPills.addEventListener("keydown", (e) => {
+        const buttons = [...nutPills.querySelectorAll("[data-nutrient]")];
+        const current = e.target.closest("[data-nutrient]");
+        const i = buttons.indexOf(current);
+        if (i < 0) return;
+        let next = -1;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (i + 1) % buttons.length;
+        else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (i - 1 + buttons.length) % buttons.length;
+        else if (e.key === "Home") next = 0;
+        else if (e.key === "End") next = buttons.length - 1;
+        else if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          buttons[i].click();
+          return;
+        } else return;
+        e.preventDefault();
+        buttons.forEach((b, j) => { b.tabIndex = j === next ? 0 : -1; });
+        buttons[next].focus();
       });
     }
     const rollSeg = UI.$("#rollup-seg");
@@ -5165,15 +5219,6 @@ const App = (() => {
         const btn = e.target.closest("[data-rollup]");
         if (!btn) return;
         state.insightRollup = btn.dataset.rollup === "week" ? "week" : "day";
-        refreshInsights();
-      });
-    }
-    const topMetric = UI.$("#topfood-metric");
-    if (topMetric) {
-      topMetric.addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-metric]");
-        if (!btn) return;
-        state.insightTopFoodMetric = btn.dataset.metric;
         refreshInsights();
       });
     }
@@ -5287,6 +5332,26 @@ const App = (() => {
     });
 
     document.body.addEventListener("click", (e) => {
+      const jump = e.target.closest("[data-jump]");
+      if (jump && jump.closest("#insight-observations")) {
+        const sel = jump.dataset.jump;
+        const target = sel && UI.$(sel);
+        if (target) {
+          const reduceMotion = !!(window.matchMedia &&
+            window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+          target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
+          const heading = target.querySelector(".card-head-row b, h3, b")
+            || (target.closest(".insight-section") &&
+                target.closest(".insight-section").querySelector(".section-head"))
+            || target;
+          if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+          try { heading.focus({ preventScroll: true }); } catch (err) {
+            try { heading.focus(); } catch (_e) {}
+          }
+        }
+        return;
+      }
+
       const close = e.target.closest("[data-close]");
       if (close) {
         const sheetId = close.dataset.close;

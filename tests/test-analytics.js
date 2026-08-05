@@ -542,13 +542,24 @@ console.log("\n[15] Observations");
   const days = makeDays(keys, (k) => {
     const dow = Analytics.dateOf(k).getDay();
     const weekend = dow === 0 || dow === 6;
-    return { kcal: weekend ? 3000 : 1900, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000, weightKg: 75 };
+    // Wide enough swing that summaryStats.cv clears the 0.25 variability floor
+    // so the wording guard below is not a vacuous `!varNote || …` pass.
+    return { kcal: weekend ? 3600 : 1600, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000, weightKg: 75 };
   });
   const obs = Analytics.observations(days, { todayKey: END });
   ok(obs.some((o) => o.id === "weekend-kcal"), "surfaces the weekend calorie gap");
   ok(obs.some((o) => o.id === "protein-per-kg"), "surfaces protein per kg");
+  ok(obs.some((o) => o.id === "variability"), "surfaces calorie variability when CV is high");
   ok(obs.every((o) => o.text && o.tone), "every observation has text and a tone");
   ok(obs.every((o) => !/should|bad|failed|too much/i.test(o.text)), "observations stay descriptive, not scolding");
+  const weNote = obs.find((o) => o.id === "weekend-kcal");
+  ok(weNote && weNote.panel === "#dow-pattern" && typeof weNote.priority === "number",
+    "weekend-kcal carries panel + priority for Insights jump triage");
+  ok(weNote && /\d+\s*kcal/.test(weNote.text) && !/\d+\s*→\s*\d+/.test(weNote.text),
+    "weekend-kcal keeps the magnitude but drops the weekday→weekend pair");
+  const varNote = obs.find((o) => o.id === "variability");
+  ok(varNote && /\d+\s*kcal/.test(varNote.text) && !/around \d+/.test(varNote.text),
+    "variability keeps ±sd kcal without restating the average");
 
   const sparse = makeDays(keys, (k, i) => (i % 3 ? null : { kcal: 2000, protein: 150, carbs: 200, fat: 65, fiber: 30, sodium: 2000 }));
   ok(Analytics.observations(sparse, { todayKey: END }).some((o) => o.id === "coverage"), "warns when averages rest on few days");
@@ -896,6 +907,8 @@ console.log("\n[20] Bump audit");
   ok(!!bumpObs, "bumps surface as an observation");
   ok(/day plan/.test(bumpObs.text), "audit wording calls it a day plan");
   ok(bumpObs.tone === "watch", "a declaredLate bump raises the tone");
+  ok(bumpObs.priority === 0 && bumpObs.panel == null,
+    "bumps is an honesty note: highest priority, no jump panel");
   ok(/after logging began/.test(bumpObs.text) && !/provenance is unknown/.test(bumpObs.text),
     "completed-day observation uses immutable provenance and excludes today's unfinished audit row");
 
