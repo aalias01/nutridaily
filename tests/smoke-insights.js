@@ -3760,10 +3760,6 @@ async function runImportSecurity() {
     ok(/What I ate \(attach/i.test(NutriParse.ESTIMATE_PROMPT),
       "fixture: ESTIMATE_PROMPT is loaded in the page");
     $("#btn-manual-food").click();
-    ok($("#btn-review-log-once").classList.contains("btn") &&
-        !$("#btn-review-log-once").classList.contains("ghost") &&
-        $("#btn-review-save").classList.contains("ghost"),
-      "Estimate path makes Log once primary and Save food secondary");
     $("#rev-name").value = "Restaurant Bowl";
     $("#rev-kcal").value = "180";
     $("#rev-p").value = "12";
@@ -3776,6 +3772,11 @@ async function runImportSecurity() {
       App.state.reviewParsed.food.confidence = "low";
     }
     $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
+    ok(!$("#btn-review-log-once").disabled &&
+        $("#btn-review-log-once").classList.contains("btn") &&
+        !$("#btn-review-log-once").classList.contains("ghost") &&
+        $("#btn-review-save").classList.contains("ghost"),
+      "valid estimate draft makes Log once primary and Save food secondary");
     const estDay = "2019-07-02";
     App.state.viewDay = estDay;
     $("#btn-review-log-once").click();
@@ -3783,6 +3784,53 @@ async function runImportSecurity() {
     ok(estEntry && estEntry.sd === 0.40 && !Object.prototype.hasOwnProperty.call(estEntry, "per100"),
       "Log once from estimate seeds low confidence as rough (sd 0.40) with no per100");
     UI.closeSheet("sheet-paste");
+    App.state.viewDay = today;
+    await new Promise((r) => setTimeout(r, 220));
+
+    // M2 fix: Confidence: high (label-backed) → weighed sd 0.10 on Log once.
+    $("#fab-add").click();
+    $("#btn-once-food").click();
+    $("#once-estimate-ai").click();
+    $("#btn-manual-food").click();
+    $("#rev-name").value = "Labeled Burrito";
+    $("#rev-kcal").value = "200";
+    $("#rev-p").value = "12";
+    $("#rev-c").value = "20";
+    $("#rev-f").value = "8";
+    $("#rev-fb").value = "3";
+    $("#rev-na").value = "500";
+    $("#rev-k").value = "";
+    if (App.state.reviewParsed && App.state.reviewParsed.food) {
+      App.state.reviewParsed.food.confidence = "high";
+    }
+    $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
+    const labelDay = "2019-07-03";
+    App.state.viewDay = labelDay;
+    $("#btn-review-log-once").click();
+    const labelEntry = Ledger.entriesFor(labelDay).find((e) => e.name === "Labeled Burrito" && e.source === "once");
+    ok(labelEntry && labelEntry.sd === 0.10 && !Object.prototype.hasOwnProperty.call(labelEntry, "per100"),
+      "Log once from estimate maps Confidence:high to weighed (sd 0.10) with no per100");
+    UI.closeSheet("sheet-paste");
+    App.state.viewDay = today;
+    await new Promise((r) => setTimeout(r, 220));
+
+    // L2: incomplete estimate draft keeps Log once ghost (not solid-primary while disabled).
+    $("#fab-add").click();
+    $("#btn-once-food").click();
+    $("#once-estimate-ai").click();
+    $("#btn-manual-food").click();
+    $("#rev-name").value = "";
+    $("#rev-kcal").value = "";
+    $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
+    ok($("#btn-review-log-once").disabled && $("#btn-review-log-once").classList.contains("ghost") &&
+        $("#btn-review-save").classList.contains("ghost"),
+      "incomplete estimate draft shows both actions ghosted (Log once not solid while disabled)");
+
+    // L3: dismiss paste resets estimate intent.
+    $("#sheet-paste [data-close='sheet-paste']").click();
+    await new Promise((r) => setTimeout(r, 40));
+    ok(App.state.foodSaveIntent === "library",
+      "closing paste sheet resets foodSaveIntent away from estimate");
     App.state.viewDay = today;
     await new Promise((r) => setTimeout(r, 220));
 

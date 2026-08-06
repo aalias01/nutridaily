@@ -2512,21 +2512,36 @@ const App = (() => {
     return NutriParse.pickPasteResult(parsed);
   }
 
-  /** AI Confidence: → one-off chip. Never auto-pick weighed / label. */
+  /** AI Confidence: → one-off chip. Label-backed high → weighed; photo guesses stay estimated/rough. */
   function onceConfidenceFromReview(foodConfidence) {
     const c = String(foodConfidence || "").toLowerCase();
     if (c === "low") return "rough";
+    if (c === "high") return "weighed";
     return "estimated";
   }
 
-  /** Estimate path: Log once is primary. Homemade / library: Save food is primary. */
+  /** Estimate path: Log once is primary when enabled. Incomplete drafts stay ghost (L2). */
   function syncReviewActionPrimacy() {
     const save = UI.$("#btn-review-save");
     const once = UI.$("#btn-review-log-once");
     if (!save || !once) return;
     const estimatePrimary = state.foodSaveIntent === "estimate" && !state.updateFoodId;
-    save.classList.toggle("ghost", estimatePrimary);
-    once.classList.toggle("ghost", !estimatePrimary);
+    const onceReady = estimatePrimary && !once.hidden && !once.disabled;
+    if (onceReady) {
+      save.classList.add("ghost");
+      once.classList.remove("ghost");
+    } else if (estimatePrimary) {
+      save.classList.add("ghost");
+      once.classList.add("ghost");
+    } else {
+      save.classList.remove("ghost");
+      once.classList.add("ghost");
+    }
+  }
+
+  /** L3: dismiss paste without leaking estimate intent into a later homemade open. */
+  function resetPasteIntent() {
+    state.foodSaveIntent = "library";
   }
 
   function applyReviewRefinePaste() {
@@ -5399,6 +5414,7 @@ const App = (() => {
     UI.$("#btn-review-back").addEventListener("click", () => {
       if (state.editFoodDirect) {
         UI.closeSheet("sheet-paste");
+        resetPasteIntent();
         state.editFoodDirect = false;
         state.updateFoodId = null;
         return;
@@ -5613,6 +5629,11 @@ const App = (() => {
       if (close) {
         const sheetId = close.dataset.close;
         UI.closeSheet(sheetId);
+        if (sheetId === "sheet-paste") {
+          resetPasteIntent();
+          state.editFoodDirect = false;
+          state.updateFoodId = null;
+        }
         if (sheetId === "sheet-qty" || sheetId === "sheet-once") {
           if (sheetId === "sheet-qty") {
             state.gapPendingItemId = null;
@@ -5774,7 +5795,11 @@ const App = (() => {
         state.gapPendingDay = null;
         resetQtyState();
       }
-      if (top === "sheet-paste") { state.editFoodDirect = false; state.updateFoodId = null; }
+      if (top === "sheet-paste") {
+        resetPasteIntent();
+        state.editFoodDirect = false;
+        state.updateFoodId = null;
+      }
       if (top === "sheet-gap") {
             state.gapPortionCache = null;
       }

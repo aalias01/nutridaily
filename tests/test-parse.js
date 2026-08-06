@@ -477,9 +477,19 @@ Confidence: medium
 
   ok(/Attach whatever|clarifying questions|must not be high|What I ate \(attach/i.test(NutriParse.ESTIMATE_PROMPT),
     "ESTIMATE_PROMPT invites evidence, questions, confidence cap, and an open slot");
+  ok(/restaurant or packaged item lists full nutrition|Confidence: high is allowed/i.test(NutriParse.ESTIMATE_PROMPT),
+    "ESTIMATE_PROMPT allows Confidence: high for labeled restaurant / packaged nutrition");
   ok(/No commentary before or after/i.test(NutriParse.PROMPT) &&
       !/clarifying questions/i.test(NutriParse.PROMPT),
     "strict PROMPT stays one-shot (estimate rules not mixed in)");
+
+  // L1: prose must not open an extractBlocks match (avoids spurious untitled block).
+  const estSelf = NutriParse.parse(NutriParse.ESTIMATE_PROMPT);
+  const untitledNoise = (estSelf.results || []).filter((r) =>
+    r && String(r.food && r.food.name || "").toLowerCase() === "untitled");
+  ok(untitledNoise.length === 0,
+    "ESTIMATE_PROMPT self-parse has no spurious untitled block from prose",
+    (estSelf.results || []).map((r) => r.food && r.food.name).join(", "));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

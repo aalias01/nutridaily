@@ -68,7 +68,7 @@ const NutriParse = (() => {
     "a photo of the plate, the menu item, packaging, a nutrition label, or a receipt.\n\n" +
     "Ask me up to 3 clarifying questions first if the answer would materially change the estimate\n" +
     "(portion size, cooking fat, fried vs grilled, sauce). Then, when you have enough to work from,\n" +
-    "reply with exactly ONE NUTRI v1 … END block in your final message. Other messages in the chat\n" +
+    "reply with exactly ONE block in the format below in your final message. Other messages in the chat\n" +
     "may be free-form; I only need the block once at the end.\n\n" +
     "Format (final message only):\n\n" +
     "NUTRI v1\n" +
@@ -96,18 +96,20 @@ const NutriParse = (() => {
     "- Per 100 g must equal Totals divided by Batch grams, times 100. Do that arithmetic and check it.\n" +
     "- Batch \"servings\" is recipe math only. It is NOT how I log day to day.\n" +
     "- Log as / Piece: same rules as a homemade dish — piece when I would count items; grams when I would weigh.\n" +
-    "- Plain numbers only. No thousands separators (write 1153 not 1,153).\n" +
+    "- No thousands separators (write 1153 not 1,153).\n" +
     "- Use USDA-style values. Account for oil absorbed and water lost in cooking.\n" +
     "- Sodium and potassium in milligrams. Everything else in grams.\n" +
     "- If you are not reasonably confident about potassium, write Potassium unknown rather than guessing.\n" +
-    "- If you are working from a photo or a menu description rather than a nutrition label,\n" +
+    "- If you are working from a photo or a vague menu description without printed nutrition numbers,\n" +
     "  Confidence must not be high.\n" +
+    "- When a restaurant or packaged item lists full nutrition (kcal and macros) for the portion I ate,\n" +
+    "  Confidence: high is allowed — copy those label numbers and say so in Notes.\n" +
     "- Where a nutrition label is present, prefer it, use the per-serving column, and state the\n" +
     "  serving size assumed in Notes.\n" +
     "- Before you reply with the block, Atwater-check: 4×P + 4×C + 9×F should land within about 10%\n" +
     "  of the kcal on the same basis. Recompute if it does not.\n" +
     "- Do not invent a food. If nothing follows the slot below — no description and no image —\n" +
-    "  ask what I ate instead of emitting a NUTRI block.\n\n" +
+    "  ask what I ate instead of emitting the format block.\n\n" +
     "What I ate (attach photos or the nutrition label in this same message):\n";
 
   function updatePrompt(raw) {
