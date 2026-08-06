@@ -3215,10 +3215,12 @@ async function runImportSecurity() {
     App.state.viewDay = onceDay;
     // Do not click #day-label here — it jumps to today (see jumpToToday).
     $("#fab-add").click();
-    ok(!!$("#btn-once-food"), "Add sheet exposes One-off food entry");
+    ok(!!$("#btn-once-food") && /Log once/.test($("#btn-once-food").textContent || ""),
+      "Add sheet exposes Log once entry");
     $("#btn-once-food").click();
-    ok(!$("#sheet-once").hidden && UI.topSheetId() === "sheet-once",
-      "One-off opens #sheet-once");
+    ok(!$("#sheet-once").hidden && UI.topSheetId() === "sheet-once" &&
+        /Log once/.test($("#once-title").textContent || ""),
+      "Log once opens #sheet-once with matching title");
     // Force-fail validation: blank name
     $("#once-name").value = "";
     $("#once-kcal").value = "700";

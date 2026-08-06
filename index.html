@@ -358,19 +358,19 @@
       <div class="sheet-grab"></div>
       <input id="pick-search" type="search" placeholder="Search banana, eggs, rice…" aria-label="Search foods to log">
       <div id="pick-list" class="sheet-list"></div>
-      <button id="btn-once-food" class="btn ghost full" type="button">+ One-off food (not saved)</button>
+      <button id="btn-once-food" class="btn ghost full" type="button">+ Log once (not saved to My Foods)</button>
       <button id="btn-estimate-ai" class="btn ghost full" type="button">+ Estimate with AI</button>
       <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (AI paste)</button>
       <button id="btn-import-shared-add" class="btn ghost full" type="button">Import shared food</button>
     </div>
   </div>
 
-  <!-- One-off food sheet (portion totals; never saved to My Foods) -->
+  <!-- Log once sheet (portion totals; never saved to My Foods) -->
   <div id="sheet-once" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="once-title">
     <div class="sheet-backdrop" data-close="sheet-once"></div>
     <div class="sheet-card tall">
       <div class="sheet-grab"></div>
-      <h3 id="once-title">One-off food</h3>
+      <h3 id="once-title">Log once</h3>
       <p class="muted small">Log this meal once. It is not added to My Foods. Leave Macros closed to save calories only (same as the old Quick kcal).</p>
       <label>Name<input id="once-name" type="text" placeholder="e.g. Pad thai — Thai House" autocomplete="off"></label>
       <div id="once-meals" class="unit-chips meal-chips" role="group" aria-label="Meal"></div>
