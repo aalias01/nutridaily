@@ -3350,6 +3350,76 @@ async function runImportSecurity() {
         UI.closeSheet("sheet-kcal");
         await new Promise((r) => setTimeout(r, 220));
       }
+
+      // Step 4 — badges on day log, yesterday strip, and day-detail.
+      // S4-1: seed a library entry onto the same day we assert against — do not
+      // rely on baseline-entry surviving on today after earlier import/reset tests.
+      const libOnOnceDay = {
+        id: "once-day-library",
+        name: "Library Lentils",
+        foodId: "baseline-food",
+        displayQty: "100 g",
+        grams: 100,
+        qty: 100,
+        unit: "g",
+        meal: "lunch",
+        source: "personal",
+        cat: "legume",
+        macros: { kcal: 120, p: 10, c: 15, f: 2, fb: 5, na: 40, k: 300 },
+        sd: 0.1,
+      };
+      Ledger.addEntry(onceDay, libOnOnceDay);
+
+      App.state.viewDay = onceDay;
+      UI.closeAllSheets();
+      await new Promise((r) => setTimeout(r, 220));
+      UI.renderDayLog(onceDay, Ledger.entriesFor(onceDay));
+      const logBadge = $(`#day-log [data-action='toggle-entry'][data-id='${onceEntry.id}'] .src-badge-once`);
+      ok(!!logBadge && /One-off/.test(logBadge.textContent),
+        "day log shows an One-off badge on a source:once row");
+      $(`#day-log [data-action='toggle-entry'][data-id='${onceEntry.id}']`).click();
+      const provLine = $("#day-log .r-prov");
+      ok(!!provLine && /Not saved to My Foods/.test(provLine.textContent),
+        "expanded one-off row shows entryProvenance detail");
+      const libraryRow = $(`#day-log [data-action='toggle-entry'][data-id='once-day-library']`);
+      ok(!!libraryRow, "fixture: library entry is present on the badge-assertion day");
+      ok(!!libraryRow && !libraryRow.querySelector(".src-badge"),
+        "library food rows do not get a source badge");
+
+      App.state.viewDay = today;
+      App.state.yesterdayKey = onceDay;
+      $("#fab-add").click();
+      UI.renderPicker(App.state.personalFoods, "", true, {
+        yesterday: Ledger.entriesFor(onceDay),
+        yesterdayLabel: "Previous day",
+      });
+      const yBadge = $(`#pick-list [data-action='repeat-yesterday'][data-id='${onceEntry.id}'] .src-badge-once`);
+      ok(!!yBadge && /One-off/.test(yBadge.textContent),
+        "yesterday strip shows One-off so a guess isn’t mistaken for a library food");
+      UI.closeSheet("sheet-add");
+      await new Promise((r) => setTimeout(r, 220));
+
+      UI.renderDayDetail(onceDay, {
+        metric: "kcal",
+        root: "#day-detail",
+        settings: App.state.settings,
+        goals: Phases.goalsForDay(onceDay, App.state.settings),
+      });
+      const detailBadge = [...window.document.querySelectorAll("#day-detail .tf-name .src-badge-once")]
+        .find((el) => /Pad thai/.test(el.parentElement.textContent));
+      ok(!!detailBadge, "Insights day-detail badges an aggregated one-off contributor");
+      const libraryDetail = [...window.document.querySelectorAll("#day-detail .tf-name")]
+        .find((el) => el.textContent.trim().startsWith("Library Lentils"));
+      ok(!!libraryDetail, "fixture: library contributor appears in day-detail");
+      ok(!!libraryDetail && !libraryDetail.querySelector(".src-badge"),
+        "day-detail library-only contributor has no source badge");
+
+      if (quickLegacy) {
+        UI.renderDayLog(today, Ledger.entriesFor(today));
+        const qBadge = $(`#day-log [data-action='toggle-entry'][data-id='${quickLegacy.id}'] .src-badge-quick`);
+        ok(!!qBadge && /Quick/.test(qBadge.textContent),
+          "day log shows a Quick badge on source:quick rows");
+      }
     }
     App.state.viewDay = today;
   }

@@ -476,6 +476,48 @@ const UI = (() => {
     return new Date(e.addedTs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   }
 
+  /**
+   * Badge / expand chrome for ledger entries that are not library foods.
+   * Uses Foods.entryProvenance — never Foods.provenance (food-shaped).
+   */
+  function entrySourceChrome(entry) {
+    const blank = { kind: "", badge: "", detailLine: "", short: "" };
+    if (!entry || typeof Foods === "undefined" || !Foods.entryProvenance) return blank;
+    const prov = Foods.entryProvenance(entry);
+    if (prov.kind !== "once" && prov.kind !== "quick") return blank;
+    const short = prov.kind === "once" ? "One-off" : "Quick";
+    const title = prov.detail || prov.label || short;
+    return {
+      kind: prov.kind,
+      short,
+      badge: ` <span class="src-badge src-badge-${esc(prov.kind)}" title="${esc(title)}">${esc(short)}</span>`,
+      detailLine: `<div class="r-prov" title="${esc(title)}">${esc(prov.detail || prov.label)}</div>`,
+    };
+  }
+
+  /** Prefer once over quick when a day-detail aggregate name mixes sources. */
+  function nameSourceKind(entries, name) {
+    let once = false;
+    let quick = false;
+    for (const e of entries || []) {
+      if (e.name !== name) continue;
+      if (e.source === "once") once = true;
+      else if (e.source === "quick") quick = true;
+    }
+    if (once) return "once";
+    if (quick) return "quick";
+    return "";
+  }
+
+  function sourceBadgeForKind(kind) {
+    if (kind !== "once" && kind !== "quick") return "";
+    const short = kind === "once" ? "One-off" : "Quick";
+    const title = kind === "once"
+      ? "Logged once from your own estimate. Not saved to My Foods."
+      : "Calories only; protein and other macros are logged as zero.";
+    return ` <span class="src-badge src-badge-${esc(kind)}" title="${esc(title)}">${esc(short)}</span>`;
+  }
+
   /** Portion-scaled nutrition for Today cards and qty preview. */
   function fmtMacros(m) {
     if (!m) return "";
@@ -534,10 +576,12 @@ const UI = (() => {
         const t = entryTime(e);
         const isExp = e.id === expandedEntryId;
         const editNote = isExp ? fmtEditNote(e.history) : "";
+        const chrome = entrySourceChrome(e);
         const expanded = isExp
           ? `<div class="r-expanded">
               <div class="r-expanded-main">
                 <div class="r-contrib">${esc(fmtMacros(e.macros))}</div>
+                ${chrome.detailLine || ""}
                 ${editNote ? `<div class="r-edits">${esc(editNote)}</div>` : ""}
               </div>
               <button type="button" class="linkbtn edit-entry-btn" data-action="edit-entry" data-id="${esc(e.id)}">Edit</button>
@@ -547,7 +591,7 @@ const UI = (() => {
           <button type="button" class="log-row${isExp ? " expanded" : ""}" data-action="toggle-entry" data-id="${esc(e.id)}">
             <div class="r-top">
               <div>
-                <div class="r-name">${esc(e.name)}</div>
+                <div class="r-name">${esc(e.name)}${chrome.badge}</div>
                 <div class="r-qty">${esc(e.displayQty)}${t ? ` · ${esc(t)}` : ""}</div>
               </div>
               <div class="r-macros">
@@ -617,14 +661,16 @@ const UI = (() => {
         <div class="r-name">${esc(f.name)}</div>
         <span class="mini">${fmt(f.per100.kcal)} /100g</span>
       </button>`;
-    const yRow = (e) =>
-      `<button type="button" class="log-row" data-action="repeat-yesterday" data-id="${esc(e.id)}">
+    const yRow = (e) => {
+      const chrome = entrySourceChrome(e);
+      return `<button type="button" class="log-row" data-action="repeat-yesterday" data-id="${esc(e.id)}">
         <div>
-          <div class="r-name">${esc(e.name)}</div>
+          <div class="r-name">${esc(e.name)}${chrome.badge}</div>
           <div class="r-qty">${esc(e.displayQty)} · ${esc(e.meal || "")}</div>
         </div>
         <span class="mini">${fmt(e.macros.kcal)} kcal</span>
       </button>`;
+    };
 
     const section = (title, items, rowFn) => {
       if (!items.length) return "";
@@ -2880,12 +2926,16 @@ const UI = (() => {
       const footer = lead.length === 1
         ? `1 food is ${leadPct}% of ${dayWord} ${esc(nutLabel)}.`
         : `${lead.length} foods are ${leadPct}% of ${dayWord} ${esc(nutLabel)}.`;
-      body = `<ul class="topfood-list">${rows.map((r) => `
+      body = `<ul class="topfood-list">${rows.map((r) => {
+        const kind = nameSourceKind(entries, r.name);
+        const badge = sourceBadgeForKind(kind);
+        return `
         <li>
-          <span class="tf-name">${esc(r.name)}</span>
+          <span class="tf-name">${esc(r.name)}${badge}</span>
           <span class="tf-track"><i style="width:${((r.value / max) * 100).toFixed(2)}%"></i></span>
           <span class="tf-v">${fmt(r.value)}${esc(unit)}<span class="muted small"> · ${Math.round(r.pct * 100)}%</span></span>
-        </li>`).join("")}</ul>
+        </li>`;
+      }).join("")}</ul>
         <p class="muted small">${footer}</p>`;
     }
 
