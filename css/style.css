@@ -381,8 +381,93 @@ body.sheet-open .insight-dock { display: none; }
   max-height: none;
   overscroll-behavior: contain;
 }
+.pick-mode-seg { margin: 0 0 10px; }
+.pick-multi-bar { margin: 4px 0 8px; }
 .pick-section { margin-bottom: 12px; }
 .pick-hint { margin: 4px 2px 10px; line-height: 1.4; }
+.log-row.pick-selected {
+  outline: 2px solid var(--control-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--control-accent) 12%, var(--card));
+}
+#pick-list .log-row { cursor: pointer; gap: 8px; }
+#pick-list .log-row .r-name { flex: 1; min-width: 0; }
+.log-row .pick-check {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1.5px solid var(--line);
+  background: var(--bg);
+  margin-right: 2px;
+  position: relative;
+}
+.log-row.pick-selected .pick-check {
+  border-color: var(--control-accent);
+  background: var(--control-accent);
+}
+.log-row.pick-selected .pick-check::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.multi-qty-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 8px 0 14px;
+  max-height: 58dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.multi-qty-row {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--bg);
+}
+.multi-qty-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.multi-qty-row-head .r-name { font-weight: 650; font-size: 15px; }
+.multi-qty-row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.multi-qty-row .qty-row { margin: 6px 0; }
+.multi-qty-row .multi-qty-input {
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  width: 100%;
+}
+.multi-qty-row .unit-chips { justify-content: flex-start; }
+.multi-qty-row .meal-chips { margin-bottom: 6px; justify-content: flex-start; }
+.multi-qty-row .qty-preview {
+  text-align: left;
+  font-size: 13px;
+  margin: 4px 0 0;
+  font-weight: 600;
+}
+#sheet-multi-qty .sheet-card.tall { max-height: 92dvh; }
 
 .qty-row { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
 #qty-input {

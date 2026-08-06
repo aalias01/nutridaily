@@ -60,6 +60,10 @@ const App = (() => {
     gapStep: "select",
     gapPortionCache: null, // Map foodId -> portionStats for select list
     qtyIntent: "log", // "log" | "plan" — qty sheet saves to ledger or dayPlans
+    pickMode: "single", // "single" | "multi" — #sheet-add selection mode
+    multiPick: {}, // key -> { food, pendingCatalog }
+    multiQtyItems: [], // [{ key, food, qty, unit, meal, pendingCatalog }]
+    qtyReturnToMultiKey: null, // when set, #sheet-qty writes back to multi draft
     offTodayAckDay: null, // YYYY-MM-DD: off-today warn already accepted for this day
   };
 
@@ -1551,6 +1555,271 @@ const App = (() => {
     openAddSheet();
   }
 
+  function multiPickKeys() {
+    return new Set(Object.keys(state.multiPick || {}));
+  }
+
+  function syncPickModeChrome() {
+    const multi = state.pickMode === "multi";
+    UI.$$("#pick-mode-seg [data-pick-mode]").forEach((btn) => {
+      const on = btn.dataset.pickMode === state.pickMode;
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", String(on));
+    });
+    const multiBar = UI.$("#pick-multi-bar");
+    const singleActs = UI.$("#pick-single-actions");
+    if (multiBar) multiBar.hidden = !multi;
+    if (singleActs) singleActs.hidden = multi;
+    const n = multiPickKeys().size;
+    const cont = UI.$("#btn-pick-multi-continue");
+    if (cont) {
+      cont.disabled = n < 1;
+      cont.textContent = n < 1 ? "Continue with selected" : `Continue with ${n}`;
+    }
+  }
+
+  function setPickMode(mode) {
+    const next = mode === "multi" ? "multi" : "single";
+    if (state.pickMode === next) return;
+    state.pickMode = next;
+    if (next === "single") state.multiPick = {};
+    syncPickModeChrome();
+    refreshAddPicker();
+  }
+
+  function refreshAddPicker() {
+    const search = UI.$("#pick-search");
+    const q = search ? search.value : "";
+    UI.renderPicker(state.personalFoods, q, true, {
+      yesterday: Ledger.entriesFor(state.yesterdayKey || yesterdayKey()),
+      yesterdayLabel: isToday() ? "Yesterday" : "Previous day",
+      multiMode: state.pickMode === "multi",
+      selectedKeys: multiPickKeys(),
+    });
+    syncPickModeChrome();
+  }
+
+  function clearMultiPickFlow() {
+    state.multiPick = {};
+    state.multiQtyItems = [];
+    state.qtyReturnToMultiKey = null;
+  }
+
+  function toggleMultiFood(key, food, pendingCatalog) {
+    if (!key || !food) return;
+    if (state.multiPick[key]) {
+      delete state.multiPick[key];
+    } else {
+      state.multiPick[key] = { food, pendingCatalog: !!pendingCatalog };
+    }
+    refreshAddPicker();
+  }
+
+  function syncMultiQtyItemsFromDom() {
+    const root = UI.$("#multi-qty-list");
+    if (!root) return;
+    UI.$$("#multi-qty-list .multi-qty-row").forEach((row) => {
+      const draft = UI.readMultiQtyRow(row);
+      if (!draft) return;
+      const item = state.multiQtyItems.find((it) => it.key === draft.key);
+      if (!item) return;
+      if (Number.isFinite(draft.qty)) item.qty = draft.qty;
+      item.unit = draft.unit;
+      item.meal = draft.meal;
+    });
+  }
+
+  function openMultiQtySheet() {
+    const imperial = !!state.settings.imperial;
+    const title = UI.$("#multi-qty-title");
+    const saveBtn = UI.$("#multi-qty-save");
+    if (title) title.textContent = state.qtyIntent === "plan" ? "Add to plan" : "Log selected";
+    if (saveBtn) saveBtn.textContent = state.qtyIntent === "plan" ? "Add all to plan" : "Log all";
+    UI.renderMultiQtyList(state.multiQtyItems, imperial);
+    UI.closeSheet("sheet-add");
+    UI.openSheet("sheet-multi-qty");
+  }
+
+  function continueMultiPick() {
+    const keys = Object.keys(state.multiPick);
+    if (!keys.length) {
+      UI.toast("Select at least one food");
+      return;
+    }
+    const imperial = !!state.settings.imperial;
+    const meal = Foods.inferMeal();
+    // Preserve amount edits when returning from the batch sheet via Back
+    const prevByKey = new Map((state.multiQtyItems || []).map((it) => [it.key, it]));
+    state.multiQtyItems = keys.map((key) => {
+      const sel = state.multiPick[key];
+      const food = sel.food;
+      const prior = prevByKey.get(key);
+      if (prior && prior.food && prior.food.id === food.id) {
+        return {
+          key,
+          food,
+          qty: prior.qty,
+          unit: prior.unit,
+          meal: prior.meal || meal,
+          pendingCatalog: !!sel.pendingCatalog,
+        };
+      }
+      const hist = UI.weightPrefillFromHistory(food, imperial);
+      return {
+        key,
+        food,
+        qty: hist.qty,
+        unit: hist.unit,
+        meal,
+        pendingCatalog: !!sel.pendingCatalog,
+      };
+    });
+    openMultiQtySheet();
+  }
+
+  function reopenMultiQtySheet() {
+    state.qtyReturnToMultiKey = null;
+    state.pickFood = null;
+    UI.closeSheet("sheet-qty");
+    openMultiQtySheet();
+  }
+
+  function openFullQtyFromMulti(key) {
+    syncMultiQtyItemsFromDom();
+    const item = state.multiQtyItems.find((it) => it.key === key);
+    if (!item) return;
+    state.qtyReturnToMultiKey = key;
+    state.editEntryId = null;
+    state.editEntryDay = null;
+    state.gapPendingItemId = null;
+    state.gapPendingDay = null;
+    state.pendingCatalogFood = item.pendingCatalog ? item.food : null;
+    state.pickFood = item.food;
+    UI.fillQtySheet(item.food, !!state.settings.imperial, {
+      qty: item.qty,
+      unit: item.unit,
+      meal: item.meal,
+      allowRemove: false,
+    });
+    const saveBtn = UI.$("#qty-save");
+    if (saveBtn) saveBtn.textContent = "Use these amounts";
+    const editBtn = UI.$("#qty-edit-food");
+    const refineBtn = UI.$("#qty-refine-food");
+    if (editBtn) editBtn.hidden = true;
+    if (refineBtn) refineBtn.hidden = true;
+    UI.closeSheet("sheet-multi-qty");
+    UI.openSheet("sheet-qty");
+    setTimeout(() => {
+      const inp = UI.$("#qty-input");
+      if (!inp) return;
+      inp.focus();
+      inp.select();
+    }, 50);
+  }
+
+  function applyQtySheetToMultiDraft() {
+    const key = state.qtyReturnToMultiKey;
+    const food = state.pickFood;
+    if (!key || !food) return false;
+    const entry = UI.updateQtyPreview(food);
+    if (!entry) { UI.toast("Enter a valid amount"); return false; }
+    const item = state.multiQtyItems.find((it) => it.key === key);
+    if (!item) return false;
+    item.qty = entry.qty;
+    item.unit = entry.unit;
+    item.meal = UI.selectedMeal();
+    return true;
+  }
+
+  function removeMultiQtyItem(key) {
+    syncMultiQtyItemsFromDom();
+    state.multiQtyItems = state.multiQtyItems.filter((it) => it.key !== key);
+    delete state.multiPick[key];
+    if (!state.multiQtyItems.length) {
+      UI.closeSheet("sheet-multi-qty");
+      openAddSheet({ keepMulti: true, keepSearch: true });
+      return;
+    }
+    UI.renderMultiQtyList(state.multiQtyItems, !!state.settings.imperial);
+  }
+
+  function saveMultiQty() {
+    syncMultiQtyItemsFromDom();
+    const items = state.multiQtyItems || [];
+    if (!items.length) {
+      UI.toast("No foods selected");
+      return;
+    }
+    const built = [];
+    for (const item of items) {
+      const qty = Number(item.qty);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        UI.toast(`Enter an amount for ${item.food.name}`);
+        return;
+      }
+      const entry = Foods.entryFromQty(item.food, qty, item.unit || "g", item.meal || Foods.inferMeal());
+      const producerError = validateProducerEntry(entry);
+      if (producerError) { UI.toast(producerError); return; }
+      built.push({ item, entry });
+    }
+
+    for (const { item, entry } of built) {
+      const warns = FoodMatch.plausibility(entry);
+      const planAnyway = state.qtyIntent === "plan" ? "Add it anyway?" : "Log it anyway?";
+      if (warns.length && !confirm(`${item.food.name}: ${warns[0]}\n\n${planAnyway}`)) return;
+    }
+
+    const day = editDay();
+    if (!confirmOffTodayLog(day)) return;
+
+    if (state.qtyIntent === "plan") {
+      try {
+        for (const { item, entry } of built) {
+          if (!entry.foodId && item.food.id && !item.food._orphan) entry.foodId = item.food.id;
+          addManualPlanItem(day, item.food, entry);
+        }
+      } catch (error) {
+        UI.toast("Couldn’t add to plan — nothing changed");
+        return;
+      }
+      Sync.schedulePush();
+      UI.closeSheet("sheet-multi-qty");
+      clearMultiPickFlow();
+      resetQtyState();
+      refreshDay();
+      openGapSheet({ plan: true });
+      UI.toast(built.length === 1 ? "Added to plan" : `Added ${built.length} to plan`);
+      return;
+    }
+
+    let nextPersonal = cloneLocalData(state.personalFoods);
+    const toLog = [];
+    for (const { item, entry } of built) {
+      if (!entry.foodId && item.food.id && !item.food._orphan) entry.foodId = item.food.id;
+      if (item.food._orphan) entry.foodId = null;
+      if (item.food.id && !item.food._orphan && !nextPersonal.some((f) => f.id === item.food.id)) {
+        nextPersonal.push(cloneLocalData(item.food));
+      }
+      const idx = nextPersonal.findIndex((f) => f.id === item.food.id);
+      if (idx >= 0) nextPersonal[idx] = Foods.touchUse(nextPersonal[idx]);
+      toLog.push(entry);
+    }
+    try {
+      commitFoodChanges(nextPersonal, () => {
+        for (const entry of toLog) Ledger.addEntry(day, entry);
+      });
+    } catch (error) {
+      UI.toast("Couldn’t save this log — nothing changed");
+      return;
+    }
+    Sync.schedulePush();
+    UI.closeSheet("sheet-multi-qty");
+    clearMultiPickFlow();
+    resetQtyState();
+    refreshDay();
+    UI.toast(toLog.length === 1 ? "Logged" : `Logged ${toLog.length}`);
+  }
+
   function startGapAiFill() {
     const plan = dayPlan(state.viewDay);
     // Preserve an in-progress selection when there is no plan yet (tests / mid-flow).
@@ -2292,18 +2561,22 @@ const App = (() => {
     refreshDay();
   }
 
-  function openAddSheet() {
+  function openAddSheet(opts) {
     state.pickFood = null;
     state.editEntryId = null;
     state.editEntryDay = null;
     state.pendingCatalogFood = null;
-    UI.$("#pick-search").value = "";
+    state.qtyReturnToMultiKey = null;
+    if (!(opts && opts.keepMulti)) {
+      state.pickMode = "single";
+      state.multiPick = {};
+      state.multiQtyItems = [];
+    } else if (state.pickMode !== "multi") {
+      state.pickMode = "multi";
+    }
+    UI.$("#pick-search").value = (opts && opts.keepSearch) ? (UI.$("#pick-search").value || "") : "";
     state.yesterdayKey = yesterdayKey();
-    const yEntries = Ledger.entriesFor(state.yesterdayKey);
-    UI.renderPicker(state.personalFoods, "", true, {
-      yesterday: yEntries,
-      yesterdayLabel: isToday() ? "Yesterday" : "Previous day",
-    });
+    refreshAddPicker();
     UI.openSheet("sheet-add");
   }
 
@@ -2313,6 +2586,7 @@ const App = (() => {
     state.editEntryDay = null;
     state.pendingCatalogFood = null;
     state.qtyIntent = "log";
+    state.qtyReturnToMultiKey = null;
   }
 
   function openQty(food, prefill) {
@@ -2324,6 +2598,7 @@ const App = (() => {
     // Always clear gap pending on any qty open; openGapItemQty sets it after
     state.gapPendingItemId = null;
     state.gapPendingDay = null;
+    state.qtyReturnToMultiKey = null;
     state.pickFood = food;
     UI.fillQtySheet(food, !!state.settings.imperial, {
       ...(prefill || {}),
@@ -2342,6 +2617,10 @@ const App = (() => {
   }
 
   function cancelQty() {
+    if (state.qtyReturnToMultiKey) {
+      reopenMultiQtySheet();
+      return;
+    }
     UI.closeSheet("sheet-qty");
     state.gapPendingItemId = null;
     state.gapPendingDay = null;
@@ -2594,6 +2873,11 @@ const App = (() => {
   }
 
   function saveQty() {
+    if (state.qtyReturnToMultiKey) {
+      if (!applyQtySheetToMultiDraft()) return;
+      reopenMultiQtySheet();
+      return;
+    }
     const food = state.pickFood;
     if (!food) return;
     // Correction C Guard 2: refuse qty writes against a one-off edit target so a
@@ -5053,12 +5337,106 @@ const App = (() => {
     });
 
     UI.$("#foods-search").addEventListener("input", refreshFoods);
-    UI.$("#pick-search").addEventListener("input", (e) => {
-      UI.renderPicker(state.personalFoods, e.target.value, true, {
-        yesterday: Ledger.entriesFor(state.yesterdayKey || yesterdayKey()),
-        yesterdayLabel: isToday() ? "Yesterday" : "Previous day",
+    UI.$("#pick-search").addEventListener("input", () => refreshAddPicker());
+    if (UI.$("#pick-mode-seg")) {
+      UI.$("#pick-mode-seg").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-pick-mode]");
+        if (!btn) return;
+        setPickMode(btn.dataset.pickMode);
       });
-    });
+    }
+    if (UI.$("#btn-pick-multi-continue")) {
+      UI.$("#btn-pick-multi-continue").addEventListener("click", continueMultiPick);
+    }
+    if (UI.$("#multi-qty-save")) {
+      UI.$("#multi-qty-save").addEventListener("click", saveMultiQty);
+    }
+    if (UI.$("#multi-qty-back")) {
+      UI.$("#multi-qty-back").addEventListener("click", () => {
+        syncMultiQtyItemsFromDom();
+        // Mirror amounts back into multiPick selection, then re-open picker.
+        const nextPick = {};
+        for (const item of state.multiQtyItems) {
+          nextPick[item.key] = { food: item.food, pendingCatalog: !!item.pendingCatalog };
+        }
+        state.multiPick = nextPick;
+        state.pickMode = "multi";
+        UI.closeSheet("sheet-multi-qty");
+        openAddSheet({ keepMulti: true, keepSearch: true });
+      });
+    }
+    if (UI.$("#multi-qty-cancel")) {
+      UI.$("#multi-qty-cancel").addEventListener("click", () => {
+        const wasPlan = state.qtyIntent === "plan";
+        UI.closeSheet("sheet-multi-qty");
+        clearMultiPickFlow();
+        resetQtyState();
+        if (wasPlan) openGapSheet({ plan: true });
+      });
+    }
+    if (UI.$("#multi-qty-list")) {
+      UI.$("#multi-qty-list").addEventListener("input", (e) => {
+        const inp = e.target.closest("[data-multi-qty]");
+        if (!inp) return;
+        const row = inp.closest(".multi-qty-row");
+        const key = row && row.dataset.multiKey;
+        const item = state.multiQtyItems.find((it) => it.key === key);
+        if (!item) return;
+        UI.updateMultiRowPreview(row, item.food, !!state.settings.imperial);
+      });
+      UI.$("#multi-qty-list").addEventListener("click", (e) => {
+        const fullBtn = e.target.closest("[data-action='multi-full-qty']");
+        if (fullBtn) {
+          openFullQtyFromMulti(fullBtn.dataset.key);
+          return;
+        }
+        const remBtn = e.target.closest("[data-action='multi-remove']");
+        if (remBtn) {
+          removeMultiQtyItem(remBtn.dataset.key);
+          return;
+        }
+        const unitBtn = e.target.closest("[data-multi-units] [data-unit]");
+        if (unitBtn) {
+          const row = unitBtn.closest(".multi-qty-row");
+          if (!row) return;
+          const key = row.dataset.multiKey;
+          const item = state.multiQtyItems.find((it) => it.key === key);
+          if (!item) return;
+          const active = row.querySelector("[data-multi-units] .uchip.active");
+          const prev = active ? active.dataset.unit : item.unit;
+          const next = unitBtn.dataset.unit;
+          row.querySelectorAll("[data-multi-units] .uchip").forEach((c) => {
+            const on = c === unitBtn;
+            c.classList.toggle("active", on);
+            c.setAttribute("aria-pressed", String(on));
+          });
+          if (next !== prev) {
+            const inp = row.querySelector("[data-multi-qty]");
+            if (inp) {
+              inp.value = defaultQtyForUnit(item.food, next);
+              inp.select();
+            }
+          }
+          item.unit = next;
+          UI.updateMultiRowPreview(row, item.food, !!state.settings.imperial);
+          return;
+        }
+        const mealBtn = e.target.closest("[data-multi-meals] [data-meal]");
+        if (mealBtn) {
+          const row = mealBtn.closest(".multi-qty-row");
+          if (!row) return;
+          row.querySelectorAll("[data-multi-meals] .uchip").forEach((c) => {
+            const on = c === mealBtn;
+            c.classList.toggle("active", on);
+            c.setAttribute("aria-pressed", String(on));
+          });
+          const key = row.dataset.multiKey;
+          const item = state.multiQtyItems.find((it) => it.key === key);
+          if (item) item.meal = mealBtn.dataset.meal;
+          if (item) UI.updateMultiRowPreview(row, item.food, !!state.settings.imperial);
+        }
+      });
+    }
     UI.$("#day-label").addEventListener("click", jumpToToday);
     const guardDayIntent = (intent) => {
       const win = Phases.dayIntentWindow(state.viewDay, {
@@ -6016,14 +6394,29 @@ const App = (() => {
         }
         if (sheetId === "sheet-qty" || sheetId === "sheet-once") {
           if (sheetId === "sheet-qty") {
+            if (state.qtyReturnToMultiKey) {
+              reopenMultiQtySheet();
+              return;
+            }
             state.gapPendingItemId = null;
             state.gapPendingDay = null;
           }
           if (sheetId === "sheet-once") clearOnceEstimatePending();
           resetQtyState();
         }
-        if (sheetId === "sheet-add" && state.qtyIntent === "plan") {
-          state.qtyIntent = "log";
+        if (sheetId === "sheet-add") {
+          clearMultiPickFlow();
+          state.pickMode = "single";
+          if (state.qtyIntent === "plan") {
+            state.qtyIntent = "log";
+            openGapSheet({ plan: true });
+          }
+        }
+        if (sheetId === "sheet-multi-qty") {
+          const wasPlan = state.qtyIntent === "plan";
+          clearMultiPickFlow();
+          resetQtyState();
+          if (wasPlan) openGapSheet({ plan: true });
         }
         if (sheetId === "sheet-gap") {
                 state.gapPortionCache = null;
@@ -6038,12 +6431,22 @@ const App = (() => {
       if (action === "pick-food") {
         state.pendingCatalogFood = null;
         const food = findFood(id);
-        if (food) openQty(food);
+        if (!food) return;
+        if (state.pickMode === "multi") {
+          toggleMultiFood(`food:${food.id}`, food, false);
+          return;
+        }
+        openQty(food);
       } else if (action === "pick-catalog") {
         const db = (typeof FOOD_DB !== "undefined" ? FOOD_DB : []).find((f) => f.id === id);
         if (!db) return;
         const existing = state.personalFoods.find((f) => !f.deleted && f.catalogId === db.id);
         const food = existing || Foods.fromCatalog(db);
+        if (state.pickMode === "multi") {
+          if (existing) toggleMultiFood(`food:${existing.id}`, existing, false);
+          else toggleMultiFood(`cat:${db.id}`, food, true);
+          return;
+        }
         state.pendingCatalogFood = existing ? null : food;
         openQty(food);
       } else if (action === "toggle-entry") {
@@ -6187,9 +6590,27 @@ const App = (() => {
       }
       UI.closeSheet(top);
       if (top === "sheet-qty") {
+        if (state.qtyReturnToMultiKey) {
+          reopenMultiQtySheet();
+          return;
+        }
         state.gapPendingItemId = null;
         state.gapPendingDay = null;
         resetQtyState();
+      }
+      if (top === "sheet-multi-qty") {
+        const wasPlan = state.qtyIntent === "plan";
+        clearMultiPickFlow();
+        resetQtyState();
+        if (wasPlan) openGapSheet({ plan: true });
+      }
+      if (top === "sheet-add") {
+        clearMultiPickFlow();
+        state.pickMode = "single";
+        if (state.qtyIntent === "plan") {
+          state.qtyIntent = "log";
+          openGapSheet({ plan: true });
+        }
       }
       if (top === "sheet-paste") {
         finishPasteSheetClose();

@@ -686,6 +686,8 @@ const UI = (() => {
     const ownedCatalogIds = new Set(personalActive.map((f) => f.catalogId).filter(Boolean));
     const yesterday = (!q && extras && extras.yesterday) ? extras.yesterday : [];
     const yesterdayLabel = (extras && extras.yesterdayLabel) || "Yesterday";
+    const multiMode = !!(extras && extras.multiMode);
+    const selectedKeys = (extras && extras.selectedKeys) || new Set();
 
     const recent = q ? [] : Foods.recent(personal, 8);
     const recentIds = new Set(recent.map((f) => f.id));
@@ -698,18 +700,28 @@ const UI = (() => {
       all = Foods.sortForPicker(personal).filter((f) => !recentIds.has(f.id) && !freq.find((x) => x.id === f.id));
     }
 
-    const personalRow = (f) =>
-      `<button type="button" class="log-row" data-action="pick-food" data-id="${esc(f.id)}">
+    const check = (selected) => multiMode
+      ? `<span class="pick-check" aria-hidden="true"></span>`
+      : "";
+    const personalRow = (f) => {
+      const selected = selectedKeys.has(`food:${f.id}`);
+      return `<button type="button" class="log-row${selected ? " pick-selected" : ""}" data-action="pick-food" data-id="${esc(f.id)}" aria-pressed="${selected ? "true" : "false"}">
+        ${check(selected)}
         <div class="r-name">${esc(f.name)}</div>
         <span class="mini">${fmt(f.per100.kcal)} /100g</span>
       </button>`;
-    const catalogRow = (f) =>
-      `<button type="button" class="log-row" data-action="pick-catalog" data-id="${esc(f.id)}">
+    };
+    const catalogRow = (f) => {
+      const selected = selectedKeys.has(`cat:${f.id}`);
+      return `<button type="button" class="log-row${selected ? " pick-selected" : ""}" data-action="pick-catalog" data-id="${esc(f.id)}" aria-pressed="${selected ? "true" : "false"}">
+        ${check(selected)}
         <div class="r-name">${esc(f.name)}</div>
         <span class="mini">${fmt(f.per100.kcal)} /100g</span>
       </button>`;
+    };
     const yRow = (e) => {
       const chrome = entrySourceChrome(e);
+      // Yesterday repeats stay single-path (qty prefilled); no multi checkbox.
       return `<button type="button" class="log-row" data-action="repeat-yesterday" data-id="${esc(e.id)}">
         <div>
           <div class="r-name">${esc(e.name)}${chrome.badge}</div>
@@ -782,6 +794,36 @@ const UI = (() => {
     return { qty: grams, unit: "g" };
   }
 
+  /** Unit chips available for a food (same rules as the single qty sheet). */
+  function qtyUnitsForFood(food, imperial, preferredUnit) {
+    const pieceG = FoodMatch.pieceGrams(food);
+    const servG = food && food.units && +food.units.serving > 0 ? +food.units.serving : null;
+    const units = ["g"];
+    if (imperial) units.push("oz");
+    if (pieceG) units.push("piece");
+    if (food && food.batch && food.batch.grams) units.push("batch");
+    if (servG && !(pieceG && Math.round(servG) === Math.round(pieceG))) units.push("serving");
+    let unit = preferredUnit || null;
+    if (unit && unit !== "kcal" && !units.includes(unit)) units.push(unit);
+    if (unit === "kcal") unit = null;
+    if (!unit || !units.includes(unit)) unit = weightPrefillFromHistory(food, !!imperial).unit;
+    if (!units.includes(unit)) unit = units[0];
+    return { units, unit, pieceG, servG };
+  }
+
+  function unitChipHtml(food, units, activeUnit) {
+    const pieceG = FoodMatch.pieceGrams(food);
+    const servG = food && food.units && +food.units.serving > 0 ? +food.units.serving : null;
+    const noun = FoodMatch.countNoun(food);
+    return units.map((u) => {
+      let label = u;
+      if (u === "serving" && servG) label = `serving (${Math.round(servG)} g)`;
+      if (u === "piece" && pieceG) label = `${noun} (${Math.round(pieceG)} g)`;
+      if (u === "batch" && food.batch) label = `batch (${fmt(food.batch.grams)} g)`;
+      return `<button type="button" class="uchip${u === activeUnit ? " active" : ""}" data-unit="${esc(u)}" aria-pressed="${u === activeUnit}">${esc(label)}</button>`;
+    }).join("");
+  }
+
   function fillQtySheet(food, imperial, prefill) {
     $("#qty-name").textContent = food.name;
     $("#qty-per100").textContent = `per 100 g: ${fmt(food.per100.kcal)} kcal · ${fmtMacros(food.per100)}`;
@@ -791,25 +833,10 @@ const UI = (() => {
       src.textContent = prov.label;
       src.title = prov.detail || "";
     }
-    const pieceG = FoodMatch.pieceGrams(food);
-    const servG = food.units && +food.units.serving > 0 ? +food.units.serving : null;
-    const units = ["g"];
-    if (imperial) units.push("oz");
-    if (pieceG) units.push("piece");
-    if (food.batch && food.batch.grams) units.push("batch");
-    if (servG && !(pieceG && Math.round(servG) === Math.round(pieceG))) units.push("serving");
     const hist = weightPrefillFromHistory(food, !!imperial);
-    let unit = (prefill && prefill.unit) || hist.unit;
-    if (unit && unit !== "kcal" && !units.includes(unit)) units.push(unit);
-    if (unit === "kcal") unit = hist.unit;
-    const noun = FoodMatch.countNoun(food);
-    $("#qty-units").innerHTML = units.map((u) => {
-      let label = u;
-      if (u === "serving" && servG) label = `serving (${Math.round(servG)} g)`;
-      if (u === "piece" && pieceG) label = `${noun} (${Math.round(pieceG)} g)`;
-      if (u === "batch" && food.batch) label = `batch (${fmt(food.batch.grams)} g)`;
-      return `<button type="button" class="uchip${u === unit ? " active" : ""}" data-unit="${esc(u)}" aria-pressed="${u === unit}">${esc(label)}</button>`;
-    }).join("");
+    const preferred = (prefill && prefill.unit) || hist.unit;
+    const { units, unit } = qtyUnitsForFood(food, !!imperial, preferred);
+    $("#qty-units").innerHTML = unitChipHtml(food, units, unit);
     const meal = (prefill && prefill.meal) || Foods.inferMeal();
     $("#qty-meals").innerHTML = MEALS.map((m) =>
       `<button type="button" class="uchip${m === meal ? " active" : ""}" data-meal="${m}" aria-pressed="${m === meal}">${m}</button>`
@@ -824,6 +851,99 @@ const UI = (() => {
     const refineBtn = $("#qty-refine-food");
     if (editBtn) editBtn.hidden = orphan;
     if (refineBtn) refineBtn.hidden = orphan;
+  }
+
+  function previewLineForQty(food, qty, unit, meal, imperial) {
+    if (!Number.isFinite(qty) || qty <= 0) return "Enter an amount";
+    const entry = Foods.entryFromQty(food, qty, unit, meal || Foods.inferMeal());
+    let qtyLine = entry.displayQty;
+    if (imperial && unit === "oz") {
+      qtyLine = `${qty} oz (${Math.round(entry.grams)} g)`;
+      entry.displayQty = qtyLine;
+    } else if (imperial && (unit === "g" || unit === "grams")) {
+      const oz = Math.round((entry.grams / 28.35) * 10) / 10;
+      qtyLine = `${Math.round(entry.grams)} g (${oz} oz)`;
+      entry.displayQty = qtyLine;
+    }
+    return { text: `${qtyLine} · ${fmt(entry.macros.kcal)} kcal · ${fmtMacros(entry.macros)}`, entry };
+  }
+
+  function updateQtyPreview(food) {
+    const qty = Number(String($("#qty-input").value || "").replace(/,/g, "").trim());
+    const preview = previewLineForQty(food, qty, selectedUnit(), selectedMeal(), !!fillQtySheet._imperial);
+    if (typeof preview === "string") {
+      $("#qty-preview").textContent = preview;
+      return null;
+    }
+    $("#qty-preview").textContent = preview.text;
+    return preview.entry;
+  }
+
+  /** Render compact amount rows for multi-select (same units/meal as single qty). */
+  function renderMultiQtyList(items, imperial) {
+    const root = $("#multi-qty-list");
+    if (!root) return;
+    const list = items || [];
+    if (!list.length) {
+      root.innerHTML = `<div class="empty small">No foods selected.</div>`;
+      return;
+    }
+    root.innerHTML = list.map((item) => {
+      const food = item.food;
+      const preferred = item.unit || null;
+      const { units, unit } = qtyUnitsForFood(food, !!imperial, preferred);
+      const hist = weightPrefillFromHistory(food, !!imperial);
+      const qty = item.qty != null ? item.qty : hist.qty;
+      const meal = item.meal || Foods.inferMeal();
+      const preview = previewLineForQty(food, Number(qty), unit, meal, !!imperial);
+      const previewText = typeof preview === "string" ? preview : preview.text;
+      return `<div class="multi-qty-row" data-multi-key="${esc(item.key)}">
+        <div class="multi-qty-row-head">
+          <div class="r-name">${esc(food.name)}</div>
+          <div class="multi-qty-row-actions">
+            <button type="button" class="linkbtn" data-action="multi-full-qty" data-key="${esc(item.key)}">Full sheet</button>
+            <button type="button" class="linkbtn danger" data-action="multi-remove" data-key="${esc(item.key)}">Remove</button>
+          </div>
+        </div>
+        <div class="qty-row">
+          <input class="multi-qty-input" type="text" inputmode="decimal" value="${esc(String(qty))}" aria-label="Amount for ${esc(food.name)}" data-multi-qty>
+          <div class="unit-chips" data-multi-units role="group" aria-label="Unit">${unitChipHtml(food, units, unit)}</div>
+        </div>
+        <div class="unit-chips meal-chips" data-multi-meals role="group" aria-label="Meal">${MEALS.map((m) =>
+          `<button type="button" class="uchip${m === meal ? " active" : ""}" data-meal="${m}" aria-pressed="${m === meal}">${m}</button>`
+        ).join("")}</div>
+        <p class="qty-preview" data-multi-preview>${esc(previewText)}</p>
+      </div>`;
+    }).join("");
+  }
+
+  function readMultiQtyRow(rowEl) {
+    if (!rowEl) return null;
+    const key = rowEl.dataset.multiKey;
+    const qtyRaw = rowEl.querySelector("[data-multi-qty]");
+    const qty = Number(String((qtyRaw && qtyRaw.value) || "").replace(/,/g, "").trim());
+    const unitEl = rowEl.querySelector("[data-multi-units] .uchip.active");
+    const mealEl = rowEl.querySelector("[data-multi-meals] .uchip.active");
+    return {
+      key,
+      qty: Number.isFinite(qty) ? qty : NaN,
+      unit: unitEl ? unitEl.dataset.unit : "g",
+      meal: mealEl ? mealEl.dataset.meal : Foods.inferMeal(),
+    };
+  }
+
+  function updateMultiRowPreview(rowEl, food, imperial) {
+    if (!rowEl || !food) return null;
+    const draft = readMultiQtyRow(rowEl);
+    const previewEl = rowEl.querySelector("[data-multi-preview]");
+    if (!draft || !previewEl) return null;
+    const preview = previewLineForQty(food, draft.qty, draft.unit, draft.meal, !!imperial);
+    if (typeof preview === "string") {
+      previewEl.textContent = preview;
+      return null;
+    }
+    previewEl.textContent = preview.text;
+    return preview.entry;
   }
 
   function syncReviewLogAsUI() {
@@ -844,27 +964,6 @@ const UI = (() => {
   function selectedMealIn(rootSel) {
     const el = $(`${rootSel} .uchip.active`);
     return el ? el.dataset.meal : Foods.inferMeal();
-  }
-
-  function updateQtyPreview(food) {
-    const qty = Number(String($("#qty-input").value || "").replace(/,/g, "").trim());
-    if (!Number.isFinite(qty) || qty <= 0) {
-      $("#qty-preview").textContent = "Enter an amount";
-      return null;
-    }
-    const unit = selectedUnit();
-    const entry = Foods.entryFromQty(food, qty, unit, selectedMeal());
-    let qtyLine = entry.displayQty;
-    if (fillQtySheet._imperial && unit === "oz") {
-      qtyLine = `${qty} oz (${Math.round(entry.grams)} g)`;
-      entry.displayQty = qtyLine;
-    } else if (fillQtySheet._imperial && (unit === "g" || unit === "grams")) {
-      const oz = Math.round((entry.grams / 28.35) * 10) / 10;
-      qtyLine = `${Math.round(entry.grams)} g (${oz} oz)`;
-      entry.displayQty = qtyLine;
-    }
-    $("#qty-preview").textContent = `${qtyLine} · ${fmt(entry.macros.kcal)} kcal · ${fmtMacros(entry.macros)}`;
-    return entry;
   }
 
   function showPastePrompt() {
@@ -3698,6 +3797,7 @@ const UI = (() => {
   return {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
+    weightPrefillFromHistory, renderMultiQtyList, readMultiQtyRow, updateMultiRowPreview,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft, parseNutrientNumber,
     syncReviewLogAsUI, renderFoodDetail,
     fillOnceSheet, readOnceDraft, readOnceDraftLenient, formatOnceEstimateSeed, fillOnceSheetFromPending,
