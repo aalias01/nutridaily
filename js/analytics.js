@@ -162,6 +162,8 @@ const Analytics = (() => {
       // historically treated as known, so preserve that interpretation.
       row.naCoverage = logged && t && Number.isFinite(t.naCoverage) ? t.naCoverage : (logged ? 1 : 0);
       row.naItems = (t && t.naItems) || 0;
+      row.macroCoverage = logged && t && Number.isFinite(t.macroCoverage) ? t.macroCoverage : (logged ? 1 : 0);
+      row.macroItems = (t && t.macroItems) || 0;
       row.naKCoverage = logged && t && Number.isFinite(t.naKCoverage)
         ? t.naKCoverage
         : Math.min(row.naCoverage, row.kCoverage);
@@ -170,12 +172,20 @@ const Analytics = (() => {
       row.pairedPotassium = t && t.naKK && Number.isFinite(t.naKK.mean) ? t.naKK.mean : row.potassium;
       row.sodiumCovered = typeof Phases !== "undefined" ? Phases.sodiumCovered(t) : false;
       row.potassiumCovered = typeof Phases !== "undefined" ? Phases.potassiumCovered(t) : false;
+      row.macrosCovered = typeof Phases !== "undefined" ? Phases.macrosCovered(t) : (row.macroCoverage >= 0.8);
       row.jointCovered = typeof Phases !== "undefined" ? Phases.nakCovered(t) : false;
       // Compatibility aliases used by existing renderers.
       row.naCovered = row.sodiumCovered;
       row.kCovered = row.potassiumCovered;
       if (!row.sodiumCovered) row.sodium = null;
       if (!row.potassiumCovered) row.potassium = null;
+      // Incomplete macros: keep kcal; null P/C/F/fiber so scores skip and renormalize.
+      if (!row.macrosCovered) {
+        row.protein = null;
+        row.carbs = null;
+        row.fat = null;
+        row.fiber = null;
+      }
       row.naK = row.jointCovered && typeof Phases !== "undefined"
         ? Phases.naKRatio(row.pairedSodium, row.pairedPotassium)
         : null;
@@ -1305,7 +1315,7 @@ const Analytics = (() => {
           id: "once-days",
           tone: "info",
           priority: 0,
-          text: `${once.n} day${once.n === 1 ? " includes" : "s include"} one-off or quick-kcal entries.${shareText} They stay in every average — disclosed, not dropped.`,
+          text: `${once.n} day${once.n === 1 ? " includes" : "s include"} one-off or quick-kcal entries.${shareText} Calories stay in every average; protein and other macros on incomplete days are not scored.`,
         });
       }
     }

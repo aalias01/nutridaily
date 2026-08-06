@@ -205,6 +205,24 @@ console.log("\n[5c] Ledger causality, completeness, and durable writes");
   ok(mineralTotals.na.mean === 600 && mineralTotals.naItems === 1, "sodium sums only known values");
   approx(mineralTotals.naCoverage, 0.5, 0.001, "sodium coverage conservatively uses the lower of calorie and item share");
   approx(mineralTotals.kCoverage, 0.5, 0.001, "potassium coverage uses the same conservative contract");
+  // Design Phase 2: macroCoverage — Quick and blank-macro once are unknown.
+  const macroTotals = Ledger.totalsOf([
+    { source: "personal", macros: { kcal: 600, p: 40, c: 50, f: 20, fb: 5 }, sd: 0.1 },
+    { source: "quick", macros: { kcal: 400, p: 0, c: 0, f: 0, fb: 0 }, sd: 0.4 },
+  ]);
+  approx(macroTotals.macroCoverage, 0.5, 0.001, "macroCoverage uses calorie share of non-quick entries");
+  ok(macroTotals.macroItems === 1, "macroItems counts only macro-known entries");
+  const blankOnce = Ledger.totalsOf([
+    { source: "once", macros: { kcal: 500, p: 0, c: 0, f: 0, fb: 0 }, sd: 0.25 },
+    { source: "once", macros: { kcal: 500, p: 30, c: 40, f: 15, fb: 4 }, sd: 0.25 },
+  ]);
+  approx(blankOnce.macroCoverage, 0.5, 0.001, "once with kcal but all-zero macros does not count as known");
+  const allKnown = Ledger.totalsOf([
+    { source: "personal", macros: { kcal: 400, p: 20, c: 30, f: 10, fb: 2 }, sd: 0.1 },
+  ]);
+  approx(allKnown.macroCoverage, 1, 0.001, "fully known day has macroCoverage 1");
+  ok(globalThis.Phases.macrosCovered(allKnown) && !globalThis.Phases.macrosCovered(macroTotals),
+    "macrosCovered uses the same 0.8 threshold as minerals");
   const zeroCalUnknown = Ledger.totalsOf([
     { macros: { kcal: 300, na: 600, k: 900 }, sd: 0.1 },
     { macros: { kcal: 0, na: null, k: null }, sd: 0.1 },

@@ -378,14 +378,20 @@ const UI = (() => {
       : "";
     $("#kcal-range").textContent = totals.count ? `likely ${fmt(lo)}–${fmt(hi)}${dayPlanNote}` : "—";
     set("kcal", totals.kcal.mean, resolvedGoals.kcal, "kcal", "");
-    if (unscored && unscored.protein) notScored("p", totals.p.mean, "g");
-    else set("p", totals.p.mean, resolvedGoals.protein, "protein", "g");
-    if (unscored && unscored.carbs) notScored("c", totals.c.mean, "g");
-    else set("c", totals.c.mean, resolvedGoals.carbs, "carbs", "g");
-    if (unscored && unscored.fat) notScored("f", totals.f.mean, "g");
-    else set("f", totals.f.mean, resolvedGoals.fat, "fat", "g");
-    if (unscored && unscored.fiber) notScored("fb", totals.fb.mean, "g");
-    else set("fb", totals.fb.mean, resolvedGoals.fiber, "fiber", "g");
+    const macrosCovered = typeof Phases !== "undefined" && Phases.macrosCovered(totals);
+    const macroFootCov = macrosCovered ? null : totals.macroCoverage;
+    if (unscored && unscored.protein) notScored("p", totals.p.mean, "g", macroFootCov);
+    else if (macrosCovered) set("p", totals.p.mean, resolvedGoals.protein, "protein", "g");
+    else notScored("p", totals.p.mean, "g", totals.macroCoverage);
+    if (unscored && unscored.carbs) notScored("c", totals.c.mean, "g", macroFootCov);
+    else if (macrosCovered) set("c", totals.c.mean, resolvedGoals.carbs, "carbs", "g");
+    else notScored("c", totals.c.mean, "g", totals.macroCoverage);
+    if (unscored && unscored.fat) notScored("f", totals.f.mean, "g", macroFootCov);
+    else if (macrosCovered) set("f", totals.f.mean, resolvedGoals.fat, "fat", "g");
+    else notScored("f", totals.f.mean, "g", totals.macroCoverage);
+    if (unscored && unscored.fiber) notScored("fb", totals.fb.mean, "g", macroFootCov);
+    else if (macrosCovered) set("fb", totals.fb.mean, resolvedGoals.fiber, "fiber", "g");
+    else notScored("fb", totals.fb.mean, "g", totals.macroCoverage);
     // The full "known subtotal · N% covered · incomplete" sentence used to
     // live inline in the value column, where it wrapped onto 2-3 lines and
     // threw off the whole card's row heights. It now collapses to a short

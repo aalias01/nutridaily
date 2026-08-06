@@ -1279,12 +1279,13 @@ const Phases = (() => {
     const out = {};
     const kCovered = potassiumCovered(totals);
     const naCovered = sodiumCovered(totals);
+    const macrosOk = macrosCovered(totals);
     const map = {
       kcal: totals.kcal.mean,
-      protein: totals.p.mean,
-      carbs: totals.c.mean,
-      fat: totals.f.mean,
-      fiber: totals.fb.mean,
+      protein: macrosOk ? totals.p.mean : undefined,
+      carbs: macrosOk ? totals.c.mean : undefined,
+      fat: macrosOk ? totals.f.mean : undefined,
+      fiber: macrosOk ? totals.fb.mean : undefined,
       sodium: naCovered && totals.na ? totals.na.mean : undefined,
       // Sodium and potassium each stand on their own completeness contract.
       potassium: kCovered && totals.k ? totals.k.mean : undefined,
@@ -1371,6 +1372,17 @@ const Phases = (() => {
     if (!totals || !totals.count || !totals.k || !Number.isFinite(Number(totals.k.mean))) return false;
     if (totals.kCoverage == null) return true;
     return Number.isFinite(totals.kCoverage) && totals.kCoverage >= NAK_MIN_COVERAGE;
+  }
+
+  /**
+   * Protein / carb / fat / fiber completeness. Same 80% threshold as minerals.
+   * Absence of macroCoverage means a legacy total that historically treated
+   * stored zeros as known — preserve that so old fixture totals keep scoring.
+   */
+  function macrosCovered(totals) {
+    if (!totals || !totals.count) return false;
+    if (totals.macroCoverage == null) return true;
+    return Number.isFinite(totals.macroCoverage) && totals.macroCoverage >= NAK_MIN_COVERAGE;
   }
 
   function scoreRange(keys, totalsForDay, settings, opts) {
@@ -1813,6 +1825,7 @@ const Phases = (() => {
     nakCovered,
     sodiumCovered,
     potassiumCovered,
+    macrosCovered,
     pairedMinerals,
     NAK_MIN_COVERAGE,
     NAK_MASS_TO_MOLAR,

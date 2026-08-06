@@ -1161,6 +1161,55 @@ console.log("\n[26] Potassium coverage gating");
   ok(lowK.potassium.status === "under", "and potassium is short");
 }
 
+console.log("\n[26b] Macro coverage (Design Phase 2)");
+{
+  const goals = { ...GOALS };
+  const base = {
+    count: 2,
+    kcal: { mean: 1000 }, p: { mean: 20 }, c: { mean: 80 }, f: { mean: 30 }, fb: { mean: 5 },
+    na: { mean: 1500 }, naCoverage: 1, naItems: 2,
+    k: { mean: 2500 }, kCoverage: 1, kItems: 2,
+    naKCoverage: 1, naKNa: { mean: 1500 }, naKK: { mean: 2500 },
+  };
+  const full = { ...base, macroCoverage: 1, macroItems: 2 };
+  const thin = { ...base, macroCoverage: 0.4, macroItems: 1 };
+  ok(Phases.macrosCovered(full) && !Phases.macrosCovered(thin),
+    "macrosCovered mirrors the mineral 0.8 threshold");
+  const scoredThin = Phases.scoreDayTotals(thin, goals);
+  ok(scoredThin.kcal.status !== "skip" && scoredThin.protein.status === "skip" &&
+      scoredThin.carbs.status === "skip" && scoredThin.fat.status === "skip" &&
+      scoredThin.fiber.status === "skip",
+    "thin macroCoverage skips P/C/F/fiber but still scores calories");
+  const scoredFull = Phases.scoreDayTotals(full, goals);
+  ok(scoredFull.protein.status !== "skip", "full macroCoverage scores protein");
+
+  const dayKey = "2019-03-01";
+  const rows = Analytics.buildDays({
+    keys: [dayKey],
+    totalsForDay: () => thin,
+    goalsForDay: () => goals,
+    weightKgForDay: () => 80,
+  });
+  ok(rows[0].kcal === 1000 && rows[0].protein == null && rows[0].carbs == null &&
+      rows[0].fat == null && rows[0].fiber == null && rows[0].macrosCovered === false,
+    "buildDays keeps kcal and nulls macros when coverage fails");
+
+  // TDEE intake must stay byte-identical whether macros are covered or not.
+  const keys = [dayKey, "2019-03-02", "2019-03-03"];
+  const weights = { [dayKey]: 80, "2019-03-02": 79.9, "2019-03-03": 79.8 };
+  const mkRows = (macroCoverage) => Analytics.buildDays({
+    keys,
+    totalsForDay: () => ({ ...full, macroCoverage, macroItems: macroCoverage >= 0.8 ? 2 : 1 }),
+    goalsForDay: () => goals,
+    weightKgForDay: (d) => weights[d],
+  });
+  const tdeeFull = Analytics.estimateTdee(mkRows(1));
+  const tdeeThin = Analytics.estimateTdee(mkRows(0.3));
+  ok(tdeeFull.intakeAvg === tdeeThin.intakeAvg && tdeeFull.tdee === tdeeThin.tdee,
+    "TDEE intake/tdee unchanged when macros are incomplete",
+    `full=${tdeeFull.intakeAvg}/${tdeeFull.tdee} thin=${tdeeThin.intakeAvg}/${tdeeThin.tdee}`);
+}
+
 console.log("\n[27] Exactly one mineral-composite slot");
 {
   const keys = keysEndingAt(END, 14);
@@ -2208,7 +2257,8 @@ console.log("\n[onceDays] One-off / quick disclosure (Step 9)");
   });
   const withNote = Analytics.observations(days, { entriesForDay: (day) => byDay[day] || [] });
   const note = withNote.find((o) => o.id === "once-days");
-  ok(!!note && note.priority === 0 && /2 days include one-off/.test(note.text),
+  ok(!!note && note.priority === 0 && /2 days include one-off/.test(note.text) &&
+      /Calories stay in every average/.test(note.text) && /macros on incomplete days are not scored/.test(note.text),
     "observations emit honesty once-days note when entriesForDay is provided",
     note && note.text);
   ok(!Analytics.observations(days, {}).some((o) => o.id === "once-days"),

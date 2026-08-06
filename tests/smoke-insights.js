@@ -3699,7 +3699,7 @@ async function runImportSecurity() {
     const note = Analytics.observations(days, {
       entriesForDay: (d) => fixtureEntries[d] || [],
     }).find((o) => o.id === "once-days");
-    ok(!!note && /^1 day includes one-off/.test(note.text),
+    ok(!!note && /^1 day includes one-off/.test(note.text) && /Calories stay in every average/.test(note.text),
       "observations once-days note for a single mixed day",
       note && note.text);
     const stats = Analytics.summaryStats(days, "kcal");
@@ -3721,6 +3721,20 @@ async function runImportSecurity() {
     ok(!!live && /one-off or quick-kcal/.test(live.textContent || ""),
       "Insights shows once-days honesty note for in-range quick entries",
       live && live.textContent);
+
+    // Phase 2: Today shows macros as not scored when coverage fails; kcal keeps counting.
+    App.state.viewDay = todayKey;
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+    await new Promise((r) => setTimeout(r, 80));
+    const pText = ($("#v-p") && $("#v-p").textContent) || "";
+    const kcalBig = ($("#v-kcal-big") && $("#v-kcal-big").textContent) || "";
+    ok(/not scored today/.test(pText) && /\*/.test(pText),
+      "Phase 2: Today marks protein not scored when macro coverage is incomplete",
+      pText);
+    ok(kcalBig.trim() !== "" && !/not scored/i.test(kcalBig),
+      "Phase 2: Today still shows calorie totals when macros are incomplete",
+      kcalBig);
+
     App.state.viewDay = today;
     await new Promise((r) => setTimeout(r, 40));
   }

@@ -754,9 +754,30 @@ const Ledger = (() => {
    * entries with a known value. Taking both shares means a zero-calorie item
    * with an unknown mineral still lowers completeness. `naKCoverage` and the
    * paired totals use only entries where both minerals are known.
+   *
+   * `macroCoverage` uses the same min(calorie, item) shape for P/C/F/fiber.
+   * Macro-known = not Quick, and not a weighed once with kcal > 0 and all of
+   * P/C/F/fiber stored as zero (macros opened but left blank). Threshold for
+   * “covered enough to score” is Phases.NAK_MIN_COVERAGE (0.8), same as minerals.
    */
   function totalsFor(day) {
     return totalsOf(entriesFor(day));
+  }
+
+  /** Whether an entry’s macros count as known for coverage (Design Phase 2). */
+  function entryMacrosKnown(entry) {
+    if (!entry) return false;
+    if (entry.source === "quick") return false;
+    if (entry.source === "once") {
+      const m = entry.macros || {};
+      const kcal = Number(m.kcal) || 0;
+      const p = Number(m.p) || 0;
+      const c = Number(m.c) || 0;
+      const f = Number(m.f) || 0;
+      const fb = Number(m.fb) || 0;
+      if (kcal > 0 && p === 0 && c === 0 && f === 0 && fb === 0) return false;
+    }
+    return true;
   }
 
   function totalsOf(entries) {
@@ -816,6 +837,22 @@ const Ledger = (() => {
     out.k = potassium.total;
     out.kItems = potassium.items;
     out.kCoverage = potassium.coverage;
+
+    let macroItems = 0, macroKcal = 0, macroKcalAll = 0;
+    for (const e of entries) {
+      const kcal = Number(e.macros && e.macros.kcal);
+      const safeKcal = Number.isFinite(kcal) ? Math.max(0, kcal) : 0;
+      macroKcalAll += safeKcal;
+      if (!entryMacrosKnown(e)) continue;
+      macroItems += 1;
+      macroKcal += safeKcal;
+    }
+    const macroCalorieCoverage = entries.length === 0
+      ? 0
+      : (macroKcalAll > 0 ? macroKcal / macroKcalAll : macroItems / entries.length);
+    const macroItemCoverage = entries.length ? macroItems / entries.length : 0;
+    out.macroItems = macroItems;
+    out.macroCoverage = Math.min(macroCalorieCoverage, macroItemCoverage);
 
     let pairedNa = 0, pairedK = 0, pairedItems = 0, pairedKcal = 0, allKcal = 0;
     for (const e of entries) {
