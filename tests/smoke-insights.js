@@ -3584,6 +3584,88 @@ async function runImportSecurity() {
     await new Promise((r) => setTimeout(r, 220));
   }
 
+  // H1–H3 — Steps 7–10 review merge-blockers (promote Log once; grams on kcal-only; zero-macro once edit).
+  {
+    const UI = window.eval("UI");
+    const fixDay = "2019-08-02";
+    App.state.viewDay = fixDay;
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+    UI.closeAllSheets();
+    await new Promise((r) => setTimeout(r, 80));
+
+    // H2: macros-closed + grams keeps mass on source:quick (promote path still possible later).
+    $("#fab-add").click();
+    $("#btn-once-food").click();
+    $("#once-name").value = "Airport bowl 350g";
+    $("#once-kcal").value = "700";
+    const gChip = $("#once-units [data-unit='g']");
+    if (gChip) gChip.click();
+    $("#once-qty").value = "350";
+    if ($("#once-macros")) $("#once-macros").open = false;
+    $("#once-save").click();
+    const h2 = Ledger.entriesFor(fixDay).find((e) => e.name === "Airport bowl 350g");
+    ok(h2 && h2.source === "quick" && h2.unit === "kcal" && h2.qty === 700 &&
+        h2.grams === 350 && /350 g/.test(h2.displayQty || ""),
+      "H2: kcal-only with g portion keeps grams on source:quick",
+      h2 && JSON.stringify({ source: h2.source, unit: h2.unit, qty: h2.qty, grams: h2.grams, displayQty: h2.displayQty }));
+
+    // H3: no-op edit of weighed once with zero macros must not flip to quick / wipe grams.
+    Ledger.addEntry(fixDay, {
+      name: "Weighed zero macros",
+      foodId: null, cat: "dish", grams: 300, displayQty: "300 g", qty: 300, unit: "g",
+      macros: { kcal: 400, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
+      sd: 0.25, meal: "lunch", source: "once",
+    });
+    const h3 = Ledger.entriesFor(fixDay).find((e) => e.name === "Weighed zero macros");
+    App.state.editEntryId = h3.id;
+    App.state.editEntryDay = fixDay;
+    App.state.viewDay = fixDay;
+    UI.fillOnceSheet({ from: h3, allowRemove: true, imperial: false });
+    UI.openSheet("sheet-once");
+    ok(!!$("#once-macros") && $("#once-macros").open,
+      "H3: edit of source:once opens macros so Save stays on the once path");
+    $("#once-save").click();
+    const h3After = Ledger.entriesFor(fixDay).find((e) => e.id === h3.id);
+    ok(h3After && h3After.source === "once" && h3After.grams === 300 && h3After.unit === "g",
+      "H3: no-op Save keeps source:once and grams",
+      h3After && JSON.stringify({ source: h3After.source, grams: h3After.grams, unit: h3After.unit }));
+
+    // H1: promote clears edit arm; Log once is hidden and cannot rewrite the ledger row.
+    Ledger.addEntry(fixDay, {
+      name: "Promote guard bowl",
+      foodId: null, cat: "dish", grams: 250, displayQty: "250 g", qty: 250, unit: "g",
+      macros: { kcal: 500, p: 25, c: 60, f: 15, fb: 5, na: null, k: 400 },
+      sd: 0.25, meal: "dinner", source: "once",
+    });
+    const h1 = Ledger.entriesFor(fixDay).find((e) => e.name === "Promote guard bowl");
+    App.state.editEntryId = h1.id;
+    App.state.editEntryDay = fixDay;
+    App.state.viewDay = fixDay;
+    UI.renderDayLog(fixDay, Ledger.entriesFor(fixDay));
+    $(`#day-log [data-action='toggle-entry'][data-id='${h1.id}']`).click();
+    $(`#day-log [data-action='promote-once'][data-id='${h1.id}']`).click();
+    ok(App.state.saveAsNew === true && App.state.promotingOnce === true && !App.state.editEntryId,
+      "H1: promote arms saveAsNew/promotingOnce and clears editEntryId");
+    const logOnceBtn = $("#btn-review-log-once");
+    ok(!!logOnceBtn && logOnceBtn.hidden,
+      "H1: Log once is hidden on the Save to My Foods (promote) sheet");
+    // Even if a caller forced the button visible, the handler must no-op.
+    logOnceBtn.hidden = false;
+    logOnceBtn.disabled = false;
+    logOnceBtn.click();
+    const h1After = Ledger.entriesFor(fixDay).find((e) => e.id === h1.id);
+    ok(h1After && h1After.grams === 250 && h1After.macros.kcal === 500 && h1After.source === "once",
+      "H1: Log once during promote does not rewrite the historical once entry",
+      h1After && JSON.stringify({ grams: h1After.grams, kcal: h1After.macros && h1After.macros.kcal, source: h1After.source }));
+    UI.closeSheet("sheet-paste");
+    App.state.saveAsNew = false;
+    App.state.promotingOnce = false;
+    App.state.editEntryId = null;
+    App.state.editEntryDay = null;
+    App.state.viewDay = today;
+    await new Promise((r) => setTimeout(r, 80));
+  }
+
   // Step 9 — onceDays honesty: disclose one-off/quick days in Insights, never drop them.
   {
     const Analytics = window.eval("Analytics");

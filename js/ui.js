@@ -2999,9 +2999,19 @@ const UI = (() => {
       : entry && entry.unit === "portion" ? "portion"
       : entry && entry.unit === "g" ? "g"
       : "portion";
-    // Legacy quick-kcal used unit:"kcal" with qty = calories — show a 1-portion
-    // shell; Save with macros closed rewrites unit:kcal from the kcal field.
-    if (entry && (entry.source === "quick" || entry.unit === "kcal")) unit = "portion";
+    // Legacy / kcal-only: show grams when mass was kept (H2); else a 1-portion shell.
+    let qty = entry && Number.isFinite(Number(entry.qty)) && Number(entry.qty) > 0
+      ? entry.qty
+      : (unit === "portion" ? 1 : "");
+    if (entry && (entry.source === "quick" || entry.unit === "kcal")) {
+      if (Number(entry.grams) > 0) {
+        unit = "g";
+        qty = Number(entry.grams);
+      } else {
+        unit = "portion";
+        qty = 1;
+      }
+    }
     if (unit === "oz" && !imperial) unit = "g";
     const units = imperial ? ["g", "oz", "portion"] : ["g", "portion"];
     const unitsRoot = $("#once-units");
@@ -3010,10 +3020,6 @@ const UI = (() => {
         `<button type="button" class="uchip${u === unit ? " active" : ""}" data-unit="${u}" aria-pressed="${u === unit}">${u}</button>`
       ).join("");
     }
-    let qty = entry && Number.isFinite(Number(entry.qty)) && Number(entry.qty) > 0
-      ? entry.qty
-      : (unit === "portion" ? 1 : "");
-    if (entry && (entry.source === "quick" || entry.unit === "kcal")) qty = 1;
     if (qtyEl) qtyEl.value = qty === "" ? "" : String(qty);
 
     const m = (entry && entry.macros) || {};
@@ -3034,6 +3040,10 @@ const UI = (() => {
     if (o.macrosOpened === true) macrosOpened = true;
     else if (o.macrosOpened === false || (entry && (entry.source === "quick" || entry.unit === "kcal"))) {
       macrosOpened = false;
+    } else if (entry && entry.source === "once") {
+      // Weighed once with zero macros must stay on the once path — inferring
+      // "closed" from zeros would Save as quick and wipe grams (H3).
+      macrosOpened = true;
     } else {
       macrosOpened = !!(entry && (
         Number(m.p) > 0 || Number(m.c) > 0 || Number(m.f) > 0 || Number(m.fb) > 0

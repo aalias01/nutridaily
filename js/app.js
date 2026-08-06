@@ -38,6 +38,7 @@ const App = (() => {
     reviewParsed: null,
     updateFoodId: null,
     saveAsNew: false,
+    promotingOnce: false, // Save to My Foods from a weighed once — hide Log once
     editFoodDirect: false, // opened review without AI paste step
     foodSaveIntent: "library", // "library" | "log" | "estimate" — paste prompt + review primary
     detailMode: "library", // food detail CTA mode
@@ -1942,19 +1943,48 @@ const App = (() => {
         UI.setOnceErrors(["Calories for that portion are required"]);
         return;
       }
-      entry = {
-        name: read.draft.name,
-        displayQty: `${kcal} kcal`,
-        grams: 0,
-        macros: { kcal, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
-        sd: 0.40,
-        meal: read.meal,
-        source: "quick",
-        cat: read.draft.cat || "snack",
-        foodId: null,
-        qty: kcal,
-        unit: "kcal",
-      };
+      // Keep portion mass when the user entered g/oz so Save to My Foods can work later.
+      // unit:"kcal" + qty:kcal preserves the legacy Quick identity for badges / edit shell.
+      let grams = 0;
+      let displayQty = `${kcal} kcal`;
+      const u = read.unit;
+      const q = Number(read.qty);
+      if (u === "g" && Number.isFinite(q) && q > 0) {
+        grams = Math.round(q);
+        displayQty = `${grams} g · ${kcal} kcal`;
+      } else if (u === "oz" && Number.isFinite(q) && q > 0) {
+        grams = Math.round(q * 28.35);
+        displayQty = `${q} oz · ${kcal} kcal`;
+      } else if (u === "portion" && Number.isFinite(q) && q > 0) {
+        displayQty = `${q === 1 ? "1 portion" : `${q} portions`} · ${kcal} kcal`;
+      }
+      // Never downgrade a weighed once entry to quick (H3): macros-closed Save while
+      // editing source:once with mass must keep the once path.
+      if (state.editEntryId) {
+        const existing = Ledger.entriesFor(editDay()).find((e) => e.id === state.editEntryId);
+        if (existing && existing.source === "once" && Number(existing.grams) > 0) {
+          entry = Foods.entryFromOnceDraft({
+            ...read.draft,
+            macrosOpened: true,
+            confidence: read.draft.confidence || "estimated",
+          }, read.qty, read.unit, read.meal);
+        }
+      }
+      if (!entry) {
+        entry = {
+          name: read.draft.name,
+          displayQty,
+          grams,
+          macros: { kcal, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
+          sd: 0.40,
+          meal: read.meal,
+          source: "quick",
+          cat: read.draft.cat || "snack",
+          foodId: null,
+          qty: kcal,
+          unit: "kcal",
+        };
+      }
     } else {
       entry = Foods.entryFromOnceDraft(read.draft, read.qty, read.unit, read.meal);
     }
@@ -2017,6 +2047,10 @@ const App = (() => {
     if (per100.k != null && !Number.isFinite(per100.k)) per100.k = null;
     state.updateFoodId = null;
     state.saveAsNew = true;
+    state.promotingOnce = true;
+    // Promote is library-create only — clear any ledger edit arm so Log once cannot amend.
+    state.editEntryId = null;
+    state.editEntryDay = null;
     state.editFoodDirect = true;
     state.foodSaveIntent = "library";
     state.reviewParsed = {
@@ -2256,6 +2290,7 @@ const App = (() => {
 
     state.updateFoodId = target.id;
     state.saveAsNew = false;
+    state.promotingOnce = false;
     state.editFoodDirect = true;
     state.reviewParsed = {
       canSave: true,
@@ -2447,6 +2482,7 @@ const App = (() => {
   function openPaste(opts) {
     state.updateFoodId = (opts && opts.updateId) || null;
     state.saveAsNew = false;
+    state.promotingOnce = false;
     state.editFoodDirect = false;
     state.reviewParsed = null;
     const intent = opts && opts.intent;
@@ -2542,6 +2578,7 @@ const App = (() => {
   /** L3: dismiss paste without leaking estimate intent into a later homemade open. */
   function resetPasteIntent() {
     state.foodSaveIntent = "library";
+    state.promotingOnce = false;
   }
 
   function applyReviewRefinePaste() {
@@ -2703,9 +2740,11 @@ const App = (() => {
     UI.$("#btn-review-save").disabled = reasons.length > 0;
     const logOnce = UI.$("#btn-review-log-once");
     if (logOnce) {
-      // Log once is meaningless while updating a library food.
-      logOnce.hidden = !!state.updateFoodId;
-      logOnce.disabled = !!state.updateFoodId || reasons.length > 0;
+      // Hidden while updating a library food, or while promoting a one-off to My Foods.
+      // Do not key off saveAsNew alone — "Save as separate" also sets it and still allows Log once.
+      const hideLogOnce = !!state.updateFoodId || !!state.promotingOnce;
+      logOnce.hidden = hideLogOnce;
+      logOnce.disabled = hideLogOnce || reasons.length > 0;
     }
     syncReviewActionPrimacy();
     return reasons.length === 0;
@@ -2717,7 +2756,7 @@ const App = (() => {
    * When editing a ledger entry (Estimate-from-edit), amend that id — do not add a duplicate.
    */
   function logOnceFromReview() {
-    if (state.updateFoodId) return;
+    if (state.updateFoodId || state.promotingOnce) return;
     if (!validateReviewSave()) { UI.toast("Fix the highlighted fields"); return; }
     const draft = UI.readReviewDraft(state.reviewParsed && state.reviewParsed.food);
     let grams = 100;
@@ -2759,6 +2798,7 @@ const App = (() => {
     state.editEntryDay = null;
     state.updateFoodId = null;
     state.saveAsNew = false;
+    state.promotingOnce = false;
     state.editFoodDirect = false;
     state.foodSaveIntent = "library";
     state.reviewParsed = null;
@@ -2826,6 +2866,7 @@ const App = (() => {
     UI.toast(updateId ? "Food updated" : "Food saved");
     state.updateFoodId = null;
     state.saveAsNew = false;
+    state.promotingOnce = false;
     state.editFoodDirect = false;
     state.foodSaveIntent = "library";
     UI.closeSheet("sheet-paste");
