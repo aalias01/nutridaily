@@ -330,7 +330,7 @@ const Foods = (() => {
   /**
    * Refresh reference-catalog copies created before the catalog gained new
    * nutrient fields. Only an untouched version-1 copy is eligible: edits,
-   * history, AI pastes and tombstones are never rewritten. Missing fields are
+   * history, NUTRI imports and tombstones are never rewritten. Missing fields are
    * allowed when deciding whether the old copy still matches, which is what
    * lets a pre-potassium copy receive the catalog's potassium value.
    *
@@ -401,7 +401,7 @@ const Foods = (() => {
         };
       }
       if (hasRaw) {
-        return { kind: "ai", label: "Yours · AI estimate", detail: "Updated from an AI paste; you can edit anytime." };
+        return { kind: "ai", label: "Yours · NUTRI import", detail: "Updated via NUTRI import; you can edit anytime." };
       }
       return { kind: "edit", label: "Yours · edited", detail: "Started from the reference catalog; numbers are yours now." };
     }
@@ -409,7 +409,7 @@ const Foods = (() => {
       return { kind: "shared", label: "Yours · shared", detail: "Imported from a NutriDaily share link or code." };
     }
     if (hasRaw) {
-      return { kind: "ai", label: "Yours · AI estimate", detail: "From an AI paste (ChatGPT, Claude, etc.); review before trusting." };
+      return { kind: "ai", label: "Yours · NUTRI import", detail: "From a NUTRI import (ChatGPT, Claude, etc.); review before trusting." };
     }
     return { kind: "custom", label: "Yours · custom", detail: "Entered or edited by you." };
   }

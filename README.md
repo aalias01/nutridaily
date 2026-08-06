@@ -4,17 +4,17 @@ Log home-cooked dishes by food and grams (or a serving).
 
 **[Live app →](https://nutridaily.vercel.app)**
 
-Homemade recipes enter through an **AI paste**. I copy a fixed prompt from the app into ChatGPT or Claude, describe the dish, paste the reply back. The app reads a plain-text `NUTRI v1` block, I review macros, and it saves as a reusable food per 100 g. Catalog staples (banana, eggs, rice, and the rest) ship as Reference USDA-style averages; my dishes show as Yours. The app never calls an LLM itself.
+Homemade recipes enter through a **NUTRI import**. I copy a fixed prompt from the app into ChatGPT or Claude, describe the dish, paste the reply back. The app reads a plain-text `NUTRI v1` block, I review macros, and it saves into My Foods (per 100 g). Catalog staples (banana, eggs, rice, and the rest) are Reference USDA-style averages. The app never calls an LLM itself.
 
 ## Logging
 
-Works offline in the browser. Google Sign-in is optional: a backup in **my** Google Drive when I want a second phone or a restored browser to pick up the same log.
+Works offline in the browser. Google Sign-in is optional: a Drive backup under the account you sign in with, so a second phone or a restored browser can pick up the same log.
 
 Ways in:
 
 - Common foods or My Foods, then grams or a serving.
 - **Log once** when the meal should not enter My Foods: name, portion, calories. Leave macros closed for calories only, or open them when I know protein, carbs, and fat. Calories always count. Incomplete macros stay out of scoring instead of pretending to be zero. The same sheet has an Estimate-with-AI prompt for restaurant or label guesses (same paste-and-review path). Nothing lands in My Foods unless I later save a weighed entry there.
-- **Homemade dish (AI paste)** when I want a lasting recipe in the library.
+- **Homemade dish (NUTRI import)** when I want a lasting recipe in the library.
 
 When known, each food carries calories, protein, carbs, fat, fiber, sodium, and potassium. Today shows daily goals and rings. Weight has a smoothed trend and weekly rate next to the entry field, so one heavy morning does not read as a heavy week. Appearance is light, dark, or auto. Installable to the home screen from Settings.
 

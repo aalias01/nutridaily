@@ -157,7 +157,7 @@ console.log("\n[provenance]");
     units: {},
     raw: "NUTRI v1\nEND",
   });
-  ok(Foods.provenance(ai).kind === "ai", "paste with raw → AI estimate");
+  ok(Foods.provenance(ai).kind === "ai", "paste with raw → NUTRI import");
 }
 
 console.log("\n[parse] catalog refine prompt");

@@ -6,14 +6,14 @@
 <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16181b" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="description" content="Personal nutrition tracker. Log foods by grams, add homemade dishes from an AI paste, optional Google Drive backup.">
+<meta name="description" content="Personal nutrition tracker. Log foods by grams, add homemade dishes via NUTRI import, optional Google Drive backup.">
 <title>NutriDaily</title>
 <!-- Open Graph / WhatsApp / iMessage / LinkedIn -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="NutriDaily">
 <meta property="og:url" content="https://nutridaily.vercel.app/">
 <meta property="og:title" content="NutriDaily">
-<meta property="og:description" content="Personal nutrition tracker. Log foods by grams, add homemade dishes from an AI paste, optional Google Drive backup.">
+<meta property="og:description" content="Personal nutrition tracker. Log foods by grams, add homemade dishes via NUTRI import, optional Google Drive backup.">
 <meta property="og:image" content="https://nutridaily.vercel.app/images/og-image.jpg">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
@@ -22,7 +22,7 @@
 <!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="NutriDaily">
-<meta name="twitter:description" content="Personal nutrition tracker. Log foods by grams, add homemade dishes from an AI paste, optional Google Drive backup.">
+<meta name="twitter:description" content="Personal nutrition tracker. Log foods by grams, add homemade dishes via NUTRI import, optional Google Drive backup.">
 <meta name="twitter:image" content="https://nutridaily.vercel.app/images/og-image.jpg">
 <link rel="canonical" href="https://nutridaily.vercel.app/">
 <link rel="stylesheet" href="css/style.css">
@@ -313,7 +313,7 @@
 
         <div class="card-block about-card">
           <h3>About NutriDaily</h3>
-          <p class="muted small">Personal nutrition tracker. Common foods use USDA-style reference averages; homemade dishes come from an AI paste you review. Log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
+          <p class="muted small">Personal nutrition tracker. Common foods use USDA-style reference averages; homemade dishes come from a NUTRI import you review. Log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
         </div>
       </div>
     </section>
@@ -359,7 +359,7 @@
       <input id="pick-search" type="search" placeholder="Search banana, eggs, rice…" aria-label="Search foods to log">
       <div id="pick-list" class="sheet-list"></div>
       <button id="btn-once-food" class="btn ghost full" type="button">+ Log once (not saved to My Foods)</button>
-      <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (AI paste)</button>
+      <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (NUTRI import)</button>
       <button id="btn-import-shared-add" class="btn ghost full" type="button">Import shared food</button>
     </div>
   </div>
@@ -512,7 +512,7 @@
     </div>
   </div>
 
-  <!-- Close the gap (AI paste plan) -->
+  <!-- Close the gap (NUTRI import / gap-fill plan) -->
   <div id="sheet-gap" class="sheet" hidden>
     <div class="sheet-backdrop" data-close="sheet-gap"></div>
     <div class="sheet-card sheet-card-tall">
@@ -527,7 +527,7 @@
           LLM guidance is reference only, not medical advice. Quantities come from a paste you bring back from your own chat.
         </p>
         <p class="muted small">Pick foods you still plan to eat. We’ll copy a prompt with today’s log, targets, remaining macros, and your usual portion ranges.</p>
-        <p class="muted small">New dish? Add it under Foods → AI paste first, then pick it here.</p>
+        <p class="muted small">New dish? Add it under Foods → NUTRI import first, then pick it here.</p>
         <div class="col-actions">
           <button id="btn-gap-intro-ok" class="btn full" type="button">Continue</button>
           <button id="btn-gap-intro-cancel" class="btn ghost full" type="button">Cancel</button>
@@ -676,7 +676,7 @@
     <div class="sheet-backdrop" data-close="sheet-paste"></div>
     <div class="sheet-card tall">
       <div class="sheet-grab"></div>
-      <h3 id="paste-title">Add food from AI paste</h3>
+      <h3 id="paste-title">Add food via NUTRI import</h3>
       <div id="paste-step-prompt">
         <p id="paste-prompt-blurb" class="muted small">Copy or share this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.</p>
         <button id="btn-copy-prompt" class="btn ghost full" type="button">Copy AI prompt</button>

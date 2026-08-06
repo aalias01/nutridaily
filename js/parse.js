@@ -172,7 +172,7 @@ const NutriParse = (() => {
       : null;
     const sourceLine = prov && prov.kind === "ref"
       ? "Source: reference catalog (USDA-style averages — please refine from reliable nutrition data).\n"
-      : "Source: my saved food (no prior AI paste on file).\n";
+      : "Source: my saved food (no prior NUTRI import on file).\n";
     return (
       PROMPT +
       "\n" +

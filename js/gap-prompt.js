@@ -219,7 +219,7 @@ const GapPrompt = (() => {
         const logAs = c.logAs ? `; logAs ${c.logAs}` : "";
         const src = c.provenance === "ref"
           ? "Reference · USDA-style avg"
-          : (c.provenance === "ai" ? "Yours · AI estimate" : "Yours");
+          : (c.provenance === "ai" ? "Yours · NUTRI import" : "Yours");
         return (
           `${i + 1}. ${c.name}\n` +
           `   Source: ${src}\n` +

@@ -16,7 +16,7 @@ const FoodMatch = (() => {
     batches: "batch", tablespoon: "tbsp", tablespoons: "tbsp", teaspoon: "tsp", teaspoons: "tsp", cups: "cup",
   };
   const DEFAULT_PORTION_G = 100; // last-resort fallback
-  // Discrete items often get Serving size from AI paste but no Piece field.
+  // Discrete items often get Serving size from NUTRI import but no Piece field.
   const COUNT_NOUNS = [
     "chapati", "roti", "paratha", "naan", "tortilla", "dosa", "idli",
     "egg", "banana", "bagel", "wrap", "slice", "bar", "cookie", "samosa",

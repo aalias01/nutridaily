@@ -37,7 +37,7 @@ console.log("\n[1] Food resolution");
   ok(r4 && r4.food.id === "greek-yogurt-nonfat", "resolves 'greek yogurt'");
 
   const r5 = FoodMatch.resolve("xylophone stew", []);
-  ok(r5 === null, "unknown food returns null (use AI paste / catalog)");
+  ok(r5 === null, "unknown food returns null (use NUTRI import / catalog)");
 
   // personal foods outrank the curated DB on ties
   const personal = [{ id: "pf-1", name: "dal", aliases: ["dal", "my dal"], per100: { kcal: 150, p: 8, c: 18, f: 5, fb: 6, na: 300 }, units: { serving: 250 }, cat: "dish" }];

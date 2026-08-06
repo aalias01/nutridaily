@@ -39,7 +39,7 @@ const App = (() => {
     updateFoodId: null,
     saveAsNew: false,
     promotingOnce: false, // Save to My Foods from a weighed once — hide Log once
-    editFoodDirect: false, // opened review without AI paste step
+    editFoodDirect: false, // opened review without NUTRI import step
     foodSaveIntent: "library", // "library" | "log" | "estimate" — paste prompt + review primary
     onceDraftPending: null, // lenient Log once snapshot while Estimate paste is open
     estimateSeedText: "", // appended after ESTIMATE_PROMPT “What I ate” slot
@@ -2547,7 +2547,7 @@ const App = (() => {
       const prov = f && Foods.provenance(f);
       UI.$("#paste-title").textContent = (prov && prov.kind === "ref")
         ? "Refine reference food with AI"
-        : "Update from AI paste";
+        : "Update via NUTRI import";
       if (blurb) {
         blurb.textContent = "Copy or share this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.";
       }
@@ -2557,7 +2557,7 @@ const App = (() => {
         blurb.textContent = "Copy or share this prompt, then attach a photo / label / menu shot in the same chat message before sending. Paste the reply below — Log once is the usual next step.";
       }
     } else {
-      UI.$("#paste-title").textContent = "Add food from AI paste";
+      UI.$("#paste-title").textContent = "Add food via NUTRI import";
       if (blurb) {
         blurb.textContent = "Copy or share this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.";
       }
@@ -2707,7 +2707,7 @@ const App = (() => {
   }
 
   function openManualReview() {
-    // Don't overwrite an existing food via leftover updateFoodId from "Update from AI paste"
+    // Don't overwrite an existing food via leftover updateFoodId from "Update via NUTRI import"
     const updating = state.updateFoodId ? findFood(state.updateFoodId) : null;
     state.editFoodDirect = !!updating;
     if (updating) {

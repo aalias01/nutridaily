@@ -1,7 +1,7 @@
 {
   "name": "NutriDaily",
   "short_name": "NutriDaily",
-  "description": "Personal nutrition tracker. Log common foods, add homemade dishes from an AI paste, optional Google Drive backup.",
+  "description": "Personal nutrition tracker. Log common foods, add homemade dishes via NUTRI import, optional Google Drive backup.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

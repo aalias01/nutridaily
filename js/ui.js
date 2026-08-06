@@ -631,7 +631,7 @@ const UI = (() => {
     }
     const root = $("#foods-list");
     if (!foods.length) {
-      root.innerHTML = `<div class="empty">${q ? "No matches." : "No foods yet.<br><span class=\"muted small\">Add one from an AI paste, or log a common food from Today.</span>"}</div>`;
+      root.innerHTML = `<div class="empty">${q ? "No matches." : "No foods yet.<br><span class=\"muted small\">Add one via NUTRI import, or log a common food from Today.</span>"}</div>`;
       return;
     }
     root.innerHTML = foods.map((f) => {
@@ -836,7 +836,7 @@ const UI = (() => {
   function showPastePrompt() {
     $("#paste-step-prompt").hidden = false;
     $("#paste-step-review").hidden = true;
-    $("#paste-title").textContent = "Add food from AI paste";
+    $("#paste-title").textContent = "Add food via NUTRI import";
     const fb = $("#prompt-fallback");
     if (fb) fb.hidden = true;
   }
