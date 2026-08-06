@@ -234,27 +234,11 @@
             <button id="btn-phase-history" class="linkbtn" type="button">Target history</button>
           </div>
           <p id="target-review-warning" class="banner warn" hidden></p>
-          <p class="muted small" id="phase-save-hint">Pick Cut, Maintain, Bulk, or Recomp. Saving changed numbers bumps the version from today.</p>
-          <div class="phase-kind-seg seg" id="phase-kind-seg" role="group" aria-label="Phase kind">
-            <button type="button" data-phase-kind="cut">Cut</button>
-            <button type="button" data-phase-kind="maintain" class="on">Maintain</button>
-            <button type="button" data-phase-kind="bulk">Bulk</button>
-            <button type="button" data-phase-kind="recomp">Recomp</button>
-          </div>
-          <div class="goals-grid">
-            <div><label class="small muted" for="set-kcal">Calories</label><input id="set-kcal" type="number" min="1200" max="6000" step="50"></div>
-            <div><label class="small muted" for="set-protein">Protein g</label><input id="set-protein" type="number" min="0" step="5"></div>
-            <div><label class="small muted" for="set-carbs">Carbs g</label><input id="set-carbs" type="number" min="0" step="5"></div>
-            <div><label class="small muted" for="set-fat">Fat g</label><input id="set-fat" type="number" min="0" step="5"></div>
-            <div><label class="small muted" for="set-fiber">Fiber g</label><input id="set-fiber" type="number" min="0" step="1"></div>
-            <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
-            <div><label class="small muted" for="set-potassium">Potassium mg</label><input id="set-potassium" type="number" min="0" step="100"></div>
-          </div>
-          <label class="check-row" id="set-phase-major-row"><input id="set-phase-major" type="checkbox"> Force major version (vN.0)</label>
+          <p class="muted small" id="phase-summary"></p>
+          <p class="muted small" id="phase-save-hint">Change targets to bump this phase’s version, or switch kind to start a new phase. After food is logged today, changes start tomorrow.</p>
           <div class="phase-actions">
-            <button id="btn-save-settings" class="btn full" type="button">Save phase</button>
+            <button id="btn-change-targets" class="btn full" type="button">Change targets…</button>
             <button id="btn-ai-targets" class="btn ghost full" type="button">Get AI targets…</button>
-            <button id="btn-start-phase" class="btn ghost full" type="button">Start new phase…</button>
           </div>
         </div>
 
@@ -437,21 +421,20 @@
     </div>
   </div>
 
-  <!-- Start new phase -->
+  <!-- Change targets (same-kind revision bump, or start a new phase) -->
   <div id="sheet-new-phase" class="sheet" hidden>
     <div class="sheet-backdrop" data-close="sheet-new-phase"></div>
     <div class="sheet-card">
       <div class="sheet-grab"></div>
-      <h3>Start new phase</h3>
-      <p class="muted small" id="np-blurb">Ends the current phase yesterday and starts Kind v1.0 today. Past Insights keep their old targets.</p>
+      <h3 id="np-title">Change targets</h3>
+      <p class="muted small" id="np-blurb">Same kind bumps this phase’s version. Switching kind ends the current phase and starts Kind v1.0.</p>
       <label class="small muted">Kind</label>
-      <div class="phase-kind-seg seg" id="np-kind-seg" role="group" aria-label="New phase kind">
+      <div class="phase-kind-seg seg" id="np-kind-seg" role="group" aria-label="Phase kind">
         <button type="button" data-np-kind="cut">Cut</button>
         <button type="button" data-np-kind="maintain">Maintain</button>
         <button type="button" data-np-kind="bulk" class="on">Bulk</button>
         <button type="button" data-np-kind="recomp">Recomp</button>
       </div>
-      <label class="check-row"><input id="np-copy" type="checkbox" checked> Copy targets from current phase</label>
       <div class="goals-grid" id="np-goals">
         <div><label class="small muted" for="np-kcal">Calories</label><input id="np-kcal" type="number" min="1200" max="6000" step="50"></div>
         <div><label class="small muted" for="np-protein">Protein g</label><input id="np-protein" type="number" min="0" step="5"></div>
@@ -461,9 +444,10 @@
         <div><label class="small muted" for="np-sodium">Sodium mg</label><input id="np-sodium" type="number" min="0" step="50"></div>
         <div><label class="small muted" for="np-potassium">Potassium mg</label><input id="np-potassium" type="number" min="0" step="100"></div>
       </div>
+      <label class="check-row" id="np-major-row"><input id="np-major" type="checkbox"> Force major version (vN.0)</label>
       <div class="row end">
         <button id="np-cancel" class="btn ghost" type="button">Cancel</button>
-        <button id="np-save" class="btn" type="button">Start phase</button>
+        <button id="np-save" class="btn" type="button">Save targets</button>
       </div>
     </div>
   </div>

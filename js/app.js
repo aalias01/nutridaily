@@ -2767,9 +2767,15 @@ const App = (() => {
     UI.openSheet("sheet-detail");
   }
 
+  function currentPhaseKind(day) {
+    const d = day || Ledger.todayKey();
+    const phase = Phases.phaseForDay(state.settings.phases, d) || Phases.activePhase(state.settings.phases);
+    return phase ? Phases.kindForDay(phase, d) : "maintain";
+  }
+
+  /** Active phase kind for AI prompts and defaults (Settings card is display-only). */
   function selectedPhaseKind() {
-    const on = UI.$("#phase-kind-seg button.on");
-    return Phases.normalizeKind(on && on.dataset.phaseKind);
+    return currentPhaseKind(Ledger.todayKey());
   }
 
   function selectedNewPhaseKind() {
@@ -2777,8 +2783,8 @@ const App = (() => {
     return Phases.normalizeKind(on && on.dataset.npKind);
   }
 
-  /** After the first food of the day, today's scored targets stay fixed. */
-  function phaseEditorLocked(day) {
+  /** After the first food of the day, target edits still save — but only from tomorrow. */
+  function phaseTargetsDeferred(day) {
     return Ledger.hasEverAdded(day || Ledger.todayKey());
   }
 
@@ -2792,20 +2798,40 @@ const App = (() => {
     });
   }
 
-  function fillNewPhaseSheet(goals, kind) {
+  function syncChangeTargetsChrome() {
     const today = Ledger.todayKey();
-    const locked = phaseEditorLocked(today);
+    const deferred = phaseTargetsDeferred(today);
+    const currentKind = currentPhaseKind(today);
+    const nextKind = selectedNewPhaseKind();
+    const samePhase = nextKind === currentKind;
+    const kindLabel = Phases.KIND_LABEL[nextKind] || nextKind;
+    const blurb = UI.$("#np-blurb");
+    const majorRow = UI.$("#np-major-row");
+    const saveBtn = UI.$("#np-save");
+    const title = UI.$("#np-title");
+    if (title) title.textContent = "Change targets";
+    if (majorRow) majorRow.hidden = !samePhase;
+    if (!samePhase && UI.$("#np-major")) UI.$("#np-major").checked = false;
+    if (saveBtn) saveBtn.textContent = samePhase ? "Save targets" : "Start new phase";
+    if (blurb) {
+      if (samePhase) {
+        blurb.textContent = deferred
+          ? `Same kind keeps this phase and bumps the version from tomorrow (food already logged today). Past Insights keep today's targets.`
+          : `Same kind keeps this phase and bumps the version from today. Use Force major only for a deliberate vN.0 jump.`;
+      } else {
+        blurb.textContent = deferred
+          ? `Switching to ${kindLabel} ends the current phase today and starts ${kindLabel} v1.0 tomorrow. Past Insights keep their old targets.`
+          : `Switching to ${kindLabel} ends the current phase yesterday and starts ${kindLabel} v1.0 today. Past Insights keep their old targets.`;
+      }
+    }
+  }
+
+  function fillChangeTargetsSheet(goals, kind) {
+    const today = Ledger.todayKey();
     const resolved = Phases.goalsForDay(today, state.settings);
     const g = goals || (resolved._phase || resolved);
-    const phase = Phases.phaseForDay(state.settings.phases, today) ||
-      Phases.activePhase(state.settings.phases);
-    const currentKind = kind || (phase ? Phases.kindForDay(phase, today) : "maintain");
-    const preferred = kind
-      ? currentKind
-      : (currentKind === "cut" ? "bulk" : currentKind === "bulk" ? "cut" : "bulk");
+    const preferred = Phases.normalizeKind(kind || currentPhaseKind(today));
     setKindSeg("#np-kind-seg", preferred, "np");
-    const copy = !goals;
-    UI.$("#np-copy").checked = copy;
     UI.$("#np-kcal").value = g.kcal;
     UI.$("#np-protein").value = g.protein;
     UI.$("#np-carbs").value = g.carbs;
@@ -2813,13 +2839,14 @@ const App = (() => {
     UI.$("#np-fiber").value = g.fiber;
     UI.$("#np-sodium").value = g.sodium;
     UI.$("#np-potassium").value = g.potassium;
-    UI.$("#np-goals").hidden = copy;
-    const blurb = UI.$("#np-blurb");
-    if (blurb) {
-      blurb.textContent = locked
-        ? "Food is already logged today, so today's scores stay put. This ends the current phase today and starts Kind v1.0 tomorrow. Past Insights keep their old targets."
-        : "Ends the current phase yesterday and starts Kind v1.0 today. Past Insights keep their old targets.";
-    }
+    if (UI.$("#np-goals")) UI.$("#np-goals").hidden = false;
+    if (UI.$("#np-major")) UI.$("#np-major").checked = false;
+    syncChangeTargetsChrome();
+  }
+
+  /** @deprecated alias — older call sites */
+  function fillNewPhaseSheet(goals, kind) {
+    fillChangeTargetsSheet(goals, kind);
   }
 
   function renderPhaseRevisionList() {
@@ -2857,7 +2884,7 @@ const App = (() => {
   function syncSettingsForm() {
     Phases.ensureMigrated(state.settings, Phases.earliestDayFromEvents(Ledger.allEvents()), Ledger.todayKey());
     const today = Ledger.todayKey();
-    const locked = phaseEditorLocked(today);
+    const locked = phaseTargetsDeferred(today);
     const phase = Phases.phaseForDay(state.settings.phases, today) || Phases.activePhase(state.settings.phases);
     const g = Phases.goalsForDay(today, state.settings);
     const targetReview = state.settings.targetReview && state.settings.targetReview.required
@@ -2870,37 +2897,16 @@ const App = (() => {
           ? "Imported targets failed the persistent safety policy. The original version is audit-only; generic recovery targets are active until you review and save replacements."
           : "An imported current/future target is audit-only because it failed the persistent safety policy. The nearest earlier valid version is active; review and save a replacement.");
     }
-    // The phase editor sets the PERSISTENT phase target, not today's live
-    // number. When a day plan is active, g.kcal is today's frozen
-    // override — g._phase.kcal is always the real, unadjusted phase value
-    // (goalsForDay guarantees _phase is populated either way). Using g.kcal
-    // here would let an unrelated today-only adjustment silently overwrite
-    // the phase's calorie target the next time someone hits Save phase.
+    // Settings shows the persistent phase target, never a one-day kcal plan.
     const phaseGoals = g._phase || g;
-    UI.$("#set-kcal").value = phaseGoals.kcal;
-    UI.$("#set-protein").value = g.protein;
-    UI.$("#set-carbs").value = g.carbs;
-    UI.$("#set-fat").value = g.fat;
-    UI.$("#set-fiber").value = g.fiber;
-    if (UI.$("#set-sodium")) UI.$("#set-sodium").value = g.sodium != null ? g.sodium : DEFAULT_GOALS.sodium;
-    if (UI.$("#set-potassium")) UI.$("#set-potassium").value = g.potassium != null ? g.potassium : DEFAULT_GOALS.potassium;
-    const phaseCard = UI.$(".phase-card");
-    if (phaseCard) phaseCard.classList.toggle("phase-locked", locked);
-    for (const sel of [
-      "#set-kcal", "#set-protein", "#set-carbs", "#set-fat",
-      "#set-fiber", "#set-sodium", "#set-potassium", "#set-phase-major",
-    ]) {
-      const el = UI.$(sel);
-      if (el) el.disabled = locked;
+    const summary = UI.$("#phase-summary");
+    if (summary) {
+      summary.textContent =
+        `${Math.round(phaseGoals.kcal)} kcal · P${Math.round(phaseGoals.protein)} · C${Math.round(phaseGoals.carbs)} · F${Math.round(phaseGoals.fat)}` +
+        ` · Fiber ${Math.round(phaseGoals.fiber)} · Na ${Math.round(phaseGoals.sodium != null ? phaseGoals.sodium : DEFAULT_GOALS.sodium)}` +
+        ` · K ${Math.round(phaseGoals.potassium != null ? phaseGoals.potassium : DEFAULT_GOALS.potassium)}`;
     }
-    UI.$$("#phase-kind-seg button").forEach((btn) => { btn.disabled = locked; });
-    if (UI.$("#btn-save-settings")) {
-      UI.$("#btn-save-settings").disabled = locked;
-      UI.$("#btn-save-settings").hidden = locked;
-    }
-    if (UI.$("#set-phase-major-row")) UI.$("#set-phase-major-row").hidden = locked;
     if (phase) {
-      setKindSeg("#phase-kind-seg", Phases.kindForDay(phase, today), "phase");
       if (UI.$("#phase-current-label")) {
         UI.$("#phase-current-label").textContent = targetReview &&
           targetReview.fallback === "generic-default"
@@ -2910,18 +2916,13 @@ const App = (() => {
       const hint = UI.$("#phase-save-hint");
       if (hint) {
         const n = (phase.revisions || []).length;
-        if (locked) {
-          hint.textContent = n > 1
-            ? `${n} target versions on file. Food logged today — these targets are locked for scoring. Use Start new phase… to change them from tomorrow.`
-            : "Food logged today — these targets are locked for scoring. Use Start new phase… to change them from tomorrow.";
-        } else {
-          hint.textContent = n > 1
-            ? `${n} target versions on file. Open Target history to review or delete.`
-            : "Pick Cut, Maintain, Bulk, or Recomp. Saving changed numbers bumps the version from today.";
-        }
+        const when = locked ? "tomorrow" : "today";
+        hint.textContent = n > 1
+          ? `${n} target versions on file. Change targets… bumps this phase or starts a new one` +
+            (locked ? " (starts tomorrow — food already logged today)." : ".")
+          : `Change targets… to bump this phase’s version or switch kind. Edits apply from ${when}.`;
       }
     }
-    if (UI.$("#set-phase-major")) UI.$("#set-phase-major").checked = false;
     const profile = Phases.ensureProfile(state.settings);
     if (UI.$("#set-dob")) UI.$("#set-dob").value = profile.dob || "";
     if (UI.$("#set-sex")) UI.$("#set-sex").value = profile.sex || "";
@@ -4408,69 +4409,6 @@ const App = (() => {
         UI.toast(state.settings.weightUnit === "kg" ? "Body weight in kg" : "Body weight in lb");
       });
     }
-    UI.$("#btn-save-settings").addEventListener("click", () => {
-      const today = Ledger.todayKey();
-      if (phaseEditorLocked(today)) {
-        UI.toast("Food logged today — use Start new phase… to change targets from tomorrow");
-        syncSettingsForm();
-        return;
-      }
-      const nextSettings = cloneLocalData(state.settings);
-      Phases.ensureMigrated(nextSettings, Phases.earliestDayFromEvents(Ledger.allEvents()), today);
-      const readGoal = (sel, fallback, min, max) => {
-        const el = UI.$(sel);
-        const raw = el ? String(el.value || "").trim() : "";
-        if (!raw) return fallback;
-        const n = parseAmount(raw);
-        return Number.isFinite(n) && n >= (min || 0) && (max == null || n <= max) ? n : null;
-      };
-      const current = Phases.goalsForDay(today, nextSettings);
-      const phaseCurrent = current._phase || current;
-      const nextGoals = {
-        kcal: readGoal("#set-kcal", phaseCurrent.kcal ?? DEFAULT_GOALS.kcal, ...PhasePrompt.BOUNDS.kcal),
-        protein: readGoal("#set-protein", phaseCurrent.protein ?? 0, ...PhasePrompt.BOUNDS.protein),
-        carbs: readGoal("#set-carbs", phaseCurrent.carbs ?? 0, ...PhasePrompt.BOUNDS.carbs),
-        fat: readGoal("#set-fat", phaseCurrent.fat ?? 0, ...PhasePrompt.BOUNDS.fat),
-        fiber: readGoal("#set-fiber", phaseCurrent.fiber ?? 0, ...PhasePrompt.BOUNDS.fiber),
-        sodium: readGoal("#set-sodium", phaseCurrent.sodium ?? 0, ...PhasePrompt.BOUNDS.sodium),
-        potassium: readGoal("#set-potassium", phaseCurrent.potassium ?? DEFAULT_GOALS.potassium, ...PhasePrompt.BOUNDS.potassium),
-      };
-      if (Object.values(nextGoals).some((n) => n == null)) {
-        UI.toast("Targets are outside the supported ranges");
-        return;
-      }
-      const goalError = persistentGoalError(nextGoals);
-      if (goalError) {
-        UI.toast(goalError);
-        return;
-      }
-      const forceMajor = !!(UI.$("#set-phase-major") && UI.$("#set-phase-major").checked);
-      const result = Phases.appendRevision(nextSettings, nextGoals, today, "", {
-        kind: selectedPhaseKind(),
-        magnitude: forceMajor ? "major" : undefined,
-      });
-      try { commitSettingsCandidate(nextSettings); }
-      catch (error) { UI.toast("Couldn’t save phase targets — nothing changed"); return; }
-      Sync.schedulePush();
-      refreshAll();
-      syncSettingsForm();
-      if (!result) UI.toast("No changes");
-      else if (result.changed) UI.toast(`Saved ${result.label}`);
-      else UI.toast(`Updated to ${result.label}`);
-    });
-
-    if (UI.$("#phase-kind-seg")) {
-      UI.$("#phase-kind-seg").addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-phase-kind]");
-        if (!btn || btn.disabled) return;
-        if (phaseEditorLocked()) {
-          UI.toast("Food logged today — use Start new phase… to change targets from tomorrow");
-          return;
-        }
-        setKindSeg("#phase-kind-seg", btn.dataset.phaseKind, "phase");
-      });
-    }
-
     if (UI.$("#btn-phase-history")) {
       UI.$("#btn-phase-history").addEventListener("click", () => {
         renderPhaseRevisionList();
@@ -4515,30 +4453,30 @@ const App = (() => {
       });
     }
 
-    UI.$("#btn-start-phase").addEventListener("click", () => {
-      fillNewPhaseSheet();
+    const openChangeTargets = () => {
+      fillChangeTargetsSheet();
       UI.openSheet("sheet-new-phase");
-    });
+    };
+    if (UI.$("#btn-change-targets")) {
+      UI.$("#btn-change-targets").addEventListener("click", openChangeTargets);
+    }
     if (UI.$("#np-kind-seg")) {
       UI.$("#np-kind-seg").addEventListener("click", (e) => {
         const btn = e.target.closest("[data-np-kind]");
         if (!btn) return;
         setKindSeg("#np-kind-seg", btn.dataset.npKind, "np");
+        syncChangeTargetsChrome();
       });
     }
-    UI.$("#np-copy").addEventListener("change", () => {
-      UI.$("#np-goals").hidden = UI.$("#np-copy").checked;
-    });
     UI.$("#np-cancel").addEventListener("click", () => {
       UI.closeSheet("sheet-new-phase");
     });
     UI.$("#np-save").addEventListener("click", () => {
       const today = Ledger.todayKey();
-      const copy = UI.$("#np-copy").checked;
-      const startDay = Ledger.hasEverAdded(today) ? Analytics.addDays(today, 1) : today;
+      const effectiveDay = phaseTargetsDeferred(today) ? Analytics.addDays(today, 1) : today;
       const nextSettings = cloneLocalData(state.settings);
       Phases.ensureMigrated(nextSettings, Phases.earliestDayFromEvents(Ledger.allEvents()), today);
-      const goals = copy ? null : {
+      const nextGoals = {
         kcal: parseAmount(UI.$("#np-kcal").value),
         protein: parseAmount(UI.$("#np-protein").value),
         carbs: parseAmount(UI.$("#np-carbs").value),
@@ -4547,29 +4485,51 @@ const App = (() => {
         sodium: parseAmount(UI.$("#np-sodium").value),
         potassium: parseAmount(UI.$("#np-potassium").value),
       };
-      const previousPhase = Phases.phaseForDay(nextSettings.phases, startDay) ||
-        Phases.activePhase(nextSettings.phases);
-      const copiedGoals = previousPhase
-        ? ((Phases.revisionForDay(previousPhase, startDay) || {}).goals || nextSettings.goals)
-        : nextSettings.goals;
-      const goalError = persistentGoalError(goals || copiedGoals);
+      if (Object.values(nextGoals).some((n) => !Number.isFinite(n))) {
+        UI.toast("Enter a number for every target");
+        return;
+      }
+      const goalError = persistentGoalError(nextGoals);
       if (goalError) {
         UI.toast(goalError);
         return;
       }
-      const started = Phases.startPhase(nextSettings, {
-        kind: selectedNewPhaseKind(),
-        goals,
-        startDay,
-        copyGoals: copy,
-      });
-      try { commitSettingsCandidate(nextSettings); }
-      catch (error) { UI.toast("Couldn’t start this phase — nothing changed"); return; }
-      Sync.schedulePush();
-      UI.closeSheet("sheet-new-phase");
-      refreshAll();
-      syncSettingsForm();
-      UI.toast(`Started ${started.name}${startDay !== today ? " · effective tomorrow" : ""}`);
+      const nextKind = selectedNewPhaseKind();
+      const currentKind = currentPhaseKind(today);
+      const deferNote = effectiveDay !== today ? " · effective tomorrow" : "";
+      try {
+        if (nextKind === currentKind) {
+          const forceMajor = !!(UI.$("#np-major") && UI.$("#np-major").checked);
+          const result = Phases.appendRevision(nextSettings, nextGoals, effectiveDay, "", {
+            kind: nextKind,
+            magnitude: forceMajor ? "major" : undefined,
+          });
+          commitSettingsCandidate(nextSettings);
+          Sync.schedulePush();
+          UI.closeSheet("sheet-new-phase");
+          refreshAll();
+          syncSettingsForm();
+          if (!result) UI.toast("No changes");
+          else UI.toast(`Saved ${result.label}${deferNote}`);
+        } else {
+          const started = Phases.startPhase(nextSettings, {
+            kind: nextKind,
+            goals: nextGoals,
+            startDay: effectiveDay,
+            copyGoals: false,
+          });
+          commitSettingsCandidate(nextSettings);
+          Sync.schedulePush();
+          UI.closeSheet("sheet-new-phase");
+          refreshAll();
+          syncSettingsForm();
+          UI.toast(`Started ${started.name}${deferNote}`);
+        }
+      } catch (error) {
+        UI.toast(error && error.code === "persistent-target-invalid"
+          ? (error.message || "Targets are outside the supported ranges")
+          : "Couldn’t save targets — nothing changed");
+      }
     });
 
     const profileFields = ["#set-dob", "#set-sex", "#set-height", "#set-activity", "#set-profile-notes"];
@@ -4630,12 +4590,11 @@ const App = (() => {
           return;
         }
         const raw = (UI.$("#ai-phase-paste") && UI.$("#ai-phase-paste").value) || "";
+        const phaseGoals = Phases.goalsForDay(Ledger.todayKey(), state.settings);
+        const base = phaseGoals._phase || phaseGoals;
         const currentGoals = {};
-        for (const [key, sel] of [
-          ["fiber", "#set-fiber"], ["sodium", "#set-sodium"], ["potassium", "#set-potassium"],
-        ]) {
-          const el = UI.$(sel);
-          const value = el && el.value !== "" ? Number(el.value) : NaN;
+        for (const key of ["fiber", "sodium", "potassium"]) {
+          const value = Number(base[key]);
           if (Number.isFinite(value) && value >= 0) currentGoals[key] = value;
         }
         const parsed = PhasePrompt.parsePhaseBlock(raw, currentGoals);
@@ -4667,24 +4626,11 @@ const App = (() => {
         const opt = parsed && parsed.options[Number(btn.dataset.opt)];
         if (!opt) return;
         const g = opt.goals;
-        if (phaseEditorLocked()) {
-          fillNewPhaseSheet(g, parsed.kind || selectedPhaseKind());
-          UI.closeSheet("sheet-phase-targets");
-          UI.openSheet("sheet-new-phase");
-          UI.toast(`Applied ${opt.label} to Start new phase · starts tomorrow`);
-          return;
-        }
-        UI.$("#set-kcal").value = g.kcal;
-        UI.$("#set-protein").value = g.protein;
-        UI.$("#set-carbs").value = g.carbs;
-        UI.$("#set-fat").value = g.fat;
-        UI.$("#set-fiber").value = g.fiber;
-        if (UI.$("#set-sodium")) UI.$("#set-sodium").value = g.sodium;
-        if (UI.$("#set-potassium") && g.potassium != null) UI.$("#set-potassium").value = g.potassium;
-        // Only flip kind when the paste actually included Kind: (null means leave user's selection).
-        if (parsed.kind) setKindSeg("#phase-kind-seg", parsed.kind, "phase");
+        fillChangeTargetsSheet(g, parsed.kind || selectedPhaseKind());
         UI.closeSheet("sheet-phase-targets");
-        UI.toast(`Applied ${opt.label}. Tap Save phase to keep it.`);
+        UI.openSheet("sheet-new-phase");
+        const defer = phaseTargetsDeferred();
+        UI.toast(`Applied ${opt.label} to Change targets${defer ? " · starts tomorrow" : ""}`);
       });
     }
 
@@ -5542,32 +5488,11 @@ const App = (() => {
           UI.toast(eligibility.message || "Review your profile before applying an automated target");
           return;
         }
-        if (phaseEditorLocked(today)) {
-          UI.toast("Food logged today — use Start new phase… to change targets from tomorrow");
-          return;
-        }
-        const ok = confirm(
-          `Set targets to ${next.kcal} kcal from today?\n\n` +
-          `Protein stays ${next.protein} g. Carbs ${phaseCurrent.carbs} → ${next.carbs} g, fat ${phaseCurrent.fat} → ${next.fat} g.\n\n` +
-          `This adds a new version to your active phase. Past days keep the targets they were scored against.`
-        );
-        if (!ok) return;
-        const nextSettings = cloneLocalData(state.settings);
-        const result = Phases.appendRevision(
-          nextSettings, next, today,
-          `From energy estimate (${btn.dataset.label || "TDEE"})`
-        );
-        try { commitSettingsCandidate(nextSettings); }
-        catch (error) {
-          UI.toast("Couldn’t set targets — nothing changed");
-          return;
-        }
-        Sync.schedulePush();
-        refreshAll();
-        syncSettingsForm();
-        UI.toast(result && result.label
-          ? `${result.label} · ${next.kcal} kcal`
-          : `Targets set to ${next.kcal} kcal`);
+        fillChangeTargetsSheet(next, currentPhaseKind(today));
+        UI.openSheet("sheet-new-phase");
+        UI.toast(phaseTargetsDeferred(today)
+          ? `Loaded ${next.kcal} kcal into Change targets · starts tomorrow`
+          : `Loaded ${next.kcal} kcal into Change targets`);
       });
     }
     for (const selector of ["#insight-heatmap", "#trend-data", "#weight-data"]) {

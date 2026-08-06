@@ -834,11 +834,12 @@ async function run(label, days) {
         window.eval("Sync").schedulePush = originalSchedulePush;
         window.confirm = originalConfirm;
       }
-      ok(/Food logged today.*Start new phase/i.test(text("#toast")) &&
+      ok(!$("#sheet-new-phase").hidden && Number($("#np-kcal").value) === 2000 &&
           JSON.stringify(TdeeApp.state.settings) === beforeTdeeMemory &&
           window.localStorage.getItem(settingsKey) === beforeTdeeDisk &&
           tdeeSyncCalls === 0,
-        "TDEE Apply is locked after today's first food and leaves settings unchanged");
+        "TDEE Apply opens Change targets for review and leaves settings unchanged until save");
+      $("#np-cancel").click();
       failedApply.remove();
       TdeeApp.state.settings.profile = fixtureProfile;
       originalSetItem.call(window.localStorage, settingsKey, fixtureSettingsRaw);
@@ -859,7 +860,7 @@ async function run(label, days) {
     const settingsTab = [...window.document.querySelectorAll(".tab")].find((x) => x.dataset.view === "settings");
     settingsTab.click();
     await new Promise((r) => setTimeout(r, 20));
-    $("#set-potassium").value = "3400";
+    const summaryBefore = text("#phase-summary");
     $("#btn-ai-targets").click();
     $("#ai-phase-paste").value = `PHASE v1
 Kind: maintain
@@ -876,34 +877,35 @@ END`;
     $("#btn-parse-phase").click();
     let apply = $("#ai-phase-options .ai-apply-opt");
     ok(!!apply, "legacy PHASE reply still parses");
-    const beforeInvalidPhaseApply = $("#set-kcal").value;
     $("#ai-phase-paste").value = $("#ai-phase-paste").value.replace(/\nEND$/, "");
     $("#btn-parse-phase").click();
-    ok(!$("#ai-phase-options .ai-apply-opt") && $("#set-kcal").value === beforeInvalidPhaseApply,
+    ok(!$("#ai-phase-options .ai-apply-opt") && text("#phase-summary") === summaryBefore,
       "truncated PHASE reply exposes no apply action and leaves targets unchanged");
     ok(/standalone END/i.test(text("#toast")), "truncated PHASE reply explains the END requirement");
     $("#ai-phase-paste").value += "\nEND";
     $("#btn-parse-phase").click();
     apply = $("#ai-phase-options .ai-apply-opt");
-    apply.click();
-    ok($("#np-potassium").value === "3400" && !$("#sheet-new-phase").hidden,
-      "legacy PHASE reply preserves potassium and opens Start new phase when today is locked");
-    $("#np-cancel").click();
     const PhaseMath = window.eval("Phases");
     const DateMath = window.eval("Analytics");
     const loggedToday = window.eval("Ledger.todayKey()");
-    const targetBeforeSave = PhaseMath.goalsForDay(loggedToday, JSON.parse(window.localStorage.getItem("nd_settings_v1"))).kcal;
-    ok($("#btn-save-settings").hidden || $("#btn-save-settings").disabled,
-      "Save phase is locked after today's first food");
-    $("#btn-start-phase").click();
-    $("#np-copy").checked = false;
-    $("#np-goals").hidden = false;
+    const baseline = PhaseMath.goalsForDay(
+      loggedToday, JSON.parse(window.localStorage.getItem("nd_settings_v1"))
+    );
+    const baselineK = (baseline._phase || baseline).potassium;
+    apply.click();
+    ok(!$("#sheet-new-phase").hidden &&
+        Number($("#np-potassium").value) === Number(baselineK != null ? baselineK : 3400),
+      "legacy PHASE reply opens Change targets and preserves potassium");
+    $("#np-cancel").click();
+    const targetBeforeSave = baseline.kcal;
+    ok(!!$("#btn-change-targets"), "Change targets is the Settings entry point");
+    $("#btn-change-targets").click();
     $("#np-kcal").value = String(targetBeforeSave + 100);
     $("#np-save").click();
     const deferredSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
     ok(PhaseMath.goalsForDay(loggedToday, deferredSettings).kcal === targetBeforeSave &&
         PhaseMath.goalsForDay(DateMath.addDays(loggedToday, 1), deferredSettings).kcal === targetBeforeSave + 100,
-      "Start new phase after today's first add takes effect tomorrow");
+      "same-kind Change targets after today's first add takes effect tomorrow");
 
     // Once today's logging has begun, a Reduced plan cannot be created — Fast
     // grace remains open (§10), so the sheet may still open on Fast.
@@ -3606,6 +3608,7 @@ async function runImportSecurity() {
     UI.closeSheet("sheet-paste");
     await new Promise((r) => setTimeout(r, 220));
   }
+
 
   // Part IX.5: notScored() lacked incompleteMineral's empty-day guard, so a
   // declared fast with nothing logged at all printed "0 mg* · not scored
