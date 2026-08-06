@@ -1605,14 +1605,51 @@ const App = (() => {
     state.qtyReturnToMultiKey = null;
   }
 
-  function toggleMultiFood(key, food, pendingCatalog) {
+  function toggleMultiFood(key, food, pendingCatalog, prefill) {
     if (!key || !food) return;
     if (state.multiPick[key]) {
       delete state.multiPick[key];
     } else {
-      state.multiPick[key] = { food, pendingCatalog: !!pendingCatalog };
+      const row = { food, pendingCatalog: !!pendingCatalog };
+      if (prefill) {
+        if (prefill.qty != null) row.qty = prefill.qty;
+        if (prefill.unit) row.unit = prefill.unit;
+        if (prefill.meal) row.meal = prefill.meal;
+      }
+      state.multiPick[key] = row;
     }
     refreshAddPicker();
+  }
+
+  function foodFromLogEntry(entry) {
+    if (!entry) return null;
+    if (entry.source === "once" || entry.source === "quick" || entry.unit === "kcal") return null;
+    let food = entry.foodId ? findFood(entry.foodId) : null;
+    if (food) return food;
+    if (!entry.per100) return null;
+    return {
+      id: null,
+      name: entry.name,
+      per100: entry.per100,
+      units: {},
+      batch: null,
+      sd: entry.sd,
+      version: entry.foodVersion || 1,
+      cat: entry.cat || "dish",
+      _orphan: true,
+      _keptFoodId: entry.foodId || null,
+    };
+  }
+
+  function multiPrefillFromEntry(entry) {
+    if (!entry) return null;
+    const unit = entry.unit && entry.unit !== "kcal" ? entry.unit : "g";
+    const qty = entry.qty != null ? entry.qty : entry.grams;
+    return {
+      qty,
+      unit,
+      meal: entry.meal || Foods.inferMeal(),
+    };
   }
 
   function syncMultiQtyItemsFromDom() {
@@ -1654,7 +1691,10 @@ const App = (() => {
       const sel = state.multiPick[key];
       const food = sel.food;
       const prior = prevByKey.get(key);
-      if (prior && prior.food && prior.food.id === food.id) {
+      if (prior && prior.food && (
+        (prior.food.id && food.id && prior.food.id === food.id) ||
+        prior.key === key
+      )) {
         return {
           key,
           food,
@@ -1664,13 +1704,23 @@ const App = (() => {
           pendingCatalog: !!sel.pendingCatalog,
         };
       }
+      if (sel.qty != null && sel.unit) {
+        return {
+          key,
+          food,
+          qty: sel.qty,
+          unit: sel.unit,
+          meal: sel.meal || meal,
+          pendingCatalog: !!sel.pendingCatalog,
+        };
+      }
       const hist = UI.weightPrefillFromHistory(food, imperial);
       return {
         key,
         food,
         qty: hist.qty,
         unit: hist.unit,
-        meal,
+        meal: sel.meal || meal,
         pendingCatalog: !!sel.pendingCatalog,
       };
     });
@@ -6475,6 +6525,16 @@ const App = (() => {
       } else if (action === "repeat-yesterday") {
         const entry = Ledger.entriesFor(state.yesterdayKey || yesterdayKey()).find((x) => x.id === id);
         if (!entry) return;
+        if (state.pickMode === "multi") {
+          const food = foodFromLogEntry(entry);
+          if (!food) {
+            UI.toast("One-offs stay on Single — switch modes to repeat that log");
+            return;
+          }
+          const key = food.id ? `food:${food.id}` : `yest:${entry.id}`;
+          toggleMultiFood(key, food, false, multiPrefillFromEntry(entry));
+          return;
+        }
         UI.closeSheet("sheet-add");
         openQtyFromEntry(entry);
       } else if (action === "goto-day") {

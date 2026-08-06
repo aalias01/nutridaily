@@ -721,7 +721,18 @@ const UI = (() => {
     };
     const yRow = (e) => {
       const chrome = entrySourceChrome(e);
-      // Yesterday repeats stay single-path (qty prefilled); no multi checkbox.
+      const key = e.foodId ? `food:${e.foodId}` : `yest:${e.id}`;
+      const selected = selectedKeys.has(key);
+      if (multiMode) {
+        return `<button type="button" class="log-row${selected ? " pick-selected" : ""}" data-action="repeat-yesterday" data-id="${esc(e.id)}" aria-pressed="${selected ? "true" : "false"}">
+          ${check(selected)}
+          <div>
+            <div class="r-name">${esc(e.name)}${chrome.badge}</div>
+            <div class="r-qty">${esc(e.displayQty)} · ${esc(e.meal || "")}</div>
+          </div>
+          <span class="mini">${fmt(e.macros.kcal)} kcal</span>
+        </button>`;
+      }
       return `<button type="button" class="log-row" data-action="repeat-yesterday" data-id="${esc(e.id)}">
         <div>
           <div class="r-name">${esc(e.name)}${chrome.badge}</div>
