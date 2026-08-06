@@ -706,7 +706,7 @@ async function run(label, days) {
   // §3 test #9 (light check on the main fixture) — honesty top-level + jump.
   // Cap / <details> branch coverage lives in runObservationsTriage().
   {
-    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete"]);
+    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete", "excluded-days"]);
     const root = $("#insight-observations");
     const topNotes = [...root.children].filter((el) => el.matches(".obs"));
     const moreNotes = [...root.querySelectorAll("details.obs-more .obs")];
@@ -1345,7 +1345,7 @@ async function runObservationsTriage() {
     firstAddAt: (day) => Ledger.firstAddAt(day),
   });
   const emitted = Analytics.observations(days, { todayKey });
-  const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete"]);
+  const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete", "excluded-days"]);
   const cappable = emitted.filter((o) => o.tone !== "watch" && !HONESTY.has(o.id));
   ok(cappable.length >= 4, "obs-triage fixture fires ≥4 cappable info notes (enough to force the cap)",
     emitted.map((o) => o.id).join(", "));
@@ -1384,7 +1384,7 @@ async function runObservationsTriage() {
       !!$('#insight-observations > [data-obs-id="partial-days"]'),
     "partial-days and bumps both stay top-level regardless of the info cap");
 
-  const pri = { "partial-days": 0, bumps: 0, fasts: 0, "once-days": 0, "macro-incomplete": 0, coverage: 10, "weekend-logging": 20,
+  const pri = { "partial-days": 0, bumps: 0, fasts: 0, "once-days": 0, "macro-incomplete": 0, "excluded-days": 0, coverage: 10, "weekend-logging": 20,
     "weekend-kcal": 30, variability: 40, momentum: 50, "protein-per-kg": 60 };
   const priOk = (ids) => {
     for (let i = 1; i < ids.length; i++) {
@@ -1657,15 +1657,32 @@ async function runEmpty() {
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
   $("#btn-day-goals").click();
-  ok(!$("#sheet-day-goals").classList.contains("open"), "logging locks the existing planned calorie adjustment");
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#sheet-day-goals").classList.contains("open"),
+    "logging still opens Day plan so Mark incomplete stays reachable");
+  ok(!!$("#dg-incomplete"), "locked Day plan sheet still exposes Mark incomplete");
+  $("#dg-kcal").value = "900";
+  $("#dg-save").click();
+  await new Promise((r) => setTimeout(r, 20));
   ok(/lock after the first food/i.test($("#toast").textContent), "locked adjustment gives a clear explanation");
+  ok(!!$("#sheet-day-goals").hidden || !$("#sheet-day-goals").classList.contains("open"),
+    "blocked Save closes the sheet after explaining the lock");
+  $("#btn-day-goals").click();
+  await new Promise((r) => setTimeout(r, 20));
+  $("#dg-clear").click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(/lock after the first food/i.test($("#toast").textContent), "locked Clear is blocked with the same explanation");
   Ledger.removeEntry(todayKey, firstAdd.entry.id);
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
   ok(Ledger.entriesFor(todayKey).length === 0 && /locked/i.test($("#btn-day-goals").textContent),
     "deleting the last visible entry does not unlock the immutable plan guard");
+  $("#btn-day-goals").click();
+  await new Promise((r) => setTimeout(r, 20));
   $("#dg-kcal").value = "900";
   $("#dg-save").click();
+  $("#btn-day-goals").click();
+  await new Promise((r) => setTimeout(r, 20));
   $("#dg-clear").click();
   const lockedSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
   ok(lockedSettings.dayGoals[todayKey].targetKcal === target && lockedSettings.dayGoals[todayKey].baseKcal === before.kcal,
@@ -3761,6 +3778,42 @@ async function runImportSecurity() {
         "Phase 3: Edit from culprits opens Log once for that entry");
       UI.closeSheet("sheet-once");
     }
+
+    // Phase 4: Mark incomplete — diary stays; averages / TDEE / honesty note update.
+    App.state.viewDay = todayKey;
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+    await new Promise((r) => setTimeout(r, 40));
+    $("#btn-day-goals").click();
+    await new Promise((r) => setTimeout(r, 40));
+    ok(!$("#sheet-day-goals").hidden && !!$("#dg-incomplete"),
+      "Phase 4: Day plan sheet exposes Mark incomplete");
+    $("#dg-incomplete").checked = true;
+    $("#dg-incomplete").dispatchEvent(new window.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 60));
+    const dgMarked = (JSON.parse(window.localStorage.getItem("nd_settings_v1") || "{}").dayGoals || {})[todayKey];
+    ok(dgMarked && dgMarked.incomplete === true && dgMarked.excludeReason === "incomplete",
+      "Phase 4: incomplete mark persists on dayGoals",
+      JSON.stringify(dgMarked));
+    UI.closeSheet("sheet-day-goals");
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+    await new Promise((r) => setTimeout(r, 80));
+    const exclObs = $('#insight-observations [data-obs-id="excluded-days"]');
+    ok(!!exclObs && /marked incomplete/.test(exclObs.textContent || ""),
+      "Phase 4: Insights discloses excluded days",
+      exclObs && exclObs.textContent);
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+    await new Promise((r) => setTimeout(r, 40));
+    $("#btn-day-goals").click();
+    await new Promise((r) => setTimeout(r, 40));
+    ok($("#dg-incomplete").checked, "Phase 4: sheet shows incomplete still checked");
+    $("#dg-incomplete").checked = false;
+    $("#dg-incomplete").dispatchEvent(new window.Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 60));
+    const dgCleared = (JSON.parse(window.localStorage.getItem("nd_settings_v1") || "{}").dayGoals || {})[todayKey];
+    ok(!dgCleared || dgCleared.cleared === true || !dgCleared.incomplete,
+      "Phase 4: unmark clears incomplete without requiring a calorie plan",
+      JSON.stringify(dgCleared));
+    UI.closeSheet("sheet-day-goals");
 
     App.state.viewDay = today;
     await new Promise((r) => setTimeout(r, 40));

@@ -562,6 +562,7 @@ body.sheet-open .insight-dock { display: none; }
 .goals-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .goals-grid.energy-adjustment-grid { grid-template-columns: minmax(0, 1fr); max-width: 260px; }
 .dg-presets { margin-top: 12px; }
+#dg-incomplete-row { margin-top: 14px; }
 .dg-presets-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   margin-bottom: 6px;

@@ -241,21 +241,23 @@ const App = (() => {
       : hasPlan
         ? (reducedWin.reason || "")
         : (reducedWin.reason || fastWin.reason || "");
+    const ov = dayGoalOverride(state.viewDay);
     let label = "Day plan";
     if (isFast) label = "Fast · declared";
     else if (hasPlan) label = `Planned calories · ${Math.round(resolved.kcal)} kcal`;
+    const incompleteMark = !!(ov && ov.incomplete === true);
+    if (incompleteMark) label = hasPlan || isFast ? `${label} · incomplete` : "Incomplete log";
     // Late disclosure parity with Insights (S3). Same classifier as the
     // observation audit — reported, not punished; no colour or warning icon.
-    const ov = dayGoalOverride(state.viewDay);
     const late = !!(hasPlan && ov && typeof Analytics !== "undefined" &&
       typeof Analytics.dayPlanProvenance === "function" &&
       Analytics.dayPlanProvenance({ dayPlan: ov,
         firstAddAt: Ledger.firstAddAt(state.viewDay),
         intent: isFast ? "fast" : "reduced",
       }) === "declaredLate");
-    btn.classList.toggle("has-override", hasPlan);
+    btn.classList.toggle("has-override", hasPlan || incompleteMark);
     btn.classList.toggle("is-locked", locked);
-    btn.textContent = `${label}${late ? " · late" : ""}${locked ? " · locked" : ""}`;
+    btn.textContent = `${label}${late ? " · late" : ""}${locked && (hasPlan || isFast) ? " · locked" : ""}`;
     // Title must name the fact that made it late. Persisted declaredAfterDay
     // means after local midnight; derived declaredLate means after first add.
     // Same-day post-log fasts leave kcal unscored — do not claim they are
@@ -270,9 +272,11 @@ const App = (() => {
       ? "Declared fast for this day"
       : (hasPlan
         ? "Edit or clear this day's calorie plan"
-        : "Plan a reduced-energy day or declare a fast");
+        : (incompleteMark
+          ? "This day is marked incomplete — diary stays, averages skip it"
+          : "Plan a reduced-energy day or declare a fast"));
     const lockTitle = lockReason || reducedWin.reason || fastWin.reason || "This day plan cannot be changed right now.";
-    btn.title = locked
+    btn.title = locked && (hasPlan || isFast)
       ? (late ? `${lateTitle} ${lockTitle}` : lockTitle)
       : (late ? `${lateTitle} ${idleTitle}` : idleTitle);
   }
@@ -4116,8 +4120,24 @@ const App = (() => {
       const common = { updatedAt, resetEpoch };
       if (record.plannedAt != null) common.plannedAt = importedTimestamp(record.plannedAt, `${label}.plannedAt`);
       if (record.veryLowCalorieAcknowledged === true) common.veryLowCalorieAcknowledged = true;
+      const incomplete = record.incomplete === true;
+      const withIncomplete = (obj) => {
+        if (incomplete) {
+          obj.incomplete = true;
+          obj.excludeReason = "incomplete";
+        }
+        return obj;
+      };
       if (record.cleared) {
         out[day] = { cleared: true, ...common };
+        continue;
+      }
+
+      // Incomplete-only (no calorie plan fields).
+      const hasPlanFields = record.targetKcal != null || record.baseKcal != null
+        || record.bumps != null || (record.kcal != null && record.kcal !== "");
+      if (incomplete && !hasPlanFields) {
+        out[day] = withIncomplete({ ...common });
         continue;
       }
 
@@ -4144,12 +4164,12 @@ const App = (() => {
         const baseKcal = importedNumber(record.baseKcal, `${label}.baseKcal`, { min: 800, max: 6000 });
         const locked = record.locked === true || record.lockedByEventId != null;
         if (targetKcal === baseKcal && !locked) {
-          out[day] = { cleared: true, ...common };
+          out[day] = withIncomplete({ ...common });
         } else {
           if (targetKcal > 0 && targetKcal < 1200 && !common.veryLowCalorieAcknowledged) {
             throw new Error(`${label}.targetKcal is below 1200 and requires veryLowCalorieAcknowledged`);
           }
-          out[day] = { targetKcal, baseKcal, ...common };
+          out[day] = withIncomplete({ targetKcal, baseKcal, ...common });
           if (intent === "fast") {
             out[day].intent = "fast";
             out[day].fastAcknowledged = true;
@@ -4181,7 +4201,7 @@ const App = (() => {
       if (record.bumps != null) {
         const bumps = importedObject(record.bumps, `${label}.bumps`);
         if (bumps.kcal == null || bumps.kcal === "") {
-          out[day] = { cleared: true, ...common };
+          out[day] = incomplete ? withIncomplete({ ...common }) : { cleared: true, ...common };
           continue;
         }
         const kcal = importedNumber(bumps.kcal, `${label}.bumps.kcal`, { min: -5200, max: 5200 });
@@ -4197,7 +4217,9 @@ const App = (() => {
         if (kcal !== 0 && targetKcal < 1200 && !common.veryLowCalorieAcknowledged) {
           throw new Error(`${label}.targetKcal is below 1200 and requires veryLowCalorieAcknowledged`);
         }
-        out[day] = kcal === 0 ? { cleared: true, ...common } : { bumps: { kcal }, ...common };
+        out[day] = kcal === 0
+          ? (incomplete ? withIncomplete({ ...common }) : { cleared: true, ...common })
+          : withIncomplete({ bumps: { kcal }, ...common });
       } else if (record.kcal != null && record.kcal !== "") {
         // Legacy absolute overrides predate the fast concept and can never be 0.
         const absolute = importedNumber(record.kcal, `${label}.kcal`, { min: 200, max: 6000 });
@@ -4205,10 +4227,10 @@ const App = (() => {
           throw new Error(`${label}.targetKcal is below 1200 and requires veryLowCalorieAcknowledged`);
         }
         out[day] = absolute === baseKcal
-          ? { cleared: true, ...common }
-          : { targetKcal: absolute, baseKcal, ...common };
+          ? (incomplete ? withIncomplete({ ...common }) : { cleared: true, ...common })
+          : withIncomplete({ targetKcal: absolute, baseKcal, ...common });
       } else {
-        out[day] = { cleared: true, ...common };
+        out[day] = incomplete ? withIncomplete({ ...common }) : { cleared: true, ...common };
       }
     }
     return out;
@@ -5060,24 +5082,64 @@ const App = (() => {
       refreshPresetChips();
       UI.toast("Preset removed");
     };
+    const dayIncompleteChecked = () => {
+      const el = UI.$("#dg-incomplete");
+      return !!(el && el.checked);
+    };
+    const attachIncompleteMark = (record, incomplete) => {
+      if (!record || typeof record !== "object") return record;
+      if (incomplete) {
+        record.incomplete = true;
+        record.excludeReason = "incomplete";
+      }
+      return record;
+    };
+    // Clearing calorie intent must not wipe Mark incomplete (and vice versa).
+    const clearPlanOrIncompleteOnly = (incomplete, now) => (incomplete
+      ? { incomplete: true, excludeReason: "incomplete", updatedAt: now }
+      : { cleared: true, updatedAt: now });
+    const persistDayIncompleteFlag = (incomplete) => {
+      const nextSettings = cloneLocalData(state.settings);
+      if (!nextSettings.dayGoals || typeof nextSettings.dayGoals !== "object") nextSettings.dayGoals = {};
+      const day = state.viewDay;
+      const now = Date.now();
+      const raw = nextSettings.dayGoals[day];
+      const live = raw && !raw.cleared ? Sync.normalizeDayGoal(raw) : null;
+      const hasPlanFields = !!(live && !live.cleared && (
+        live.targetKcal != null || live.baseKcal != null
+        || (live.bumps && typeof live.bumps === "object")
+        || live.kcal != null
+      ));
+      if (hasPlanFields && live) {
+        const next = { ...live, updatedAt: now };
+        delete next.cleared;
+        if (incomplete) {
+          next.incomplete = true;
+          next.excludeReason = "incomplete";
+        } else {
+          delete next.incomplete;
+          delete next.excludeReason;
+        }
+        nextSettings.dayGoals[day] = Sync.normalizeDayGoal(next) || clearPlanOrIncompleteOnly(false, now);
+      } else {
+        nextSettings.dayGoals[day] = clearPlanOrIncompleteOnly(incomplete, now);
+      }
+      try { commitSettingsCandidate(nextSettings); }
+      catch (error) {
+        UI.toast("Couldn’t update incomplete mark — nothing changed");
+        return false;
+      }
+      Sync.schedulePush();
+      refreshDay();
+      return true;
+    };
     const openDayGoalsSheet = () => {
       const g = Phases.goalsForDay(state.viewDay, state.settings);
       const bumps = g && g._dayPlan;
       const isFast = !!(bumps && bumps.intent === "fast");
       const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
-      // An existing plan reopens only while its own intent window is open.
-      // An empty day can author either intent.
-      if (isFast) {
-        if (!toastIfBlocked("fast")) return;
-      } else if (hasReduced) {
-        if (!toastIfBlocked("reduced")) return;
-      } else if (!canAuthorAnyIntent()) {
-        const reason = guardDayIntent("reduced").reason || guardDayIntent("fast").reason ||
-          "This day plan cannot be changed right now.";
-        UI.toast(reason);
-        refreshDayGoalsLink();
-        return;
-      }
+      // Always open: Mark incomplete is independent of day-plan authorship windows.
+      // Plan edits still gate at intent switch / Save via toastIfBlocked.
       const phase = Phases.phaseForDay(state.settings.phases, state.viewDay);
       const phaseBit = phase ? ` (${Phases.labelForDay(phase, state.viewDay)})` : "";
       const phaseBase = g._phase || g;
@@ -5109,16 +5171,32 @@ const App = (() => {
         setDayIntentSeg("reduced");
         UI.$("#dg-kcal").value = String(Math.round(g.kcal));
       } else {
-        // Empty day: land on Reduced so the calorie field is ready. Normal is
-        // still one tap away when the user only wants to clear.
+        // Empty day: land on Reduced when that window is open; otherwise Normal
+        // so Mark incomplete is one clear surface without pretending a plan edit.
         setDayIntentSeg(guardDayIntent("reduced").ok ? "reduced" : (guardDayIntent("fast").ok ? "fast" : "normal"));
         UI.$("#dg-kcal").value = "";
+      }
+      const incompleteEl = UI.$("#dg-incomplete");
+      if (incompleteEl) {
+        const raw = state.settings.dayGoals && state.settings.dayGoals[state.viewDay];
+        incompleteEl.checked = !!(raw && raw.incomplete === true && !raw.cleared);
       }
       refreshDayPlanPreview();
       refreshPresetChips();
       UI.openSheet("sheet-day-goals");
     };
     UI.$("#btn-day-goals").addEventListener("click", openDayGoalsSheet);
+    if (UI.$("#dg-incomplete")) {
+      UI.$("#dg-incomplete").addEventListener("change", () => {
+        const incomplete = dayIncompleteChecked();
+        if (!persistDayIncompleteFlag(incomplete)) {
+          const raw = state.settings.dayGoals && state.settings.dayGoals[state.viewDay];
+          UI.$("#dg-incomplete").checked = !!(raw && raw.incomplete === true && !raw.cleared);
+          return;
+        }
+        UI.toast(incomplete ? "Marked incomplete" : "Included in averages again");
+      });
+    }
     if (UI.$("#dg-intent-seg")) {
       UI.$("#dg-intent-seg").addEventListener("click", (e) => {
         const btn = e.target.closest("[data-dg-intent]");
@@ -5244,20 +5322,26 @@ const App = (() => {
 
       if (intent === "normal") {
         // Same clear ladder as #dg-clear — Fast grace must not unlock a
-        // locked Reduced plan (P2-1).
+        // locked Reduced plan (P2-1). Incomplete mark may still change alone.
         if (isFastPlan) {
           if (!toastIfBlocked("fast")) return;
         } else if (hasReducedPlan) {
           if (!toastIfBlocked("reduced")) return;
-        } else if (!canAuthorAnyIntent()) {
-          toastIfBlocked("reduced");
-          return;
         } else if (!isFastPlan && !hasReducedPlan) {
-          // No plan on the day: nothing to clear — skip the LWW tombstone.
+          // No calorie plan: Save only needs to sync Mark incomplete (checkbox).
+          const raw = state.settings.dayGoals && state.settings.dayGoals[state.viewDay];
+          const was = !!(raw && raw.incomplete === true && !raw.cleared);
+          const nextInc = dayIncompleteChecked();
+          if (was === nextInc) {
+            UI.closeSheet("sheet-day-goals");
+            return;
+          }
+          if (!persistDayIncompleteFlag(nextInc)) return;
           UI.closeSheet("sheet-day-goals");
+          UI.toast(nextInc ? "Marked incomplete" : "Included in averages again");
           return;
         }
-        nextSettings.dayGoals[state.viewDay] = { cleared: true, updatedAt: now };
+        nextSettings.dayGoals[state.viewDay] = clearPlanOrIncompleteOnly(dayIncompleteChecked(), now);
         try { commitSettingsCandidate(nextSettings); }
         catch (error) { UI.toast("Couldn’t clear this plan — nothing changed"); return; }
         Sync.schedulePush();
@@ -5275,7 +5359,7 @@ const App = (() => {
           return;
         }
         const win = guardDayIntent("fast");
-        nextSettings.dayGoals[state.viewDay] = {
+        nextSettings.dayGoals[state.viewDay] = attachIncompleteMark({
           targetKcal: Phases.FAST_KCAL,
           baseKcal: phaseBase.kcal,
           plannedAt: now,
@@ -5283,7 +5367,7 @@ const App = (() => {
           intent: "fast",
           fastAcknowledged: true,
           ...(win.declaredAfterDay ? { declaredAfterDay: true } : {}),
-        };
+        }, dayIncompleteChecked());
         try { commitSettingsCandidate(nextSettings); }
         catch (error) { UI.toast("Couldn’t save this plan — nothing changed"); return; }
         Sync.schedulePush();
@@ -5305,16 +5389,16 @@ const App = (() => {
       if (targetKcal != null && targetKcal < 1200 &&
           !confirm("Very-low-calorie targets require clinician supervision. Save this target anyway?")) return;
       if (targetKcal != null && targetKcal !== phaseBase.kcal) {
-        nextSettings.dayGoals[state.viewDay] = {
+        nextSettings.dayGoals[state.viewDay] = attachIncompleteMark({
           targetKcal,
           baseKcal: phaseBase.kcal,
           plannedAt: now,
           updatedAt: now,
           intent: "reduced",
           veryLowCalorieAcknowledged: targetKcal < 1200,
-        };
+        }, dayIncompleteChecked());
       } else {
-        nextSettings.dayGoals[state.viewDay] = { cleared: true, updatedAt: now };
+        nextSettings.dayGoals[state.viewDay] = clearPlanOrIncompleteOnly(dayIncompleteChecked(), now);
       }
       try { commitSettingsCandidate(nextSettings); }
       catch (error) { UI.toast("Couldn’t save this adjustment — nothing changed"); return; }
@@ -5334,13 +5418,15 @@ const App = (() => {
         if (!toastIfBlocked("fast")) return;
       } else if (hasReduced) {
         if (!toastIfBlocked("reduced")) return;
-      } else if (!canAuthorAnyIntent()) {
-        toastIfBlocked("reduced");
+      } else if (!hasReduced && !isFast) {
+        // No calorie plan — Clear does not wipe Mark incomplete by itself.
+        UI.closeSheet("sheet-day-goals");
+        UI.toast("No day plan to clear");
         return;
       }
       const nextSettings = cloneLocalData(state.settings);
       if (!nextSettings.dayGoals || typeof nextSettings.dayGoals !== "object") nextSettings.dayGoals = {};
-      nextSettings.dayGoals[state.viewDay] = { cleared: true, updatedAt: Date.now() };
+      nextSettings.dayGoals[state.viewDay] = clearPlanOrIncompleteOnly(dayIncompleteChecked(), Date.now());
       try { commitSettingsCandidate(nextSettings); }
       catch (error) { UI.toast("Couldn’t clear this plan — nothing changed"); return; }
       Sync.schedulePush();

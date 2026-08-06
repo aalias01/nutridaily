@@ -1465,7 +1465,7 @@ const UI = (() => {
   function renderObservations(ctx) {
     const root = $("#insight-observations");
     if (!root) return;
-    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete"]);
+    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete", "excluded-days"]);
     const obs = Analytics.observations(ctx.days, {
       ...(ctx.scoreOpts || {}),
       entriesForDay: ctx.entriesForDay,

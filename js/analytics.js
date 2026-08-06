@@ -186,6 +186,10 @@ const Analytics = (() => {
         row.fat = null;
         row.fiber = null;
       }
+      // Explicit user mark (Mark incomplete) — diary stays; stats skip the day.
+      const rawPlan = row.dayPlan;
+      row.excluded = !!(rawPlan && rawPlan.incomplete === true && !rawPlan.cleared);
+      row.excludeReason = row.excluded ? (rawPlan.excludeReason || "incomplete") : null;
       row.naK = row.jointCovered && typeof Phases !== "undefined"
         ? Phases.naKRatio(row.pairedSodium, row.pairedPotassium)
         : null;
@@ -207,6 +211,18 @@ const Analytics = (() => {
   /** Logged days plus honoured (undeclared-food) fasts — every row where `accounted` is true. */
   function accountedRows(days) {
     return (days || []).filter((d) => d.accounted);
+  }
+
+  /**
+   * Days that participate in Insight averages / TDEE / consistency denominators.
+   * Excluded (= Mark incomplete) leave the scored calendar entirely.
+   */
+  function completeRows(days) {
+    return (days || []).filter((d) => d.accounted && !d.excluded);
+  }
+
+  function completeLoggedRows(days) {
+    return (days || []).filter((d) => d.logged && !d.excluded);
   }
 
   // ------------------------------------------------------------- statistics
@@ -240,7 +256,7 @@ const Analytics = (() => {
    * behaves differently from a restrict/binge sawtooth.
    */
   function summaryStats(days, key) {
-    const values = loggedRows(days).map((d) => d[key]).filter(Number.isFinite);
+    const values = completeLoggedRows(days).map((d) => d[key]).filter(Number.isFinite);
     const m = mean(values);
     const sd = stdev(values);
     return {
@@ -413,13 +429,15 @@ const Analytics = (() => {
     const o = opts || {};
     const kcalPerKg = o.kcalPerKg || KCAL_PER_KG;
     const excludeDay = o.excludeDay || o.todayKey || null;
-    const rows = (days || []).filter((d) => !(excludeDay && d.day === excludeDay));
+    const rows = (days || []).filter((d) =>
+      !(excludeDay && d.day === excludeDay) && !d.excluded);
     const logged = loggedRows(rows);
     // TDEE's intake and coverage are drawn from the same calendar the weight
     // regression already reflects. A fast's deficit shows up in the trend
     // line whether or not the day is counted here, so excluding it from
     // intake while the regression keeps its effect would bias the estimate
     // upward — including it at 0 keeps numerator and denominator aligned.
+    // Mark-incomplete days leave both intake and the coverage calendar.
     const accounted = accountedRows(rows);
     const rangeDays = rows.length;
     const coverage = rangeDays ? accounted.length / rangeDays : 0;
@@ -591,7 +609,8 @@ const Analytics = (() => {
    */
   function consistency(days, opts) {
     const todayKey = (opts && opts.todayKey) || null;
-    const rows = days || [];
+    // Mark-incomplete days leave the scored calendar (not hits, not misses).
+    const rows = (days || []).filter((d) => !d.excluded);
     // A declared fast counts toward consistency the same as a logged day —
     // `accounted`, not `logged`, is what "did you account for this day"
     // means throughout this function. `logged` stays reserved for "has
@@ -704,7 +723,7 @@ const Analytics = (() => {
         ratioHits: 0, sodiumHits: 0, potassiumHits: 0,
       };
       const todayKey = opts && opts.todayKey;
-      const targetRows = loggedRows(days).filter((d) => !(todayKey && d.day === todayKey));
+      const targetRows = completeLoggedRows(days).filter((d) => !(todayKey && d.day === todayKey));
       for (const d of targetRows) {
         const s = scoreDay(toTotalsLike(d), d.goals || {});
         if (!s) continue;
@@ -953,7 +972,7 @@ const Analytics = (() => {
   function byDayOfWeek(days, key) {
     const rows = [];
     for (let dow = 0; dow < 7; dow++) {
-      const match = loggedRows(days).filter((d) => d.dow === dow);
+      const match = completeLoggedRows(days).filter((d) => d.dow === dow);
       const all = (days || []).filter((d) => d.dow === dow);
       rows.push({
         dow,
@@ -971,7 +990,7 @@ const Analytics = (() => {
 
   /** Largest weekday↔weekend gap worth mentioning, or null. */
   function weekendEffect(days, key) {
-    const logged = loggedRows(days);
+    const logged = completeLoggedRows(days);
     const wk = logged.filter((d) => !d.weekend);
     const we = logged.filter((d) => d.weekend);
     if (wk.length < 3 || we.length < 2) return null;
@@ -994,7 +1013,7 @@ const Analytics = (() => {
    * current targets. Ratios travel better than raw grams when calories move.
    */
   function macroSplit(days) {
-    const logged = loggedRows(days);
+    const logged = completeLoggedRows(days);
     const gP = mean(logged.map((d) => d.protein));
     const gC = mean(logged.map((d) => d.carbs));
     const gF = mean(logged.map((d) => d.fat));
@@ -1081,7 +1100,7 @@ const Analytics = (() => {
 
   /** Protein relative to body weight — the form the evidence is actually in. */
   function proteinPerKg(days) {
-    const logged = loggedRows(days);
+    const logged = completeLoggedRows(days);
     const p = mean(logged.map((d) => d.protein));
     const trend = trendWeight(days);
     const anchors = trend.filter((t) => t.trend != null);
@@ -1168,7 +1187,7 @@ const Analytics = (() => {
 
   /** Highest and lowest logged days for a nutrient. */
   function extremes(days, key) {
-    const logged = loggedRows(days).filter((d) => Number.isFinite(d[key]));
+    const logged = completeLoggedRows(days).filter((d) => Number.isFinite(d[key]));
     if (!logged.length) return null;
     const sorted = [...logged].sort((a, b) => a[key] - b[key]);
     return { low: sorted[0], high: sorted[sorted.length - 1] };
@@ -1182,8 +1201,8 @@ const Analytics = (() => {
     const w = windowDays || 7;
     const rows = days || [];
     if (rows.length < w + 2) return null;
-    const recent = loggedRows(rows.slice(-w));
-    const prior = loggedRows(rows.slice(-2 * w, -w));
+    const recent = completeLoggedRows(rows.slice(-w));
+    const prior = completeLoggedRows(rows.slice(-2 * w, -w));
     if (recent.length < 2 || prior.length < 2) return null;
     const a = mean(prior.map((d) => d[key]));
     const b = mean(recent.map((d) => d[key]));
@@ -1215,6 +1234,17 @@ const Analytics = (() => {
     // An all-fast range has nothing "logged" but still has testimony — do not
     // bail before the fasts observation below can speak.
     if (!logged.length && !accounted.length) return out;
+
+    const excluded = (days || []).filter((d) => d.excluded);
+    if (excluded.length) {
+      const n = excluded.length;
+      out.push({
+        id: "excluded-days",
+        tone: "info",
+        priority: 0,
+        text: `${n} day${n === 1 ? " is" : "s are"} marked incomplete and left out of averages and TDEE.`,
+      });
+    }
 
     const cons = consistency(days, o);
     if (logged.length && cons.totalDays >= 7 && cons.rate < 0.6) {
@@ -1595,7 +1625,7 @@ const Analytics = (() => {
    * phases can be put side by side without recomputing each metric twice.
    */
   function rangeSummary(days, scoreDay, opts) {
-    const logged = loggedRows(days);
+    const logged = completeLoggedRows(days);
     const trend = trendWeight(days, opts);
     const rate = weightRate(trend);
     const score = nutritionScore(days, scoreDay, opts);
@@ -1729,7 +1759,7 @@ const Analytics = (() => {
     MIN_TDEE_MARGIN_KCAL,
     DOW_LABEL, MEALS, NUTRIENTS, TOTALS_KEY, UNIT, LABEL,
     dayKeyFromDate, dateOf, addDays, daysBetween, weekStart, shortDate,
-    buildDays, loggedRows, accountedRows, toTotalsLike,
+    buildDays, loggedRows, accountedRows, completeRows, completeLoggedRows, toTotalsLike,
     mean, median, stdev, summaryStats, rollingMean, linearFit,
     trendWeight, weightRate, estimateTdee, intakeForRate, projectWeight,
     consistency, nutritionScore, gradeFor, biggestGap, SCORE_WEIGHTS,

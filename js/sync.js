@@ -370,13 +370,32 @@ const Sync = (() => {
     const generation = Object.prototype.hasOwnProperty.call(ov, "resetEpoch") ? { resetEpoch } : {};
     if (ov.cleared) return { cleared: true, updatedAt, ...generation };
 
+    const incomplete = ov.incomplete === true;
+    const attachIncomplete = (out) => {
+      if (incomplete) {
+        out.incomplete = true;
+        out.excludeReason = "incomplete";
+      }
+      return out;
+    };
+
+    // Incomplete-only mark (no calorie plan) — logging-coverage exclusion.
+    const hasPlanFields = ov.targetKcal != null || ov.baseKcal != null
+      || (ov.bumps && typeof ov.bumps === "object")
+      || (ov.kcal != null && ov.kcal !== "");
+    if (incomplete && !hasPlanFields) {
+      return attachIncomplete({ updatedAt, ...generation });
+    }
+
     // Absent on every record generation that predates this feature; a missing
     // intent is an ordinary planned day, not a fast nobody declared.
     const intent = ov.intent === "fast" ? "fast" : "reduced";
     const fastAcknowledged = ov.fastAcknowledged === true;
     // A fast without its own acknowledgement is not a plan to preserve — it is
     // indistinguishable from a corrupt or partially-written record.
-    if (intent === "fast" && !fastAcknowledged) return { cleared: true, updatedAt, ...generation };
+    if (intent === "fast" && !fastAcknowledged) {
+      return incomplete ? attachIncomplete({ updatedAt, ...generation }) : { cleared: true, updatedAt, ...generation };
+    }
 
     // Current records freeze both sides of the plan. Whitelist only the
     // calorie-plan fields so arbitrary imported/synced properties never ride
@@ -393,9 +412,13 @@ const Sync = (() => {
         Number.isFinite(baseKcal) && baseKcal >= 800 && baseKcal <= 6000) {
       // targetKcal is 0 iff intent === "fast". A nonzero target under a fast
       // declaration is an incoherent combination, not a plan to preserve.
-      if (intent === "fast" && targetKcal !== 0) return { cleared: true, updatedAt, ...generation };
+      if (intent === "fast" && targetKcal !== 0) {
+        return incomplete ? attachIncomplete({ updatedAt, ...generation }) : { cleared: true, updatedAt, ...generation };
+      }
       const locked = ov.locked === true || (typeof ov.lockedByEventId === "string" && ov.lockedByEventId);
-      if (targetKcal === baseKcal && !locked) return { cleared: true, updatedAt, ...generation };
+      if (targetKcal === baseKcal && !locked) {
+        return incomplete ? attachIncomplete({ updatedAt, ...generation }) : { cleared: true, updatedAt, ...generation };
+      }
       const ack = ov.veryLowCalorieAcknowledged === true;
       // A record does not always originate from a compliant client — a legacy
       // delta bump can resolve to a live very-low target after a phase
@@ -406,7 +429,7 @@ const Sync = (() => {
       // target, not a plan, and must not need an acknowledgement it was never
       // offered the chance to give.
       if (targetKcal !== baseKcal && targetKcal > 0 && targetKcal < 1200 && !ack) {
-        return { cleared: true, updatedAt, ...generation };
+        return incomplete ? attachIncomplete({ updatedAt, ...generation }) : { cleared: true, updatedAt, ...generation };
       }
       const out = { targetKcal, baseKcal, updatedAt, ...generation };
       const plannedAt = Number(ov.plannedAt);
@@ -422,7 +445,7 @@ const Sync = (() => {
         out.locked = true;
         if (typeof ov.lockedByEventId === "string") out.lockedByEventId = ov.lockedByEventId.slice(0, 160);
       }
-      return out;
+      return attachIncomplete(out);
     }
 
     // A declared fast only ever takes the frozen modern shape above — a delta
@@ -436,11 +459,12 @@ const Sync = (() => {
         const plannedAt = Number(ov.plannedAt);
         if (Number.isFinite(plannedAt) && plannedAt >= 0) out.plannedAt = plannedAt;
         if (ov.veryLowCalorieAcknowledged === true) out.veryLowCalorieAcknowledged = true;
-        return out;
+        return attachIncomplete(out);
       }
       // A newer legacy safety/macro-only row must still defeat an older calorie
-      // override for the same day. Turn it into a calorie clear tombstone.
-      return { cleared: true, updatedAt, ...generation };
+      // override for the same day. Turn it into a calorie clear tombstone —
+      // but preserve an incomplete mark.
+      return incomplete ? attachIncomplete({ updatedAt, ...generation }) : { cleared: true, updatedAt, ...generation };
     }
 
     // Pre-bump documents stored absolute daily goals. Preserve only absolute
@@ -459,9 +483,9 @@ const Sync = (() => {
       const plannedAt = Number(ov.plannedAt);
       if (Number.isFinite(plannedAt) && plannedAt >= 0) out.plannedAt = plannedAt;
       if (legacyAck) out.veryLowCalorieAcknowledged = true;
-      return out;
+      return attachIncomplete(out);
     }
-    return { cleared: true, updatedAt, ...generation };
+    return incomplete ? attachIncomplete({ updatedAt, ...generation }) : { cleared: true, updatedAt, ...generation };
   }
 
   function normalizeDayGoals(map) {

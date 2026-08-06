@@ -1393,6 +1393,9 @@ const Phases = (() => {
     let logged = 0;
     for (const day of keys) {
       if (excludeDay && day === excludeDay) continue;
+      // Mark-incomplete days leave scorecards (diary still has the entries).
+      const ov = settings && settings.dayGoals && settings.dayGoals[day];
+      if (ov && ov.incomplete === true && !ov.cleared) continue;
       const t = totalsForDay(day);
       if (!t || !t.count) continue;
       logged += 1;

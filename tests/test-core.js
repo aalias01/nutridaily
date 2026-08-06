@@ -1660,6 +1660,27 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   }).cleared,
     "a legacy absolute target below 1200 kcal WITH acknowledgement is accepted");
 
+  // Mark incomplete — additive logging-coverage flag on dayGoals.
+  const incompleteOnly = Sync.normalizeDayGoal({ incomplete: true, updatedAt: 50 });
+  ok(incompleteOnly && incompleteOnly.incomplete === true && incompleteOnly.excludeReason === "incomplete"
+      && !incompleteOnly.cleared && incompleteOnly.targetKcal == null,
+    "incomplete-only dayGoal normalizes without a calorie plan");
+  const incompletePlan = Sync.normalizeDayGoal({
+    targetKcal: 1800, baseKcal: 2200, updatedAt: 60, incomplete: true,
+  });
+  ok(incompletePlan && incompletePlan.targetKcal === 1800 && incompletePlan.incomplete === true
+      && incompletePlan.excludeReason === "incomplete" && !incompletePlan.cleared,
+    "incomplete rides along on a reduced plan without clearing it");
+  ok(Sync.normalizeDayGoal({ incomplete: true, cleared: true, updatedAt: 70 }).cleared === true
+      && !Sync.normalizeDayGoal({ incomplete: true, cleared: true, updatedAt: 70 }).incomplete,
+    "a cleared tombstone drops incomplete (clear-preserving must write incomplete-only, not cleared)");
+  const failedFastKeepIncomplete = Sync.normalizeDayGoal({
+    intent: "fast", targetKcal: 0, baseKcal: 2200, updatedAt: 80, incomplete: true,
+  });
+  ok(failedFastKeepIncomplete && failedFastKeepIncomplete.incomplete === true
+      && failedFastKeepIncomplete.targetKcal == null && !failedFastKeepIncomplete.cleared,
+    "a failed fast declaration with incomplete becomes incomplete-only instead of a cleared tombstone");
+
   const dgA = { "2026-08-01": { kcal: 2800, protein: 180, updatedAt: 100 } };
   const dgB = {
     "2026-08-01": { bumps: { kcal: 200, protein: 20, sodium: 500 }, updatedAt: 200 },

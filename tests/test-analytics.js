@@ -1218,6 +1218,64 @@ console.log("\n[26b] Macro coverage (Design Phase 2)");
     "fully covered macros emit no macro-incomplete note");
 }
 
+console.log("\n[26b] Mark incomplete excludes day from averages / TDEE / consistency");
+{
+  const keys = ["2019-04-01", "2019-04-02", "2019-04-03"];
+  const weights = { "2019-04-01": 80, "2019-04-02": 79.9, "2019-04-03": 79.8 };
+  const totals = (kcal) => ({
+    count: 2,
+    kcal: { mean: kcal }, p: { mean: 120 }, c: { mean: 200 }, f: { mean: 60 },
+    fb: { mean: 25 }, na: { mean: 1800 }, naCoverage: 1, naItems: 2,
+    k: { mean: 3000 }, kCoverage: 1, kItems: 2,
+    macroCoverage: 1, macroItems: 2,
+    naKCoverage: 1, naKItems: 2, naKNa: { mean: 1800 }, naKK: { mean: 3000 },
+  });
+  const goals = { ...GOALS };
+  const dayGoals = {
+    "2019-04-02": { incomplete: true, excludeReason: "incomplete", updatedAt: 1 },
+  };
+  const rows = Analytics.buildDays({
+    keys,
+    totalsForDay: (d) => totals(d === "2019-04-02" ? 400 : 2000),
+    goalsForDay: () => goals,
+    weightKgForDay: (d) => weights[d],
+    dayPlanForDay: (d) => dayGoals[d] || null,
+  });
+  ok(rows[1].excluded === true && rows[1].excludeReason === "incomplete" && rows[1].logged,
+    "buildDays sets excluded from incomplete dayGoal while keeping logged");
+  ok(rows[0].excluded !== true && rows[2].excluded !== true,
+    "unmarked days are not excluded");
+
+  const stats = Analytics.summaryStats(rows, "kcal");
+  ok(stats.n === 2 && Math.round(stats.avg) === 2000,
+    "summaryStats drops marked-incomplete days",
+    JSON.stringify(stats));
+
+  const tdee = Analytics.estimateTdee(rows);
+  ok(tdee.rangeDays === 2 && tdee.loggedDays === 2 && Math.round(tdee.intakeAvg) === 2000,
+    "estimateTdee drops excluded days from intake and coverage calendar",
+    JSON.stringify({ rangeDays: tdee.rangeDays, loggedDays: tdee.loggedDays, intakeAvg: tdee.intakeAvg }));
+
+  const cons = Analytics.consistency(rows);
+  ok(cons.totalDays === 2 && cons.loggedDays === 2 && !cons.missedDays.includes("2019-04-02"),
+    "consistency leaves excluded days out of the scored calendar",
+    JSON.stringify(cons));
+
+  const note = Analytics.observations(rows, {}).find((o) => o.id === "excluded-days");
+  ok(!!note && /marked incomplete/.test(note.text) && note.priority === 0,
+    "observations disclose excluded days",
+    note && note.text);
+
+  const scorecard = Phases.scoreRange(
+    keys,
+    (d) => totals(d === "2019-04-02" ? 400 : 2000),
+    { goals, dayGoals, phases: [] },
+  );
+  ok(scorecard.logged === 2,
+    "scoreRange skips incomplete days",
+    JSON.stringify({ logged: scorecard.logged }));
+}
+
 console.log("\n[27] Exactly one mineral-composite slot");
 {
   const keys = keysEndingAt(END, 14);
