@@ -689,15 +689,17 @@
   <!-- Multi-select amounts (log or plan) -->
   <div id="sheet-multi-qty" class="sheet" hidden aria-label="Enter amounts">
     <div class="sheet-backdrop" data-close="sheet-multi-qty"></div>
-    <div class="sheet-card tall">
+    <div class="sheet-card">
       <div class="sheet-grab"></div>
       <h3 id="multi-qty-title">Enter amounts</h3>
-      <p class="muted small" id="multi-qty-blurb">Set grams or portions for each food. Use Full sheet on a row if you need the regular amount screen.</p>
+      <p class="muted small" id="multi-qty-blurb">Adjust amount and meal per food. Full opens the regular amount sheet.</p>
       <div id="multi-qty-list" class="multi-qty-list"></div>
-      <button id="multi-qty-save" class="btn full" type="button">Save all</button>
-      <div class="row qty-secondary">
-        <button id="multi-qty-back" class="btn ghost" type="button">Back</button>
-        <button id="multi-qty-cancel" class="btn ghost" type="button">Cancel</button>
+      <div id="multi-qty-actions">
+        <button id="multi-qty-save" class="btn full" type="button">Save all</button>
+        <div class="row qty-secondary">
+          <button id="multi-qty-back" class="btn ghost" type="button">Back</button>
+          <button id="multi-qty-cancel" class="btn ghost" type="button">Cancel</button>
+        </div>
       </div>
     </div>
   </div>

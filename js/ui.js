@@ -912,15 +912,15 @@ const UI = (() => {
         <div class="multi-qty-row-head">
           <div class="r-name">${esc(food.name)}</div>
           <div class="multi-qty-row-actions">
-            <button type="button" class="linkbtn" data-action="multi-full-qty" data-key="${esc(item.key)}">Full sheet</button>
+            <button type="button" class="linkbtn" data-action="multi-full-qty" data-key="${esc(item.key)}">Full</button>
             <button type="button" class="linkbtn danger" data-action="multi-remove" data-key="${esc(item.key)}">Remove</button>
           </div>
         </div>
-        <div class="qty-row">
+        <div class="multi-qty-amt">
           <input class="multi-qty-input" type="text" inputmode="decimal" value="${esc(String(qty))}" aria-label="Amount for ${esc(food.name)}" data-multi-qty>
           <div class="unit-chips" data-multi-units role="group" aria-label="Unit">${unitChipHtml(food, units, unit)}</div>
         </div>
-        <div class="unit-chips meal-chips" data-multi-meals role="group" aria-label="Meal">${MEALS.map((m) =>
+        <div class="unit-chips meal-chips multi-qty-meals" data-multi-meals role="group" aria-label="Meal">${MEALS.map((m) =>
           `<button type="button" class="uchip${m === meal ? " active" : ""}" data-meal="${m}" aria-pressed="${m === meal}">${m}</button>`
         ).join("")}</div>
         <p class="qty-preview" data-multi-preview>${esc(previewText)}</p>
