@@ -104,7 +104,8 @@ const Phases = (() => {
     const o = opts || {};
     const todayKey = o.todayKey || dayKeyFromDate(new Date());
     const intent = o.intent === "fast" ? "fast" : "reduced";
-    const hasEverAdded = typeof o.hasEverAdded === "function" ? !!o.hasEverAdded(targetDay) : !!o.hasEverAdded;
+    // hasEverAdded is accepted for call-site compatibility but no longer locks
+    // Reduced plans after the first food — personal use may revise targets.
     const prev = (() => {
       const d = new Date(String(targetDay) + "T12:00:00");
       d.setDate(d.getDate() - 1);
@@ -130,9 +131,6 @@ const Phases = (() => {
         reason = todayKey < prev
           ? "Day plans can only be set from the day before or on the day itself."
           : "Day plans can only be set for this day before it ends.";
-      } else if (hasEverAdded) {
-        ok = false;
-        reason = "Planned calories lock after the first food is logged.";
       }
     }
     return {

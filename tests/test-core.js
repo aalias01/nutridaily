@@ -1434,7 +1434,7 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
     causal: { entryId: "locked-entry", seq: 1, parentEventId: "locked-root" },
   };
   const staleChangedPlan = lockDoc({
-    dayGoals: { "2026-08-20": { targetKcal: 3100, baseKcal: 2200, plannedAt: 900, updatedAt: 900 } },
+    dayGoals: { "2026-08-20": { targetKcal: 3100, baseKcal: 2200, plannedAt: 50, updatedAt: 50 } },
   });
   const lockSource = lockDoc({ events: [lockedRoot, lockedRemove] });
   const lockedForward = Sync.mergeDocs(lockSource, staleChangedPlan).doc;
@@ -1443,15 +1443,42 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   ok(lockedDay.targetKcal === 2500 && lockedDay.baseKcal === 2200 && lockedDay.locked &&
       lockedDay.lockedByEventId === "locked-root" && lockedDay.veryLowCalorieAcknowledged &&
       Ledger.replayEvents(lockedForward.events).length === 0,
-    "the first immutable add snapshot survives stale plan changes and removal of the last visible entry");
+    "the first immutable add snapshot survives older plan records and removal of the last visible entry");
   ok(Sync.fingerprint(lockedForward) === Sync.fingerprint(lockedReverse),
     "logged-day target healing converges under reversed shard order");
+  // A dayGoal with updatedAt after the first add is a deliberate post-log edit
+  // (Mark incomplete, revise plan). Heal must not wipe it on merge.
+  const postLogRevision = lockDoc({
+    dayGoals: { "2026-08-20": { targetKcal: 3100, baseKcal: 2200, plannedAt: 900, updatedAt: 900 } },
+  });
+  const revisedForward = Sync.mergeDocs(lockSource, postLogRevision).doc;
+  ok(revisedForward.dayGoals["2026-08-20"].targetKcal === 3100 &&
+      revisedForward.dayGoals["2026-08-20"].updatedAt === 900,
+    "a newer post-log plan revision survives healLoggedDayGoals on merge");
+  const incompleteMark = lockDoc({
+    dayGoals: {
+      "2026-08-20": {
+        targetKcal: 2500, baseKcal: 2200, plannedAt: 90, updatedAt: 800,
+        incomplete: true, excludeReason: "incomplete",
+        locked: true, lockedByEventId: "locked-root",
+        veryLowCalorieAcknowledged: true,
+      },
+    },
+  });
+  const incompleteForward = Sync.mergeDocs(lockSource, incompleteMark).doc;
+  const incompleteReverse = Sync.mergeDocs(incompleteMark, lockSource).doc;
+  ok(incompleteForward.dayGoals["2026-08-20"].incomplete === true &&
+      incompleteForward.dayGoals["2026-08-20"].excludeReason === "incomplete" &&
+      incompleteForward.dayGoals["2026-08-20"].targetKcal === 2500,
+    "Mark incomplete on a logged day survives healLoggedDayGoals / mergeDocs");
+  ok(Sync.fingerprint(incompleteForward) === Sync.fingerprint(incompleteReverse),
+    "incomplete mark on a logged day converges under reversed shard order");
   const staleClear = lockDoc({ dayGoals: { "2026-08-20": { cleared: true, updatedAt: 1000 } } });
   const lockedRoundTrip = JSON.parse(JSON.stringify(lockedForward));
   const afterStaleClear = Sync.mergeDocs(lockedRoundTrip, staleClear).doc;
   ok(afterStaleClear.dayGoals["2026-08-20"].targetKcal === 2500 &&
       afterStaleClear.dayGoals["2026-08-20"].lockedByEventId === "locked-root",
-    "a JSON export/import round-trip and later clear tombstone cannot alter a logged-day lock");
+    "a JSON export/import round-trip and later clear tombstone cannot alter a logged-day heal snapshot");
 
   // Part VIII.1: a declared fast that recorded food must carry intent and
   // fastAcknowledged through a merge exactly the way targetKcal/baseKcal do —
@@ -1467,7 +1494,7 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   };
   const fastSource = lockDoc({ events: [fastRoot] });
   const staleForFastDay = lockDoc({
-    dayGoals: { "2026-08-21": { targetKcal: 1800, baseKcal: 2200, updatedAt: 900 } },
+    dayGoals: { "2026-08-21": { targetKcal: 1800, baseKcal: 2200, updatedAt: 50 } },
   });
   const fastForward = Sync.mergeDocs(fastSource, staleForFastDay).doc;
   const fastReverse = Sync.mergeDocs(staleForFastDay, fastSource).doc;
@@ -3735,10 +3762,10 @@ END`;
     ok(Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-01", intent: "reduced" }).ok,
       "reduced: previous day may plan ahead");
     ok(Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-02", intent: "reduced" }).ok,
-      "reduced: same day is allowed before the first add");
-    ok(!Phases15.dayIntentWindow("2026-08-02", {
+      "reduced: same day is allowed");
+    ok(Phases15.dayIntentWindow("2026-08-02", {
       todayKey: "2026-08-02", intent: "reduced", hasEverAdded: true,
-    }).ok, "reduced: first food add closes the window");
+    }).ok, "reduced: food already logged does not lock the plan");
     ok(!Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-03", intent: "reduced" }).ok,
       "reduced: the day after the target is closed");
     ok(Phases15.dayIntentWindow("2026-08-02", { todayKey: "2026-08-03", intent: "fast" }).ok,

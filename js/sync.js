@@ -749,6 +749,12 @@ const Sync = (() => {
           if (record.lockedByEventId) out[day].lockedByEventId = record.lockedByEventId;
         }
       }
+      // Mark incomplete is independent of calorie-plan fields; do not drop it
+      // when rewriting the record for frozen target/base shape.
+      if (record.incomplete === true && !out[day].cleared) {
+        out[day].incomplete = true;
+        out[day].excludeReason = "incomplete";
+      }
     }
     return out;
   }
@@ -1005,7 +1011,22 @@ const Sync = (() => {
         ? root
         : null;
       const rootTs = Number(root.ts) || 0;
-      const baseKcal = phaseBaseKcal(day, phases, goals, rootTs, goalsUpdatedAt);
+      // LWW-merged dayGoals for this day (before heal overwrite). A newer
+      // post-log edit — Mark incomplete, or an intentional plan change —
+      // must survive sync. Heal previously rebuilt every logged day from the
+      // first-add snapshot and wiped those fields (same class of bug as
+      // dropping flags after Drive merge completes).
+      const prior = out[day];
+      const priorAt = Number(prior && prior.updatedAt) || 0;
+      if (prior && !prior.cleared && priorAt > rootTs) {
+        const kept = normalizeDayGoal(prior);
+        if (kept && !kept.cleared) {
+          out[day] = kept;
+          continue;
+        }
+      }
+      const keepIncomplete = !!(prior && prior.incomplete === true && !prior.cleared);
+      let baseKcal = phaseBaseKcal(day, phases, goals, rootTs, goalsUpdatedAt);
       let targetKcal = baseKcal;
       let frozenBase = baseKcal;
       let plannedAt = 0;
@@ -1066,6 +1087,11 @@ const Sync = (() => {
         out[day].intent = "fast";
         out[day].fastAcknowledged = true;
         if (declaredAfterDay) out[day].declaredAfterDay = true;
+      }
+      if (keepIncomplete) {
+        out[day].incomplete = true;
+        out[day].excludeReason = "incomplete";
+        if (priorAt > (Number(out[day].updatedAt) || 0)) out[day].updatedAt = priorAt;
       }
     }
     return out;

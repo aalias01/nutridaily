@@ -919,16 +919,15 @@ END`;
     ok(/No changes · tomorrow/i.test(text("#toast")),
       "re-saving the same tomorrow targets explains no changes");
 
-    // Once today's logging has begun, a Reduced plan cannot be created — Fast
-    // grace remains open (§10), so the sheet may still open on Fast.
+    // Once today's logging has begun, Reduced plans stay editable; Fast grace
+    // remains open for same-day and next-day declarations (§10).
     const todayTabForK = [...window.document.querySelectorAll(".tab")].find((x) => x.dataset.view === "today");
     todayTabForK.click();
     $("#btn-day-goals").click();
-    ok(!$("#sheet-day-goals").hidden, "logged day can still open the plan sheet for a Fast declaration");
+    ok(!$("#sheet-day-goals").hidden, "logged day can still open the plan sheet");
     $("#dg-intent-seg button[data-dg-intent='reduced']").click();
-    ok(/lock after the first food/i.test(text("#toast")) ||
-        $("#dg-intent-seg button[data-dg-intent='reduced']").getAttribute("aria-pressed") !== "true",
-      "logged-day lock explains when calories must be planned");
+    ok($("#dg-intent-seg button[data-dg-intent='reduced']").getAttribute("aria-pressed") === "true",
+      "logged day can still select Reduced");
     ok(!$("#dg-protein") && !$("#dg-sodium") && !$("#dg-potassium"), "energy adjustment sheet has no nutrient bump fields");
     const todayKey = window.eval("Ledger.todayKey()");
     window.eval("UI").closeSheet("sheet-day-goals");
@@ -1633,8 +1632,8 @@ async function runEmpty() {
   });
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(/Planned calories.*locked/i.test($("#btn-day-goals").textContent),
-    "existing planned calories remain visible after logging begins");
+  ok(/Planned calories/i.test($("#btn-day-goals").textContent) && !/locked/i.test($("#btn-day-goals").textContent),
+    "existing planned calories remain visible and editable after logging begins");
   ok(!/· late/.test($("#btn-day-goals").textContent),
     "a plan set before the first log is not labeled late after food is logged");
   // S3: rewrite plannedAt after first-add to force declaredLate provenance and
@@ -1646,11 +1645,11 @@ async function runEmpty() {
   window.localStorage.setItem("nd_settings_v1", JSON.stringify(App.state.settings));
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(/· late/.test($("#btn-day-goals").textContent) && /locked/i.test($("#btn-day-goals").textContent),
+  ok(/· late/.test($("#btn-day-goals").textContent) && !/locked/i.test($("#btn-day-goals").textContent),
     "Today's day-plan link shows · late when provenance is declaredLate");
   ok(/after logging began/i.test($("#btn-day-goals").title),
     "late marker title explains the disclosure without punishing");
-  // Restore on-time plannedAt so the remainder of the lock scenario stays stable.
+  // Restore on-time plannedAt so the remainder of the edit scenario stays stable.
   App.state.settings.dayGoals[todayKey].plannedAt = planned.plannedAt;
   App.state.settings.dayGoals[todayKey].updatedAt = planned.updatedAt;
   window.localStorage.setItem("nd_settings_v1", JSON.stringify(App.state.settings));
@@ -1659,34 +1658,34 @@ async function runEmpty() {
   $("#btn-day-goals").click();
   await new Promise((r) => setTimeout(r, 20));
   ok($("#sheet-day-goals").classList.contains("open"),
-    "logging still opens Day plan so Mark incomplete stays reachable");
-  ok(!!$("#dg-incomplete"), "locked Day plan sheet still exposes Mark incomplete");
-  $("#dg-kcal").value = "900";
+    "logged day still opens Day plan for edits and Mark incomplete");
+  ok(!!$("#dg-incomplete"), "Day plan sheet exposes Mark incomplete after food is logged");
+  const revisedTarget = target - 50;
+  $("#dg-kcal").value = String(revisedTarget);
   $("#dg-save").click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(/lock after the first food/i.test($("#toast").textContent), "locked adjustment gives a clear explanation");
-  ok(!!$("#sheet-day-goals").hidden || !$("#sheet-day-goals").classList.contains("open"),
-    "blocked Save closes the sheet after explaining the lock");
+  const revisedSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
+  ok(revisedSettings.dayGoals[todayKey].targetKcal === revisedTarget,
+    "logged day can revise its planned calorie adjustment");
   $("#btn-day-goals").click();
   await new Promise((r) => setTimeout(r, 20));
   $("#dg-clear").click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(/lock after the first food/i.test($("#toast").textContent), "locked Clear is blocked with the same explanation");
+  const clearedSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
+  ok(clearedSettings.dayGoals[todayKey].cleared === true ||
+      !(clearedSettings.dayGoals[todayKey].targetKcal === revisedTarget),
+    "logged day can clear its planned calorie adjustment");
+  // Restore a plan so later previous-day Fast checks still have a baseline day.
+  App.state.settings.dayGoals[todayKey] = {
+    targetKcal: target, baseKcal: before.kcal, plannedAt: planned.plannedAt,
+    updatedAt: Date.now(), intent: "reduced",
+  };
+  window.localStorage.setItem("nd_settings_v1", JSON.stringify(App.state.settings));
   Ledger.removeEntry(todayKey, firstAdd.entry.id);
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(Ledger.entriesFor(todayKey).length === 0 && /locked/i.test($("#btn-day-goals").textContent),
-    "deleting the last visible entry does not unlock the immutable plan guard");
-  $("#btn-day-goals").click();
-  await new Promise((r) => setTimeout(r, 20));
-  $("#dg-kcal").value = "900";
-  $("#dg-save").click();
-  $("#btn-day-goals").click();
-  await new Promise((r) => setTimeout(r, 20));
-  $("#dg-clear").click();
-  const lockedSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
-  ok(lockedSettings.dayGoals[todayKey].targetKcal === target && lockedSettings.dayGoals[todayKey].baseKcal === before.kcal,
-    "logged day cannot edit or clear its planned calorie adjustment");
+  ok(Ledger.entriesFor(todayKey).length === 0 && /Planned calories/i.test($("#btn-day-goals").textContent),
+    "deleting the last visible entry keeps the day plan available");
 
   $("#btn-day-prev").click();
   $("#btn-day-goals").click();

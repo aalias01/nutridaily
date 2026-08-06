@@ -228,9 +228,8 @@ const App = (() => {
       intent: "fast",
       hasEverAdded: (day) => Ledger.hasEverAdded(day),
     });
-    // Locked labels follow the plan already on the day. An existing reduced
-    // plan that locked after the first food must read locked even though a
-    // never-started day could still declare a Fast in its grace window.
+    // Locked label is only for calendar/authorship windows (day ended, etc.),
+    // not for "food already logged" — plans stay editable after the first add.
     const locked = isFast
       ? !fastWin.ok
       : hasPlan
@@ -5160,7 +5159,7 @@ const App = (() => {
               : `Plan for ${state.viewDay}`;
       }
       UI.$("#day-goals-blurb").textContent =
-        `Phase${phaseBit}: ${phaseBase.kcal} kcal. Plans freeze before the first food on a reduced day. Declaring a fast is a separate control.`;
+        `Phase${phaseBit}: ${phaseBase.kcal} kcal. You can revise a reduced plan or declare a fast for this day while the day window is open.`;
       const ack = UI.$("#dg-fast-ack");
       if (ack) ack.checked = false;
       if (isFast) {
