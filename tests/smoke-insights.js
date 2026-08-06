@@ -906,6 +906,18 @@ END`;
     ok(PhaseMath.goalsForDay(loggedToday, deferredSettings).kcal === targetBeforeSave &&
         PhaseMath.goalsForDay(DateMath.addDays(loggedToday, 1), deferredSettings).kcal === targetBeforeSave + 100,
       "same-kind Change targets after today's first add takes effect tomorrow");
+    ok(/Saved .*effective tomorrow/i.test(text("#toast")),
+      "successful deferred save confirms it starts tomorrow");
+    ok(/From tomorrow:/.test(text("#phase-summary")) &&
+        text("#phase-summary").indexOf(String(targetBeforeSave + 100)) >= 0,
+      "Settings summary shows pending tomorrow targets after deferred save");
+    $("#btn-change-targets").click();
+    ok(Number($("#np-kcal").value) === targetBeforeSave + 100 &&
+        /from tomorrow/i.test(text("#np-title") + " " + text("#np-blurb")),
+      "reopening Change targets shows tomorrow’s pending numbers");
+    $("#np-save").click();
+    ok(/No changes · tomorrow/i.test(text("#toast")),
+      "re-saving the same tomorrow targets explains no changes");
 
     // Once today's logging has begun, a Reduced plan cannot be created — Fast
     // grace remains open (§10), so the sheet may still open on Fast.

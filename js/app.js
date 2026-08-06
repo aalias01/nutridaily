@@ -2788,6 +2788,19 @@ const App = (() => {
     return Ledger.hasEverAdded(day || Ledger.todayKey());
   }
 
+  /** Day the Change targets sheet reads and writes. */
+  function phaseEditorDay(day) {
+    const today = day || Ledger.todayKey();
+    return phaseTargetsDeferred(today) ? Analytics.addDays(today, 1) : today;
+  }
+
+  function formatPhaseGoalsLine(goals) {
+    const g = (goals && goals._phase) || goals || DEFAULT_GOALS;
+    return `${Math.round(g.kcal)} kcal · P${Math.round(g.protein)} · C${Math.round(g.carbs)} · F${Math.round(g.fat)}` +
+      ` · Fiber ${Math.round(g.fiber)} · Na ${Math.round(g.sodium != null ? g.sodium : DEFAULT_GOALS.sodium)}` +
+      ` · K ${Math.round(g.potassium != null ? g.potassium : DEFAULT_GOALS.potassium)}`;
+  }
+
   function setKindSeg(segSel, kind, dataAttr) {
     const k = Phases.normalizeKind(kind);
     UI.$$(`${segSel} button`).forEach((b) => {
@@ -2800,8 +2813,9 @@ const App = (() => {
 
   function syncChangeTargetsChrome() {
     const today = Ledger.todayKey();
-    const deferred = phaseTargetsDeferred(today);
-    const currentKind = currentPhaseKind(today);
+    const editorDay = phaseEditorDay(today);
+    const deferred = editorDay !== today;
+    const currentKind = currentPhaseKind(editorDay);
     const nextKind = selectedNewPhaseKind();
     const samePhase = nextKind === currentKind;
     const kindLabel = Phases.KIND_LABEL[nextKind] || nextKind;
@@ -2809,18 +2823,18 @@ const App = (() => {
     const majorRow = UI.$("#np-major-row");
     const saveBtn = UI.$("#np-save");
     const title = UI.$("#np-title");
-    if (title) title.textContent = "Change targets";
+    if (title) title.textContent = deferred ? "Change targets · from tomorrow" : "Change targets";
     if (majorRow) majorRow.hidden = !samePhase;
     if (!samePhase && UI.$("#np-major")) UI.$("#np-major").checked = false;
     if (saveBtn) saveBtn.textContent = samePhase ? "Save targets" : "Start new phase";
     if (blurb) {
       if (samePhase) {
         blurb.textContent = deferred
-          ? `Same kind keeps this phase and bumps the version from tomorrow (food already logged today). Past Insights keep today's targets.`
-          : `Same kind keeps this phase and bumps the version from today. Use Force major only for a deliberate vN.0 jump.`;
+          ? "Food is already logged today, so today's scores stay put. These numbers are tomorrow's targets for this phase. Saving bumps the version from tomorrow."
+          : "Same kind keeps this phase and bumps the version from today. Use Force major only for a deliberate vN.0 jump.";
       } else {
         blurb.textContent = deferred
-          ? `Switching to ${kindLabel} ends the current phase today and starts ${kindLabel} v1.0 tomorrow. Past Insights keep their old targets.`
+          ? `Food is already logged today, so today's scores stay put. Switching to ${kindLabel} ends the current phase today and starts ${kindLabel} v1.0 tomorrow.`
           : `Switching to ${kindLabel} ends the current phase yesterday and starts ${kindLabel} v1.0 today. Past Insights keep their old targets.`;
       }
     }
@@ -2828,9 +2842,10 @@ const App = (() => {
 
   function fillChangeTargetsSheet(goals, kind) {
     const today = Ledger.todayKey();
-    const resolved = Phases.goalsForDay(today, state.settings);
+    const editorDay = phaseEditorDay(today);
+    const resolved = Phases.goalsForDay(editorDay, state.settings);
     const g = goals || (resolved._phase || resolved);
-    const preferred = Phases.normalizeKind(kind || currentPhaseKind(today));
+    const preferred = Phases.normalizeKind(kind || currentPhaseKind(editorDay));
     setKindSeg("#np-kind-seg", preferred, "np");
     UI.$("#np-kcal").value = g.kcal;
     UI.$("#np-protein").value = g.protein;
@@ -2897,14 +2912,23 @@ const App = (() => {
           ? "Imported targets failed the persistent safety policy. The original version is audit-only; generic recovery targets are active until you review and save replacements."
           : "An imported current/future target is audit-only because it failed the persistent safety policy. The nearest earlier valid version is active; review and save a replacement.");
     }
-    // Settings shows the persistent phase target, never a one-day kcal plan.
+    // Settings shows today's scored phase target. When edits are deferred,
+    // also disclose tomorrow's pending numbers so a successful save is visible.
     const phaseGoals = g._phase || g;
     const summary = UI.$("#phase-summary");
     if (summary) {
-      summary.textContent =
-        `${Math.round(phaseGoals.kcal)} kcal · P${Math.round(phaseGoals.protein)} · C${Math.round(phaseGoals.carbs)} · F${Math.round(phaseGoals.fat)}` +
-        ` · Fiber ${Math.round(phaseGoals.fiber)} · Na ${Math.round(phaseGoals.sodium != null ? phaseGoals.sodium : DEFAULT_GOALS.sodium)}` +
-        ` · K ${Math.round(phaseGoals.potassium != null ? phaseGoals.potassium : DEFAULT_GOALS.potassium)}`;
+      let line = `Today: ${formatPhaseGoalsLine(phaseGoals)}`;
+      if (locked) {
+        const tomorrow = Analytics.addDays(today, 1);
+        const pending = Phases.goalsForDay(tomorrow, state.settings);
+        const pendingGoals = pending._phase || pending;
+        if (!Phases.goalsEqual(phaseGoals, pendingGoals)) {
+          line += ` · From tomorrow: ${formatPhaseGoalsLine(pendingGoals)}`;
+        } else {
+          line += " · Changes you save apply from tomorrow";
+        }
+      }
+      summary.textContent = line;
     }
     if (phase) {
       if (UI.$("#phase-current-label")) {
@@ -4473,7 +4497,7 @@ const App = (() => {
     });
     UI.$("#np-save").addEventListener("click", () => {
       const today = Ledger.todayKey();
-      const effectiveDay = phaseTargetsDeferred(today) ? Analytics.addDays(today, 1) : today;
+      const effectiveDay = phaseEditorDay(today);
       const nextSettings = cloneLocalData(state.settings);
       Phases.ensureMigrated(nextSettings, Phases.earliestDayFromEvents(Ledger.allEvents()), today);
       const nextGoals = {
@@ -4495,7 +4519,7 @@ const App = (() => {
         return;
       }
       const nextKind = selectedNewPhaseKind();
-      const currentKind = currentPhaseKind(today);
+      const currentKind = currentPhaseKind(effectiveDay);
       const deferNote = effectiveDay !== today ? " · effective tomorrow" : "";
       try {
         if (nextKind === currentKind) {
@@ -4509,8 +4533,13 @@ const App = (() => {
           UI.closeSheet("sheet-new-phase");
           refreshAll();
           syncSettingsForm();
-          if (!result) UI.toast("No changes");
-          else UI.toast(`Saved ${result.label}${deferNote}`);
+          if (!result) {
+            UI.toast(effectiveDay !== today
+              ? "No changes · tomorrow’s targets already match"
+              : "No changes");
+          } else {
+            UI.toast(`Saved ${result.label}${deferNote}`);
+          }
         } else {
           const started = Phases.startPhase(nextSettings, {
             kind: nextKind,
@@ -5488,7 +5517,7 @@ const App = (() => {
           UI.toast(eligibility.message || "Review your profile before applying an automated target");
           return;
         }
-        fillChangeTargetsSheet(next, currentPhaseKind(today));
+        fillChangeTargetsSheet(next, currentPhaseKind(phaseEditorDay(today)));
         UI.openSheet("sheet-new-phase");
         UI.toast(phaseTargetsDeferred(today)
           ? `Loaded ${next.kcal} kcal into Change targets · starts tomorrow`
