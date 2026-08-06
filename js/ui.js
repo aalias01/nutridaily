@@ -627,19 +627,26 @@ const UI = (() => {
               </div>
             </div>`
           : "";
-        return `<div class="log-row-stack${isExp ? " is-expanded" : ""}">
-          <button type="button" class="log-row${isExp ? " expanded" : ""}" data-action="toggle-entry" data-id="${esc(e.id)}">
-            <div class="r-top">
-              <div>
-                <div class="r-name">${esc(e.name)}${chrome.badge}</div>
-                <div class="r-qty">${esc(e.displayQty)}${t ? ` · ${esc(t)}` : ""}</div>
+        return `<div class="log-row-stack${isExp ? " is-expanded" : ""}" data-id="${esc(e.id)}">
+          <div class="log-row${isExp ? " expanded" : ""}">
+            <button type="button" class="log-row-main" data-action="toggle-entry" data-id="${esc(e.id)}">
+              <div class="r-top">
+                <div>
+                  <div class="r-name">${esc(e.name)}${chrome.badge}</div>
+                  <div class="r-qty">${esc(e.displayQty)}${t ? ` · ${esc(t)}` : ""}</div>
+                </div>
+                <div class="r-macros">
+                  <span class="mini">${fmt(e.macros.kcal)} kcal</span>
+                  <span class="mini">P ${esc(Number.isFinite(Number(e.macros && e.macros.p)) ? Number(e.macros.p) : "?")}</span>
+                </div>
               </div>
-              <div class="r-macros">
-                <span class="mini">${fmt(e.macros.kcal)} kcal</span>
-                <span class="mini">P ${esc(Number.isFinite(Number(e.macros && e.macros.p)) ? Number(e.macros.p) : "?")}</span>
-              </div>
-            </div>
-          </button>
+            </button>
+            <button type="button" class="log-row-delete" data-action="remove-entry" data-id="${esc(e.id)}" aria-label="Delete ${esc(e.name)}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+              </svg>
+            </button>
+          </div>
           ${expanded}
         </div>`;
       }).join("");
@@ -3606,7 +3613,7 @@ const UI = (() => {
     const root = $("#gap-plan-list");
     if (!root) return;
     if (!items || !items.length) {
-      root.innerHTML = `<div class="empty small">No plan items yet. Parse a GAP v1 reply.</div>`;
+      root.innerHTML = `<div class="empty small">Nothing planned yet. Add a food or fill remaining with AI.</div>`;
       return;
     }
     root.innerHTML = items.map((it) => {
@@ -3618,10 +3625,13 @@ const UI = (() => {
         ? `<span class="gap-macros-extra"> · ${esc(it.macrosExtra)}</span>`
         : "";
       return `
-        <button type="button" class="gap-plan-item${logged ? " logged" : ""}" data-action="log-gap-item" data-id="${esc(it.id)}" ${logged ? "disabled" : ""}>
-          <div class="r-name">${esc(it.name)}</div>
-          <div class="r-qty">${esc(head)}${macros ? ` · ${esc(macros)}` : ""}${extra}${logged ? " · logged" : ""}</div>
-        </button>`;
+        <div class="gap-plan-row">
+          <button type="button" class="gap-plan-item${logged ? " logged" : ""}" data-action="log-gap-item" data-id="${esc(it.id)}" ${logged ? "disabled" : ""}>
+            <div class="r-name">${esc(it.name)}</div>
+            <div class="r-qty">${esc(head)}${macros ? ` · ${esc(macros)}` : ""}${extra}${logged ? " · logged" : ""}</div>
+          </button>
+          ${logged ? "" : `<button type="button" class="linkbtn danger gap-plan-remove" data-action="remove-gap-item" data-id="${esc(it.id)}" aria-label="Remove ${esc(it.name)} from plan">Remove</button>`}
+        </div>`;
     }).join("");
   }
 

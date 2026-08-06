@@ -197,6 +197,25 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 12px 14px; margin-bottom: 8px; box-shadow: var(--shadow); color: inherit; font: inherit;
 }
+.log-row {
+  gap: 2px;
+  padding: 4px 4px 4px 14px;
+  cursor: default;
+}
+.log-row-main {
+  flex: 1; min-width: 0; display: block;
+  border: none; background: transparent; color: inherit; font: inherit;
+  text-align: left; cursor: pointer; padding: 8px 6px 8px 0;
+  border-radius: calc(var(--radius) - 2px);
+}
+.log-row-delete {
+  flex-shrink: 0; width: 42px; min-height: 42px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--muted);
+  border-radius: calc(var(--radius) - 2px); cursor: pointer; padding: 0;
+}
+.log-row-delete:hover, .log-row-delete:focus-visible { color: var(--danger); background: rgba(192, 68, 46, 0.08); }
+.log-row-delete:active { transform: scale(0.96); }
 .r-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; }
 .r-name { font-weight: 600; font-size: 14px; }
 .r-qty { color: var(--muted); font-size: 12px; margin-top: 2px; }
@@ -817,15 +836,22 @@ body.sheet-open .insight-dock { display: none; }
 .gap-proj-metric.flag .gap-proj-v { color: var(--warn); }
 .gap-macros-extra { color: var(--muted); }
 .gap-plan-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
+.gap-plan-row {
+  display: flex; align-items: stretch; gap: 6px;
+}
 .gap-plan-item {
   border: 1px solid var(--line); border-radius: 12px;
-  padding: 12px; background: var(--card); text-align: left; width: 100%;
+  padding: 12px; background: var(--card); text-align: left; flex: 1; min-width: 0;
   cursor: pointer; color: inherit;
 }
 .gap-plan-item:disabled { opacity: 0.55; cursor: default; }
 .gap-plan-item .r-name { font-weight: 650; margin: 0 0 2px; }
 .gap-plan-item .r-qty { color: var(--muted); font-size: 12.5px; }
 .gap-plan-item.logged { opacity: 0.55; }
+.gap-plan-remove {
+  flex: 0 0 auto; align-self: center; padding: 8px 6px; min-height: 44px;
+  font-size: 12.5px; white-space: nowrap;
+}
 #gap-paste { width: 100%; margin: 10px 0; }
 #gap-food-search { width: 100%; margin: 6px 0 4px; }
 .phase-meta-grid {

@@ -1882,6 +1882,35 @@ const App = (() => {
     state.gapPendingDay = day;
   }
 
+  function removeGapPlanItem(itemId) {
+    const day = state.viewDay;
+    const plan = dayPlan(day);
+    if (!plan || !itemId) return;
+    const items = Array.isArray(plan.items) ? plan.items : [];
+    const target = items.find((it) => it && it.id === itemId);
+    if (!target || target.status === "logged") {
+      UI.toast("That plan item is already logged");
+      return;
+    }
+    const nextItems = items.filter((it) => it && it.id !== itemId);
+    if (!nextItems.length) {
+      // Empty plan → tombstone so the Planner chip clears.
+      try { saveDayPlan(day, null); }
+      catch (error) { UI.toast("Couldn’t remove from plan — nothing changed"); return; }
+      showGapSheetStep("plan");
+      UI.toast("Removed from plan");
+      return;
+    }
+    const next = cloneLocalData(plan);
+    next.items = nextItems;
+    next.projected = projectPlanFromItems(day, nextItems, state.personalFoods);
+    next.updatedAt = Date.now();
+    try { saveDayPlan(day, next); }
+    catch (error) { UI.toast("Couldn’t remove from plan — nothing changed"); return; }
+    showGapSheetStep("plan");
+    UI.toast("Removed from plan");
+  }
+
   function clearGapPlan() {
     if (!dayPlan(state.viewDay) && !(state.settings.gapDrafts && state.settings.gapDrafts[state.viewDay])) return;
     if (!confirm("Clear this day’s food plan?")) return;
@@ -4681,6 +4710,12 @@ const App = (() => {
     }
     if (UI.$("#gap-plan-list")) {
       UI.$("#gap-plan-list").addEventListener("click", (e) => {
+        const removeBtn = e.target.closest("[data-action='remove-gap-item']");
+        if (removeBtn) {
+          e.preventDefault();
+          removeGapPlanItem(removeBtn.dataset.id);
+          return;
+        }
         const btn = e.target.closest("[data-action='log-gap-item']");
         if (!btn || btn.disabled) return;
         openGapItemQty(btn.dataset.id);
@@ -6026,6 +6061,10 @@ const App = (() => {
           switchView("today");
         }
         openQtyFromEntry(entry, { allowRemove: true });
+      } else if (action === "remove-entry") {
+        const day = actionEl.dataset.day || state.viewDay;
+        if (!Ledger.entriesFor(day).some((x) => x.id === id)) return;
+        removeEntryWithUndo(day, id);
       } else if (action === "promote-once") {
         const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);
         if (!entry) return;
