@@ -88,7 +88,6 @@ const Analytics = (() => {
    * @param {Function} opts.goalsForDay     day → resolved goals for that day
    * @param {Function} [opts.weightKgForDay] day → body weight in kg (or null)
    * @param {Function} [opts.dayPlanForDay] day → calorie-plan record | null
-   * @param {Function} [opts.bumpForDay] legacy alias of dayPlanForDay (one release)
    * @param {Function} [opts.firstAddAt] day → immutable first-add timestamp | null
    * @returns {Array<Object>} rows: { day, dow, weekend, logged, intent,
    *   accounted, itemCount, kcal, protein, carbs, fat, fiber, sodium, goals,
@@ -100,7 +99,7 @@ const Analytics = (() => {
     const totalsForDay = o.totalsForDay || (() => null);
     const goalsForDay = o.goalsForDay || (() => ({}));
     const weightKgForDay = o.weightKgForDay || (() => null);
-    const dayPlanForDay = o.dayPlanForDay || o.bumpForDay || (() => null);
+    const dayPlanForDay = o.dayPlanForDay || (() => null);
     const firstAddAt = o.firstAddAt || (() => null);
 
     return keys.map((day) => {
@@ -1518,9 +1517,8 @@ const Analytics = (() => {
    *
    * Accepts only `{ dayPlan, firstAddAt?, intent? }`. `dayPlan` must be present
    * as an own property (may be null → `"legacy"`). No duck-typing of wrapper
-   * vs record, and no legacy `bump` key — the only authorised one-release
-   * alias is `opts.bumpForDay` on `buildDays`. `declaredAfterDay` is read only
-   * from the plan record, not from the wrapper.
+   * vs record, and no legacy plan-opt aliases on `buildDays`.
+   * `declaredAfterDay` is read only from the plan record, not from the wrapper.
    *
    * @returns {"planned"|"declaredLate"|"unlogged"|"legacy"}
    */

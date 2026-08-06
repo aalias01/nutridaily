@@ -214,9 +214,9 @@ const App = (() => {
     const btn = UI.$("#btn-day-goals");
     if (!btn) return;
     const resolved = Phases.goalsForDay(state.viewDay, state.settings);
-    const bumps = resolved && resolved._dayPlan;
-    const isFast = !!(bumps && bumps.intent === "fast");
-    const kcal = Number(bumps && bumps.kcal);
+    const dayPlan = resolved && resolved._dayPlan;
+    const isFast = !!(dayPlan && dayPlan.intent === "fast");
+    const kcal = Number(dayPlan && dayPlan.kcal);
     const hasPlan = isFast || (Number.isFinite(kcal) && kcal !== 0);
     const reducedWin = Phases.dayIntentWindow(state.viewDay, {
       todayKey: Ledger.todayKey(),
@@ -859,6 +859,19 @@ const App = (() => {
 
   function isToday() { return state.viewDay === Ledger.todayKey(); }
 
+  /** Soft confirm when creating a new log on a past or future day. Edits skip. */
+  function confirmOffTodayLog(day) {
+    if (state.editEntryId) return true;
+    const today = Ledger.todayKey();
+    if (!day || day === today) return true;
+    const d = new Date(day + "T12:00:00");
+    const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    const relative = day > today
+      ? "that’s tomorrow, not today"
+      : "that’s not today (past day)";
+    return confirm(`You’re logging on ${label} — ${relative}.\n\nLog it anyway?`);
+  }
+
   function yesterdayKey() {
     const d = new Date(state.viewDay + "T12:00:00");
     d.setDate(d.getDate() - 1);
@@ -878,6 +891,7 @@ const App = (() => {
       todayKey: Ledger.todayKey(),
     });
     UI.setDayLabel(state.viewDay, isToday(), {
+      todayKey: Ledger.todayKey(),
       disableNext: state.viewDay >= dayAfter(Ledger.todayKey()),
     });
   }
@@ -2052,6 +2066,7 @@ const App = (() => {
     const producerError = validateProducerEntry(entry);
     if (producerError) { UI.setOnceErrors([producerError]); return; }
     const day = editDay();
+    if (!confirmOffTodayLog(day)) return;
     try {
       if (state.editEntryId) {
         Ledger.amendEntry(day, state.editEntryId, entry, entry.source === "quick" ? "quick kcal edited" : "one-off edited");
@@ -2475,6 +2490,7 @@ const App = (() => {
 
     const gapItemId = state.gapPendingItemId;
     const day = gapItemId ? (state.gapPendingDay || editDay()) : editDay();
+    if (!confirmOffTodayLog(day)) return;
     let loggedEntryId = null;
     let nextPersonal = cloneLocalData(state.personalFoods);
     if (!state.editEntryId) {
@@ -2837,6 +2853,7 @@ const App = (() => {
     }, grams, "g", meal);
     const producerError = validateProducerEntry(entry);
     if (producerError) { UI.toast(producerError); return; }
+    if (!confirmOffTodayLog(day)) return;
     try {
       if (state.editEntryId) {
         Ledger.amendEntry(day, state.editEntryId, entry, "one-off from estimate");
@@ -5134,9 +5151,9 @@ const App = (() => {
     };
     const openDayGoalsSheet = () => {
       const g = Phases.goalsForDay(state.viewDay, state.settings);
-      const bumps = g && g._dayPlan;
-      const isFast = !!(bumps && bumps.intent === "fast");
-      const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
+      const dayPlan = g && g._dayPlan;
+      const isFast = !!(dayPlan && dayPlan.intent === "fast");
+      const hasReduced = !!(dayPlan && Number.isFinite(Number(dayPlan.kcal)) && Number(dayPlan.kcal) !== 0);
       // Always open: Mark incomplete is independent of day-plan authorship windows.
       // Plan edits still gate at intent switch / Save via toastIfBlocked.
       const phase = Phases.phaseForDay(state.settings.phases, state.viewDay);
@@ -5202,9 +5219,9 @@ const App = (() => {
         if (!btn) return;
         const intent = btn.dataset.dgIntent;
         const g = Phases.goalsForDay(state.viewDay, state.settings);
-        const bumps = g && g._dayPlan;
-        const isFast = !!(bumps && bumps.intent === "fast");
-        const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
+        const dayPlan = g && g._dayPlan;
+        const isFast = !!(dayPlan && dayPlan.intent === "fast");
+        const hasReduced = !!(dayPlan && Number.isFinite(Number(dayPlan.kcal)) && Number(dayPlan.kcal) !== 0);
         if (intent === "reduced" && !guardDayIntent("reduced").ok) {
           UI.toast(guardDayIntent("reduced").reason || "Reduced plans are locked for this day.");
           return;
@@ -5315,9 +5332,9 @@ const App = (() => {
       const nextSettings = cloneLocalData(state.settings);
       if (!nextSettings.dayGoals || typeof nextSettings.dayGoals !== "object") nextSettings.dayGoals = {};
       const now = Date.now();
-      const bumps = Phases.goalsForDay(state.viewDay, state.settings)._dayPlan;
-      const isFastPlan = !!(bumps && bumps.intent === "fast");
-      const hasReducedPlan = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
+      const dayPlan = Phases.goalsForDay(state.viewDay, state.settings)._dayPlan;
+      const isFastPlan = !!(dayPlan && dayPlan.intent === "fast");
+      const hasReducedPlan = !!(dayPlan && Number.isFinite(Number(dayPlan.kcal)) && Number(dayPlan.kcal) !== 0);
 
       if (intent === "normal") {
         // Same clear ladder as #dg-clear — Fast grace must not unlock a
@@ -5408,9 +5425,9 @@ const App = (() => {
     });
     UI.$("#dg-clear").addEventListener("click", () => {
       const g = Phases.goalsForDay(state.viewDay, state.settings);
-      const bumps = g && g._dayPlan;
-      const isFast = !!(bumps && bumps.intent === "fast");
-      const hasReduced = !!(bumps && Number.isFinite(Number(bumps.kcal)) && Number(bumps.kcal) !== 0);
+      const dayPlan = g && g._dayPlan;
+      const isFast = !!(dayPlan && dayPlan.intent === "fast");
+      const hasReduced = !!(dayPlan && Number.isFinite(Number(dayPlan.kcal)) && Number(dayPlan.kcal) !== 0);
       // Clearing follows the plan on the day: a locked Reduced plan cannot be
       // cleared just because the Fast grace window is still open.
       if (isFast) {

@@ -209,8 +209,35 @@ const UI = (() => {
     const d = new Date(dayKey + "T12:00:00");
     const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     const btn = $("#day-label");
-    btn.textContent = isToday ? `${label} · today` : `${label} · tap for today`;
-    btn.classList.toggle("is-today", !!isToday);
+    const todayKey = (opts && opts.todayKey)
+      || (typeof Ledger !== "undefined" && Ledger.todayKey ? Ledger.todayKey() : null);
+    let relation = "today";
+    if (todayKey && dayKey !== todayKey) {
+      relation = dayKey > todayKey ? "future" : "past";
+    } else if (!isToday) {
+      relation = "past";
+    }
+    let suffix;
+    if (relation === "today") {
+      suffix = "today";
+    } else if (relation === "future") {
+      suffix = "tomorrow · tap for today";
+    } else {
+      // Past: prefer "yesterday" when adjacent.
+      let yesterday = null;
+      if (todayKey) {
+        const y = new Date(todayKey + "T12:00:00");
+        y.setDate(y.getDate() - 1);
+        yesterday = typeof Ledger !== "undefined" && Ledger.todayKey
+          ? Ledger.todayKey(y)
+          : y.toISOString().slice(0, 10);
+      }
+      suffix = dayKey === yesterday ? "yesterday · tap for today" : "past · tap for today";
+    }
+    btn.textContent = `${label} · ${suffix}`;
+    btn.classList.toggle("is-today", relation === "today");
+    btn.classList.toggle("is-past", relation === "past");
+    btn.classList.toggle("is-future", relation === "future");
     // Default remains today-only; callers that allow §10 plan-ahead pass
     // disableNext when viewDay has reached tomorrow.
     const disableNext = opts && Object.prototype.hasOwnProperty.call(opts, "disableNext")
