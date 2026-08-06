@@ -60,6 +60,7 @@ const App = (() => {
     gapStep: "select",
     gapPortionCache: null, // Map foodId -> portionStats for select list
     qtyIntent: "log", // "log" | "plan" — qty sheet saves to ledger or dayPlans
+    offTodayAckDay: null, // YYYY-MM-DD: off-today warn already accepted for this day
   };
 
   function parseAmount(v) {
@@ -860,11 +861,16 @@ const App = (() => {
 
   function isToday() { return state.viewDay === Ledger.todayKey(); }
 
-  /** Soft confirm when creating a new log/plan item on a past or future day. Edits skip. */
+  /**
+   * Soft confirm when creating a new log/plan item on a past or future day.
+   * Edits skip. After the user accepts once for a day, further logs/plans on
+   * that same day skip the prompt until they switch to a different day.
+   */
   function confirmOffTodayLog(day) {
     if (state.editEntryId) return true;
     const today = Ledger.todayKey();
     if (!day || day === today) return true;
+    if (state.offTodayAckDay === day) return true;
     const d = new Date(day + "T12:00:00");
     const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     const relative = day > today
@@ -873,7 +879,9 @@ const App = (() => {
     const planning = state.qtyIntent === "plan";
     const verb = planning ? "planning" : "logging";
     const cta = planning ? "Add it anyway?" : "Log it anyway?";
-    return confirm(`You’re ${verb} on ${label} — ${relative}.\n\n${cta}`);
+    if (!confirm(`You’re ${verb} on ${label} — ${relative}.\n\n${cta}`)) return false;
+    state.offTodayAckDay = day;
+    return true;
   }
 
   function yesterdayKey() {
