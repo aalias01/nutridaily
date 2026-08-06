@@ -485,8 +485,15 @@ body.sheet-open .insight-dock { display: none; }
   margin: 0 0 6px;
 }
 .multi-qty-row .multi-qty-input {
+  /* placeholder — overridden below with higher specificity vs sheet-card text inputs */
   width: 4.75rem;
+}
+/* Beat `.sheet-card input[type="text"] { width: 100% }` which was forcing the full bar. */
+#sheet-multi-qty .multi-qty-input {
+  width: 4.75rem;
+  max-width: 5.5rem;
   flex: 0 0 auto;
+  box-sizing: border-box;
   font-size: 16px;
   font-weight: 650;
   text-align: left;
@@ -517,7 +524,8 @@ body.sheet-open .insight-dock { display: none; }
   font-weight: 600;
   color: var(--muted);
 }
-/* Fixed height like #sheet-add: title/actions stay put; only the food list scrolls. */
+/* Fixed height like #sheet-add: title/actions stay put; only the food list scrolls.
+   When the keyboard opens, JS lifts/resizes the card to the visual viewport. */
 #sheet-multi-qty .sheet-card {
   display: flex;
   flex-direction: column;
@@ -530,6 +538,8 @@ body.sheet-open .insight-dock { display: none; }
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+  padding-bottom: 28px;
+  -webkit-overflow-scrolling: touch;
 }
 #sheet-multi-qty #multi-qty-actions { margin-top: 2px; }
 #sheet-multi-qty h3 { text-align: left; margin: 0 0 4px; }

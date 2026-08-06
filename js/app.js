@@ -1674,7 +1674,57 @@ const App = (() => {
     if (saveBtn) saveBtn.textContent = state.qtyIntent === "plan" ? "Add all to plan" : "Log all";
     UI.renderMultiQtyList(state.multiQtyItems, imperial);
     UI.closeSheet("sheet-add");
-    UI.openSheet("sheet-multi-qty");
+    // noAutofocus: autofocusing the first amount field opens the keyboard and
+    // iOS scrolls the whole sheet up, hiding food names.
+    UI.openSheet("sheet-multi-qty", { noAutofocus: true });
+    fitMultiQtySheetToViewport();
+  }
+
+  function clearMultiQtySheetViewport() {
+    const card = UI.$("#sheet-multi-qty .sheet-card");
+    if (!card) return;
+    card.style.height = "";
+    card.style.maxHeight = "";
+    card.style.bottom = "";
+  }
+
+  /** Keep the amounts card inside the visible viewport above the soft keyboard. */
+  function fitMultiQtySheetToViewport() {
+    const sheet = UI.$("#sheet-multi-qty");
+    const card = sheet && sheet.querySelector(".sheet-card");
+    if (!sheet || !card || sheet.hidden) {
+      clearMultiQtySheetViewport();
+      return;
+    }
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const bottomGap = Math.max(0, Math.round(window.innerHeight - (vv.offsetTop + vv.height)));
+    const keyboardOpen = bottomGap > 48 || vv.height < window.innerHeight * 0.82;
+    if (!keyboardOpen) {
+      clearMultiQtySheetViewport();
+      return;
+    }
+    const h = Math.max(220, Math.floor(vv.height));
+    card.style.bottom = `${bottomGap}px`;
+    card.style.height = `${h}px`;
+    card.style.maxHeight = `${h}px`;
+  }
+
+  function scrollMultiQtyRowIntoView(target) {
+    const row = target && target.closest && target.closest(".multi-qty-row");
+    const list = UI.$("#multi-qty-list");
+    if (!row || !list) return;
+    // After viewport resize, bring the focused row fully into the list window.
+    requestAnimationFrame(() => {
+      fitMultiQtySheetToViewport();
+      const listRect = list.getBoundingClientRect();
+      const rowRect = row.getBoundingClientRect();
+      if (rowRect.top < listRect.top + 8) {
+        list.scrollTop -= (listRect.top + 8) - rowRect.top;
+      } else if (rowRect.bottom > listRect.bottom - 8) {
+        list.scrollTop += rowRect.bottom - (listRect.bottom - 8);
+      }
+    });
   }
 
   function continueMultiPick() {
@@ -1834,6 +1884,7 @@ const App = (() => {
       }
       Sync.schedulePush();
       UI.closeSheet("sheet-multi-qty");
+      clearMultiQtySheetViewport();
       clearMultiPickFlow();
       resetQtyState();
       refreshDay();
@@ -1864,6 +1915,7 @@ const App = (() => {
     }
     Sync.schedulePush();
     UI.closeSheet("sheet-multi-qty");
+    clearMultiQtySheetViewport();
     clearMultiPickFlow();
     resetQtyState();
     refreshDay();
@@ -5412,6 +5464,7 @@ const App = (() => {
         state.multiPick = nextPick;
         state.pickMode = "multi";
         UI.closeSheet("sheet-multi-qty");
+        clearMultiQtySheetViewport();
         openAddSheet({ keepMulti: true, keepSearch: true });
       });
     }
@@ -5419,6 +5472,7 @@ const App = (() => {
       UI.$("#multi-qty-cancel").addEventListener("click", () => {
         const wasPlan = state.qtyIntent === "plan";
         UI.closeSheet("sheet-multi-qty");
+        clearMultiQtySheetViewport();
         clearMultiPickFlow();
         resetQtyState();
         if (wasPlan) openGapSheet({ plan: true });
@@ -5433,6 +5487,11 @@ const App = (() => {
         const item = state.multiQtyItems.find((it) => it.key === key);
         if (!item) return;
         UI.updateMultiRowPreview(row, item.food, !!state.settings.imperial);
+      });
+      UI.$("#multi-qty-list").addEventListener("focusin", (e) => {
+        if (!e.target.closest("[data-multi-qty]")) return;
+        fitMultiQtySheetToViewport();
+        scrollMultiQtyRowIntoView(e.target);
       });
       UI.$("#multi-qty-list").addEventListener("click", (e) => {
         const fullBtn = e.target.closest("[data-action='multi-full-qty']");
@@ -5486,6 +5545,18 @@ const App = (() => {
           if (item) UI.updateMultiRowPreview(row, item.food, !!state.settings.imperial);
         }
       });
+    }
+    if (window.visualViewport) {
+      const onMultiViewport = () => {
+        if (UI.topSheetId() !== "sheet-multi-qty") return;
+        fitMultiQtySheetToViewport();
+        const active = document.activeElement;
+        if (active && active.matches && active.matches("#multi-qty-list [data-multi-qty]")) {
+          scrollMultiQtyRowIntoView(active);
+        }
+      };
+      window.visualViewport.addEventListener("resize", onMultiViewport);
+      window.visualViewport.addEventListener("scroll", onMultiViewport);
     }
     UI.$("#day-label").addEventListener("click", jumpToToday);
     const guardDayIntent = (intent) => {
@@ -6464,6 +6535,7 @@ const App = (() => {
         }
         if (sheetId === "sheet-multi-qty") {
           const wasPlan = state.qtyIntent === "plan";
+          clearMultiQtySheetViewport();
           clearMultiPickFlow();
           resetQtyState();
           if (wasPlan) openGapSheet({ plan: true });
@@ -6660,6 +6732,7 @@ const App = (() => {
       }
       if (top === "sheet-multi-qty") {
         const wasPlan = state.qtyIntent === "plan";
+        clearMultiQtySheetViewport();
         clearMultiPickFlow();
         resetQtyState();
         if (wasPlan) openGapSheet({ plan: true });
