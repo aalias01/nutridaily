@@ -1981,6 +1981,7 @@ const App = (() => {
       refreshDriveStatus();
       refreshInstallCard();
       refreshSettingsTabNudge();
+      refreshFeedbackCard();
     }
   }
 
@@ -6157,6 +6158,8 @@ const App = (() => {
       if (f) importData(f);
       e.target.value = "";
     });
+    const fbBtn = UI.$("#btn-settings-feedback");
+    if (fbBtn) fbBtn.addEventListener("click", openFeedback);
     UI.$("#btn-clear").addEventListener("click", () => {
       if (!confirm("Clear foods and meal logs on this device? Phases, weight, and settings stay. If Drive sync is on, the cloud copy of logs/foods will be wiped on the next sync.")) return;
       const nextSettings = cloneLocalData(state.settings);
@@ -6409,10 +6412,31 @@ const App = (() => {
     })().catch(() => {});
   }
 
+  function refreshFeedbackCard() {
+    const card = UI.$("#feedback-card");
+    if (!card) return;
+    card.hidden = !(window.Feedback && Feedback.enabled());
+  }
+
+  function openFeedback() {
+    if (!window.Feedback || !Feedback.enabled()) return;
+    const st = Sync.state();
+    const active = document.querySelector(".bottom-tabs .tab.active");
+    Feedback.open({
+      screen: (active && active.dataset.view) || "settings",
+      viewDate: state.viewDay || Ledger.todayKey(),
+      syncEnabled: !!st.enabled,
+      sampleLoaded: false,
+      version: "nutridaily-v63",
+      prefillEmail: (st.enabled && st.email) ? st.email : "",
+    }, () => {});
+  }
+
   function boot() {
     installPersistenceErrorUx();
     loadState();
     wire();
+    refreshFeedbackCard();
     refreshPromptShareButtons();
     window.addEventListener("beforeinstallprompt", (ev) => {
       ev.preventDefault();

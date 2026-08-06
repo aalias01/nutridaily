@@ -311,6 +311,12 @@
           <button id="btn-factory-reset" class="btn ghost danger" type="button">Start fresh</button>
         </div>
 
+        <div class="card-block about-card" id="feedback-card" hidden>
+          <h3>Feedback</h3>
+          <p class="muted small">Report a bug or something confusing. Optional screenshot; you can cover personal details before sending.</p>
+          <button type="button" class="btn" id="btn-settings-feedback">Report a problem</button>
+        </div>
+
         <div class="card-block about-card">
           <h3>About NutriDaily</h3>
           <p class="muted small">Personal nutrition tracker. Common foods use USDA-style reference averages; homemade dishes come from a NUTRI import you review. Log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
@@ -840,6 +846,8 @@ END</pre>
 <script src="js/gap-prompt.js"></script>
 <script src="js/gdrive.js"></script>
 <script src="js/sync.js"></script>
+<script src="js/redact.js"></script>
+<script src="js/feedback.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/app.js"></script>
 </body>
