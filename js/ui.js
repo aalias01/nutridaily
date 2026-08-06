@@ -2519,6 +2519,12 @@ const UI = (() => {
         if (el) el.hidden = true;
       }
       if (dow) dow.hidden = true;
+      // Day-one: no floating dock over an empty view (P5-N4 / P6-N9).
+      const dock = $("#insight-dock");
+      if (dock) dock.hidden = true;
+      if (typeof document !== "undefined" && document.body) {
+        document.body.classList.remove("has-insight-dock");
+      }
       return;
     }
     for (const id of sectionIds) {
@@ -2527,6 +2533,14 @@ const UI = (() => {
       if (el) el.hidden = false;
     }
     if (dow) dow.hidden = false;
+    // Restore dock after empty→thin/full in the same Insights visit.
+    const insightsView = typeof document !== "undefined"
+      ? document.getElementById("view-insights") : null;
+    if (insightsView && insightsView.classList.contains("active")) {
+      const dock = $("#insight-dock");
+      if (dock) dock.hidden = false;
+      document.body.classList.add("has-insight-dock");
+    }
     if (ctx.maturity === "thin") {
       for (const id of ["section-energy", "section-composition", "section-compare"]) {
         const el = $("#" + id);
@@ -2541,6 +2555,7 @@ const UI = (() => {
    * active pill into the horizontal lane (P6-T5). Status is filled / ring /
    * hollow via data-dock-status — never colour alone — and named in aria-label.
    */
+  let _dockScrolledNutrient = null;
   function syncDockPills(ctx, scorecard) {
     const nutPills = $("#insight-nutrient");
     if (!nutPills) return;
@@ -2549,6 +2564,8 @@ const UI = (() => {
       if (n && n.key) byKey[n.key] = n;
     }
     const buttons = [...nutPills.querySelectorAll("[data-nutrient]")];
+    const focusEl = typeof document !== "undefined" ? document.activeElement : null;
+    const focusInDock = !!(focusEl && nutPills.contains(focusEl) && focusEl.dataset && focusEl.dataset.nutrient);
     let activeBtn = null;
     for (const b of buttons) {
       if (!b.dataset.dockName) {
@@ -2571,10 +2588,17 @@ const UI = (() => {
       b.classList.toggle("active", on);
       b.setAttribute("aria-pressed", String(on));
       b.setAttribute("aria-label", `${name}, ${detail}`);
-      b.tabIndex = on ? 0 : -1;
+      // Keep the tab stop with keyboard focus while arrows browse (P6-N6);
+      // fall back to the active pill when focus is outside the toolbar.
+      if (focusInDock) b.tabIndex = b === focusEl ? 0 : -1;
+      else b.tabIndex = on ? 0 : -1;
       if (on) activeBtn = b;
     }
-    if (activeBtn && typeof activeBtn.scrollIntoView === "function") {
+    // Scroll only when the selected nutrient changes (P6-N5) — not on every
+    // range/rollup re-render that would yank a manual horizontal scroll.
+    if (activeBtn && ctx.nutrient !== _dockScrolledNutrient &&
+        typeof activeBtn.scrollIntoView === "function") {
+      _dockScrolledNutrient = ctx.nutrient;
       const reduce = typeof window.matchMedia === "function"
         && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       activeBtn.scrollIntoView({
@@ -2880,6 +2904,182 @@ const UI = (() => {
     root.innerHTML = MEALS.map((m) =>
       `<button type="button" class="uchip${m === m0 ? " active" : ""}" data-meal="${m}" aria-pressed="${m === m0}">${m}</button>`
     ).join("");
+  }
+
+  const ONCE_CATS = ["dish", "snack", "bev"];
+  const ONCE_CONF = [
+    { id: "weighed", label: "Weighed / label" },
+    { id: "estimated", label: "Estimated portion" },
+    { id: "rough", label: "Rough guess" },
+  ];
+
+  /** Prefill #sheet-once from opts or clear for a new log. */
+  function fillOnceSheet(opts) {
+    const o = opts || {};
+    const entry = o.from || null;
+    const imperial = !!o.imperial;
+    const nameEl = $("#once-name");
+    const qtyEl = $("#once-qty");
+    const kcalEl = $("#once-kcal");
+    const macrosEl = $("#once-macros");
+    const nudge = $("#once-macro-nudge");
+    if (nameEl) nameEl.value = entry ? String(entry.name || "") : "";
+    fillMealChips("#once-meals", (entry && entry.meal) || o.meal || undefined);
+
+    let unit = entry && entry.unit === "oz" ? "oz"
+      : entry && entry.unit === "portion" ? "portion"
+      : entry && entry.unit === "g" ? "g"
+      : "portion";
+    if (unit === "oz" && !imperial) unit = "g";
+    const units = imperial ? ["g", "oz", "portion"] : ["g", "portion"];
+    const unitsRoot = $("#once-units");
+    if (unitsRoot) {
+      unitsRoot.innerHTML = units.map((u) =>
+        `<button type="button" class="uchip${u === unit ? " active" : ""}" data-unit="${u}" aria-pressed="${u === unit}">${u}</button>`
+      ).join("");
+    }
+    const qty = entry && Number.isFinite(Number(entry.qty)) && Number(entry.qty) > 0
+      ? entry.qty
+      : (unit === "portion" ? 1 : "");
+    if (qtyEl) qtyEl.value = qty === "" ? "" : String(qty);
+
+    const m = (entry && entry.macros) || {};
+    if (kcalEl) kcalEl.value = m.kcal != null && m.kcal !== "" ? String(m.kcal) : "";
+    const setMacro = (id, v) => {
+      const el = $(id);
+      if (!el) return;
+      el.value = (v == null || v === "") ? "" : String(v);
+    };
+    setMacro("#once-p", m.p);
+    setMacro("#once-c", m.c);
+    setMacro("#once-f", m.f);
+    setMacro("#once-fb", m.fb);
+    setMacro("#once-na", m.na);
+    setMacro("#once-k", m.k);
+
+    const macrosOpened = !!(o.macrosOpened
+      || (entry && (
+        Number(m.p) > 0 || Number(m.c) > 0 || Number(m.f) > 0 || Number(m.fb) > 0
+        || m.na != null || m.k != null
+      )));
+    if (macrosEl) macrosEl.open = macrosOpened;
+    if (nudge) nudge.hidden = macrosOpened;
+
+    const cat = (entry && entry.cat) || "dish";
+    const cats = $("#once-cats");
+    if (cats) {
+      cats.innerHTML = ONCE_CATS.map((c) =>
+        `<button type="button" class="uchip${c === cat ? " active" : ""}" data-cat="${c}" aria-pressed="${c === cat}">${c}</button>`
+      ).join("");
+    }
+
+    let conf = o.confidence || "estimated";
+    if (!o.confidence && entry && Number.isFinite(Number(entry.sd))) {
+      const sd = Number(entry.sd);
+      if (sd <= 0.10) conf = "weighed";
+      else if (sd >= 0.40) conf = "rough";
+      else conf = "estimated";
+    }
+    const confRoot = $("#once-confidence");
+    if (confRoot) {
+      confRoot.innerHTML = ONCE_CONF.map((c) =>
+        `<button type="button" class="uchip${c.id === conf ? " active" : ""}" data-confidence="${c.id}" aria-pressed="${c.id === conf}">${esc(c.label)}</button>`
+      ).join("");
+    }
+
+    setOnceErrors([]);
+    const rem = $("#once-remove");
+    if (rem) rem.hidden = !o.allowRemove;
+  }
+
+  function selectedOnceChip(rootSel, attr) {
+    const el = $(`${rootSel} .uchip.active`);
+    return el && el.getAttribute(attr) || null;
+  }
+
+  function selectedOnceUnit() {
+    return selectedOnceChip("#once-units", "data-unit") || "portion";
+  }
+
+  function selectedOnceCat() {
+    return selectedOnceChip("#once-cats", "data-cat") || "dish";
+  }
+
+  function selectedOnceConfidence() {
+    return selectedOnceChip("#once-confidence", "data-confidence") || "estimated";
+  }
+
+  /**
+   * Read #sheet-once into a draft for Foods.entryFromOnceDraft.
+   * Returns { ok, errors[], draft?, qty, unit, meal } — draft only when ok.
+   */
+  function readOnceDraft() {
+    const errors = [];
+    const name = ($("#once-name") && $("#once-name").value || "").trim();
+    if (!name) errors.push("Name is required");
+
+    const unit = selectedOnceUnit();
+    const qtyParsed = parseNutrientNumber($("#once-qty") && $("#once-qty").value);
+    if (!qtyParsed.ok || qtyParsed.blank || !(qtyParsed.value > 0)) {
+      errors.push(unit === "portion" ? "Enter how many portions" : "Enter a portion amount");
+    }
+
+    const kcalParsed = parseNutrientNumber($("#once-kcal") && $("#once-kcal").value);
+    if (!kcalParsed.ok || kcalParsed.blank || !(kcalParsed.value > 0)) {
+      errors.push("Calories for that portion are required");
+    }
+
+    const macrosOpen = !!( $("#once-macros") && $("#once-macros").open );
+    const field = (id, nullable) => parseNutrientNumber($(id) && $(id).value, { nullable: !!nullable });
+    const p = field("#once-p"); const c = field("#once-c"); const f = field("#once-f");
+    const fb = field("#once-fb"); const na = field("#once-na", true); const k = field("#once-k", true);
+    const macroChecks = [
+      ["Protein", p], ["Carbs", c], ["Fat", f], ["Fiber", fb], ["Sodium", na], ["Potassium", k],
+    ];
+    for (const [label, parsed] of macroChecks) {
+      if (!parsed.ok) errors.push(`${label} must be a number`);
+      else if (parsed.value != null && parsed.value < 0) errors.push(`${label} can't be negative`);
+    }
+
+    if (errors.length) return { ok: false, errors };
+
+    return {
+      ok: true,
+      errors: [],
+      qty: qtyParsed.value,
+      unit,
+      meal: selectedMealIn("#once-meals"),
+      draft: {
+        name,
+        cat: selectedOnceCat(),
+        confidence: selectedOnceConfidence(),
+        macrosOpened: macrosOpen,
+        macros: {
+          kcal: kcalParsed.value,
+          p: p.value || 0,
+          c: c.value || 0,
+          f: f.value || 0,
+          fb: fb.value || 0,
+          na: na.value,
+          k: k.value,
+        },
+      },
+    };
+  }
+
+  function setOnceErrors(list) {
+    const el = $("#once-errors");
+    if (!el) return;
+    const msgs = (list || []).filter(Boolean);
+    if (!msgs.length) { el.hidden = true; el.textContent = ""; return; }
+    el.hidden = false;
+    el.textContent = msgs.join(" · ");
+  }
+
+  function syncOnceMacroNudge() {
+    const nudge = $("#once-macro-nudge");
+    const macros = $("#once-macros");
+    if (nudge && macros) nudge.hidden = !!macros.open;
   }
 
   function setSyncPill(status, detail) {
@@ -3213,6 +3413,7 @@ const UI = (() => {
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft, parseNutrientNumber,
     syncReviewLogAsUI, renderFoodDetail,
+    fillOnceSheet, readOnceDraft, setOnceErrors, selectedOnceUnit, selectedOnceCat, selectedOnceConfidence, syncOnceMacroNudge,
     renderInsights, renderTrends, renderWeightTrend,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX,
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,

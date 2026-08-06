@@ -3834,6 +3834,199 @@ END`;
       "the real Analytics global is restored for every test after this block");
   }
 
+  console.log("\n[one-off] Step 0 — implausible entry.per100 must not brick sync (§3.1)");
+  {
+    // Forces the §3.1 / §5.2 decision: a one-off whose per100 was derived as
+    // totals*100/grams from a 1 g fat-finger must either never enter the ledger
+    // or round-trip through import normalize. Today Ledger.accepts and import
+    // throws on per100.kcal>920 — bricking the next settings save / Drive sync.
+    const day = "2026-08-05-once-landmine";
+    const macros = { kcal: 700, p: 40, c: 50, f: 30, fb: 5, na: 800, k: 600 };
+    const onceLandmine = {
+      id: "once-landmine",
+      name: "Dinner at Priya's",
+      displayQty: "1 g",
+      grams: 1,
+      qty: 1,
+      unit: "g",
+      meal: "dinner",
+      source: "once",
+      foodId: null,
+      macros,
+      // totals * 100 / grams — the exact derivation a save path would invent.
+      per100: {
+        kcal: macros.kcal * 100,
+        p: macros.p * 100,
+        c: macros.c * 100,
+        f: macros.f * 100,
+        fb: macros.fb * 100,
+        na: macros.na * 100,
+        k: macros.k * 100,
+      },
+      sd: 0.2,
+    };
+    ok(onceLandmine.per100.kcal === 70000,
+      "fixture models the §3.1 landmine (700 kcal on 1 g → per100.kcal 70000)");
+
+    let acceptedByLedger = false;
+    try {
+      Ledger.addEntry(day, onceLandmine);
+      acceptedByLedger = Ledger.entriesFor(day).some((e) => e && e.id === "once-landmine");
+    } catch (e) {
+      acceptedByLedger = false;
+    }
+
+    // Same absolute bounds App.normalizeImportedNutrition applies when
+    // per100: true (js/app.js normalizeImportedEntry → per100 path).
+    let survivesImportNormalize = false;
+    try {
+      const p = onceLandmine.per100;
+      if (!(p && Number.isFinite(p.kcal) && Number.isFinite(p.p) && Number.isFinite(p.c) &&
+          Number.isFinite(p.f) && Number.isFinite(p.fb))) {
+        throw new Error("per100 incomplete");
+      }
+      if (p.kcal > 920) throw new Error("per100.kcal is out of range");
+      if ((p.p + p.c + p.f) > 105) throw new Error("per100.p+c+f is out of range");
+      if (p.na != null && p.na > 40000) throw new Error("per100.na is out of range");
+      if (p.k != null && p.k > 60000) throw new Error("per100.k is out of range");
+      survivesImportNormalize = true;
+    } catch (e) {
+      survivesImportNormalize = false;
+    }
+
+    ok(!acceptedByLedger || survivesImportNormalize,
+      "one-off with implausible per100 never reaches the ledger, or survives import normalize (§3.1 / §5.2)",
+      acceptedByLedger
+        ? "ledger accepted the landmine; import normalize would throw and brick sync"
+        : "ledger rejected (ok) but import normalize also refused — unexpected");
+  }
+
+  console.log("\n[one-off] F1 — amendEntry per100 guard merges live source by id");
+  {
+    const day = "2026-08-05-once-amend-guard";
+    const base = Foods.entryFromOnceDraft({
+      name: "Dinner at Priya's",
+      macros: { kcal: 700, p: 40, c: 50, f: 30, fb: 5, na: null, k: null },
+      confidence: "estimated",
+      macrosOpened: true,
+    }, 1, "portion", "dinner");
+    base.id = "once-x";
+    Ledger.addEntry(day, base);
+    const before = Ledger.entriesFor(day).find((e) => e.id === "once-x");
+    ok(before && before.source === "once" && !Object.prototype.hasOwnProperty.call(before, "per100"),
+      "F1 fixture: live one-off has source once and no per100 key");
+
+    let threw = false;
+    let code = "";
+    try {
+      // Patch carries per100 and deliberately omits source — the old findEntry
+      // path always saw live=null and let this write through.
+      Ledger.amendEntry(day, "once-x", {
+        per100: { kcal: 70000, p: 1, c: 1, f: 1, fb: 1 },
+      }, "sneak");
+    } catch (e) {
+      threw = true;
+      code = e && e.code;
+    }
+    ok(threw && code === "ledger-once-per100",
+      "amendEntry rejects per100 on a live one-off even when the patch omits source",
+      `threw=${threw} code=${code}`);
+
+    const after = Ledger.entriesFor(day).find((e) => e.id === "once-x");
+    ok(after && after.source === "once" && after.macros.kcal === 700 &&
+        !Object.prototype.hasOwnProperty.call(after, "per100"),
+      "rejected amend leaves the one-off unchanged (still no per100)");
+  }
+
+  console.log("\n[one-off] Step 1 — entryFromOnceDraft + provenance");
+  {
+    const expectedKeys = [
+      "name", "foodId", "cat", "grams", "displayQty", "qty", "unit",
+      "macros", "sd", "meal", "source",
+    ].sort();
+    const once = Foods.entryFromOnceDraft({
+      name: "Pad thai",
+      macros: { kcal: 700, p: 30, c: 80, f: 25, fb: 4, na: null, k: null },
+      confidence: "estimated",
+      macrosOpened: true,
+    }, 1, "portion", "dinner");
+    ok(JSON.stringify(Object.keys(once).sort()) === JSON.stringify(expectedKeys),
+      "entryFromOnceDraft returns the full one-off key set (no per100)",
+      Object.keys(once).sort().join(","));
+    ok(!Object.prototype.hasOwnProperty.call(once, "per100") && once.source === "once" && once.foodId === null,
+      "one-off has source once, foodId null, and no per100 key");
+    ok(once.macros.na === null && once.macros.k === null,
+      "blank sodium/potassium stay null (unknown), never coerced to 0");
+    ok(once.grams === 0 && once.unit === "portion" && once.displayQty === "1 portion",
+      "unknown portion uses grams:0 and displayQty '1 portion'");
+    ok(FoodMatch.plausibility(once).length === 0,
+      "grams:0 portion one-off is clean under FoodMatch.plausibility");
+
+    const weighed = Foods.entryFromOnceDraft({
+      name: "Yogurt cup", macros: { kcal: 150, p: 15, c: 10, f: 2, fb: 0, na: 50, k: 200 },
+      confidence: "weighed", macrosOpened: true,
+    }, 170, "g", "snack");
+    ok(weighed.sd === 0.10, "weighed/label chip writes sd 0.10");
+    const rough = Foods.entryFromOnceDraft({
+      name: "Guess dinner", macros: { kcal: 800, p: 40, c: 70, f: 35, fb: 8 },
+      confidence: "rough", macrosOpened: true,
+    }, 1, "portion");
+    ok(rough.sd === 0.40, "rough-guess chip writes sd 0.40");
+    const estimated = Foods.entryFromOnceDraft({
+      name: "Normal plate", macros: { kcal: 600, p: 35, c: 50, f: 20, fb: 5 },
+      confidence: "estimated", macrosOpened: true,
+    }, 1, "portion");
+    ok(estimated.sd === 0.25, "estimated chip writes sd 0.25");
+    const kcalOnly = Foods.entryFromOnceDraft({
+      name: "Kcal only", macros: { kcal: 500 },
+      confidence: "weighed", macrosOpened: false,
+    }, 1, "portion");
+    ok(kcalOnly.sd === 0.40, "kcal-only (macros never opened) forces sd 0.40 even if weighed chip");
+    const lowFloor = Foods.entryFromOnceDraft({
+      name: "Soft", macros: { kcal: 400 },
+      confidence: "estimated", macrosOpened: true,
+    }, 1, "portion");
+    ok(lowFloor.sd >= 0.20, "non-weighed confidence never writes sd below 0.20");
+
+    const day = "2026-08-06-once";
+    const a = Foods.entryFromOnceDraft({
+      name: "A", macros: { kcal: 500, p: 20, c: 40, f: 20, fb: 2, na: null, k: null },
+      confidence: "estimated", macrosOpened: true,
+    }, 1, "portion");
+    const b = Foods.entryFromOnceDraft({
+      name: "B", macros: { kcal: 500, p: 20, c: 40, f: 20, fb: 2, na: null, k: null },
+      confidence: "estimated", macrosOpened: true,
+    }, 1, "portion");
+    a.id = "once-a"; b.id = "once-b";
+    Ledger.addEntry(day, a);
+    Ledger.addEntry(day, b);
+    const onceTotals = Ledger.totalsOf(Ledger.entriesFor(day));
+    const libDay = "2026-08-06-lib";
+    const chicken = FOOD_DB.find((f) => f.id === "chicken-breast");
+    const libEntry = Foods.entryFromQty(chicken, 180, "g", "dinner");
+    libEntry.id = "lib-a";
+    const libEntry2 = Foods.entryFromQty(chicken, 180, "g", "dinner");
+    libEntry2.id = "lib-b";
+    Ledger.addEntry(libDay, libEntry);
+    Ledger.addEntry(libDay, libEntry2);
+    const libTotals = Ledger.totalsOf(Ledger.entriesFor(libDay));
+    ok(Number.isFinite(onceTotals.kcal.sd) && Number.isFinite(libTotals.kcal.sd) &&
+        onceTotals.kcal.sd > libTotals.kcal.sd,
+      "two one-offs widen kcal σ versus the same macros logged as library foods",
+      `once σ=${onceTotals.kcal.sd} lib σ=${libTotals.kcal.sd}`);
+
+    const prov = Foods.entryProvenance(once);
+    ok(prov.label === "One-off · your estimate" && /Not saved to My Foods/i.test(prov.detail || ""),
+      "entryProvenance names a one-off as not saved to My Foods");
+
+    // Import-shaped: without per100, macros alone are accepted by the
+    // non-per100 normalizeImportedNutrition path (kcal may exceed 920 as
+    // absolute portion totals). Proven by ledger accept + round-trip key check.
+    const logged = Ledger.entriesFor(day).find((e) => e.id === "once-a");
+    ok(logged && logged.source === "once" && !Object.prototype.hasOwnProperty.call(logged, "per100"),
+      "ledger round-trip keeps source once and still has no per100 key");
+  }
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail ? 1 : 0);
 })().catch((err) => {

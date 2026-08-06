@@ -197,6 +197,93 @@ const Foods = (() => {
     };
   }
 
+  /**
+   * One-off (source:"once") ledger snapshot from a portion-first draft.
+   * Never writes `per100` — see ONE-OFF-FOODS-PLAN §5.2 / Ledger once-per100 guard.
+   *
+   * @param {object} draft { name, cat?, macros:{kcal,p,c,f,fb,na?,k?}, confidence?, macrosOpened? }
+   * @param {number} qty
+   * @param {"g"|"oz"|"portion"} unit
+   * @param {string} [meal]
+   */
+  function entryFromOnceDraft(draft, qty, unit, meal) {
+    const d = draft || {};
+    const name = String(d.name || "").trim();
+    const u = unit === "oz" || unit === "portion" ? unit : "g";
+    const q = Number(qty);
+    const qtyN = Number.isFinite(q) && q > 0 ? q : (u === "portion" ? 1 : 0);
+    let grams = 0;
+    if (u === "g") grams = Math.round(qtyN);
+    else if (u === "oz") grams = Math.round(qtyN * 28.35);
+    // portion → grams 0 (unknown mass); Quick kcal already uses this shape.
+
+    const m = d.macros || {};
+    const macros = {
+      kcal: Number(m.kcal) || 0,
+      p: Number(m.p) || 0,
+      c: Number(m.c) || 0,
+      f: Number(m.f) || 0,
+      fb: Number(m.fb) || 0,
+      na: (m.na == null || m.na === "") ? null : Number(m.na),
+      k: (m.k == null || m.k === "") ? null : Number(m.k),
+    };
+    if (macros.na != null && !Number.isFinite(macros.na)) macros.na = null;
+    if (macros.k != null && !Number.isFinite(macros.k)) macros.k = null;
+
+    // §5.5 floors: never below 0.10; never below 0.20 unless weighed/label.
+    // §5.7: kcal-only (macros block never opened) always 0.40.
+    let sd = 0.25;
+    const conf = d.confidence;
+    if (conf === "weighed") sd = 0.10;
+    else if (conf === "rough") sd = 0.40;
+    else if (conf === "estimated") sd = 0.25;
+    if (d.macrosOpened === false) sd = 0.40;
+    if (conf !== "weighed") sd = Math.max(sd, 0.20);
+    sd = Math.max(sd, 0.10);
+
+    let displayQty;
+    if (u === "portion") displayQty = `${qtyN === 1 ? "1" : qtyN} portion`;
+    else if (u === "oz") displayQty = `${qtyN} oz`;
+    else displayQty = `${grams} g`;
+
+    return {
+      name,
+      foodId: null,
+      cat: d.cat || "dish",
+      grams,
+      displayQty,
+      qty: qtyN,
+      unit: u,
+      macros,
+      sd,
+      meal: meal || inferMeal(),
+      source: "once",
+    };
+  }
+
+  /**
+   * Provenance for a *ledger entry* (sibling of provenance(food)).
+   * Do not feed entries to Foods.provenance — different input shape.
+   */
+  function entryProvenance(entry) {
+    if (!entry) return { kind: "custom", label: "Yours · custom" };
+    if (entry.source === "once") {
+      return {
+        kind: "once",
+        label: "One-off · your estimate",
+        detail: "Logged once from your own estimate. Not saved to My Foods.",
+      };
+    }
+    if (entry.source === "quick") {
+      return {
+        kind: "quick",
+        label: "Quick kcal",
+        detail: "Calories only; protein and other macros are logged as zero.",
+      };
+    }
+    return { kind: "custom", label: "Yours · custom" };
+  }
+
   function inferMeal(explicit) {
     if (explicit) return explicit;
     const h = new Date().getHours();
@@ -329,7 +416,7 @@ const Foods = (() => {
 
   return {
     uid, createFromDraft, applyUpdate, enableCountLogging, tombstone, touchUse, findByName, active,
-    fromCatalog, entryFromQty, inferMeal, sortForPicker, recent, frequent, provenance,
+    fromCatalog, entryFromQty, entryFromOnceDraft, entryProvenance, inferMeal, sortForPicker, recent, frequent, provenance,
     migrateCatalogCopies,
   };
 })();

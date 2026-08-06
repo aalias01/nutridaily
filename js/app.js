@@ -90,6 +90,10 @@ const App = (() => {
         return "Nutrition values are outside the supported range";
       }
     }
+    // §3.1 / §5.2: one-offs and quick-kcal must never carry per100.
+    if ((e.source === "once" || e.source === "quick") && e.per100 != null) {
+      return "One-off entries cannot carry per-100 nutrition";
+    }
     return "";
   }
 
@@ -1914,6 +1918,80 @@ const App = (() => {
     UI.openSheet("sheet-kcal");
   }
 
+  /**
+   * Open the one-off sheet for a new log or to edit/repeat an existing once entry.
+   * Prefill via { from: entry, editId, editDay } — Step 3 routes openQtyFromEntry here.
+   */
+  function openOnceSheet(prefill) {
+    UI.closeSheet("sheet-add");
+    UI.closeSheet("sheet-qty");
+    UI.closeSheet("sheet-kcal");
+    const p = prefill || {};
+    if (p.editId) {
+      state.editEntryId = p.editId;
+      state.editEntryDay = p.editDay || state.viewDay;
+    } else if (!p.keepEdit) {
+      state.editEntryId = null;
+      state.editEntryDay = null;
+    }
+    UI.fillOnceSheet({
+      from: p.from || null,
+      meal: p.meal,
+      imperial: !!state.settings.imperial,
+      allowRemove: !!state.editEntryId,
+      macrosOpened: p.macrosOpened,
+      confidence: p.confidence,
+    });
+    UI.openSheet("sheet-once");
+    setTimeout(() => {
+      const inp = UI.$("#once-name");
+      if (inp && !p.from) { inp.focus(); }
+      else if (UI.$("#once-kcal")) UI.$("#once-kcal").focus();
+    }, 50);
+  }
+
+  function saveOnce() {
+    const read = UI.readOnceDraft();
+    if (!read.ok) {
+      UI.setOnceErrors(read.errors);
+      return;
+    }
+    const entry = Foods.entryFromOnceDraft(read.draft, read.qty, read.unit, read.meal);
+    if (!producerText(entry.name, PRODUCER_LIMITS.text.name)) {
+      UI.setOnceErrors(["Name must be 160 characters or fewer"]);
+      return;
+    }
+    const m = entry.macros || {};
+    if (m.kcal > PRODUCER_LIMITS.amount
+        || m.p > PRODUCER_LIMITS.amount || m.c > PRODUCER_LIMITS.amount
+        || m.f > PRODUCER_LIMITS.amount || m.fb > PRODUCER_LIMITS.amount
+        || (m.na != null && m.na > PRODUCER_LIMITS.amount)
+        || (m.k != null && m.k > PRODUCER_LIMITS.amount)
+        || entry.qty > PRODUCER_LIMITS.amount) {
+      UI.setOnceErrors(["Amount exceeds the supported storage limits"]);
+      return;
+    }
+    // Never derive or attach per100 — §3.1 / Ledger once-per100 guard.
+    const producerError = validateProducerEntry(entry);
+    if (producerError) { UI.setOnceErrors([producerError]); return; }
+    const day = editDay();
+    try {
+      if (state.editEntryId) {
+        Ledger.amendEntry(day, state.editEntryId, entry, "one-off edited");
+      } else {
+        Ledger.addEntry(day, entry);
+      }
+    } catch (error) {
+      UI.toast("Couldn’t save this log — nothing changed");
+      return;
+    }
+    Sync.schedulePush();
+    UI.closeSheet("sheet-once");
+    resetQtyState();
+    refreshDay();
+    UI.toast("Logged");
+  }
+
   function jumpToToday() {
     state.viewDay = Ledger.todayKey();
     state.lastCalendarToday = state.viewDay;
@@ -2158,6 +2236,16 @@ const App = (() => {
       state.editEntryId = null;
       state.editEntryDay = null;
     }
+    // §3.3 / Correction C Guard 1: never build an orphan qty shell for a
+    // one-off — missing per100 zeros the entry and rewrites source to personal.
+    if (entry.source === "once") {
+      openOnceSheet({
+        from: entry,
+        editId: (opts && opts.allowRemove) ? entry.id : null,
+        editDay: state.viewDay,
+      });
+      return;
+    }
     if (entry.source === "quick" || entry.unit === "kcal") {
       openQuickKcal({
         name: entry.name,
@@ -2226,6 +2314,15 @@ const App = (() => {
   function saveQty() {
     const food = state.pickFood;
     if (!food) return;
+    // Correction C Guard 2: refuse qty writes against a one-off edit target so a
+    // future refactor cannot silently zero macros / rewrite source (§3.3).
+    if (state.editEntryId) {
+      const target = Ledger.entriesFor(editDay()).find((e) => e.id === state.editEntryId);
+      if (target && target.source === "once") {
+        UI.toast("Edit this one-off from its own sheet");
+        return;
+      }
+    }
     const entry = UI.updateQtyPreview(food);
     if (!entry) { UI.toast("Enter a valid amount"); return; }
     entry.meal = UI.selectedMeal();
@@ -4948,6 +5045,39 @@ const App = (() => {
     }
 
     UI.$("#btn-quick-kcal").addEventListener("click", () => openQuickKcal());
+    UI.$("#btn-once-food").addEventListener("click", () => openOnceSheet());
+    UI.$("#once-cancel").addEventListener("click", () => {
+      resetQtyState();
+      UI.closeSheet("sheet-once");
+    });
+    UI.$("#once-macros").addEventListener("toggle", () => UI.syncOnceMacroNudge());
+    const onceChip = (rootSel, attr) => (e) => {
+      const btn = e.target.closest(`[${attr}]`);
+      if (!btn) return;
+      UI.$(rootSel).querySelectorAll(".uchip").forEach((c) => {
+        const on = c === btn; c.classList.toggle("active", on); c.setAttribute("aria-pressed", String(on));
+      });
+    };
+    UI.$("#once-meals").addEventListener("click", onceChip("#once-meals", "data-meal"));
+    UI.$("#once-units").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-unit]");
+      if (!btn) return;
+      onceChip("#once-units", "data-unit")(e);
+      const qty = UI.$("#once-qty");
+      if (qty && btn.dataset.unit === "portion" && !String(qty.value || "").trim()) qty.value = "1";
+    });
+    UI.$("#once-cats").addEventListener("click", onceChip("#once-cats", "data-cat"));
+    UI.$("#once-confidence").addEventListener("click", onceChip("#once-confidence", "data-confidence"));
+    UI.$("#once-save").addEventListener("click", () => saveOnce());
+    UI.$("#once-remove").addEventListener("click", () => {
+      if (!state.editEntryId) return;
+      const id = state.editEntryId;
+      const day = editDay();
+      UI.closeSheet("sheet-once");
+      resetQtyState();
+      removeEntryWithUndo(day, id);
+    });
+
     UI.$("#kcal-cancel").addEventListener("click", () => {
       resetQtyState();
       UI.closeSheet("sheet-kcal");
@@ -5356,7 +5486,7 @@ const App = (() => {
       if (close) {
         const sheetId = close.dataset.close;
         UI.closeSheet(sheetId);
-        if (sheetId === "sheet-qty" || sheetId === "sheet-kcal") {
+        if (sheetId === "sheet-qty" || sheetId === "sheet-kcal" || sheetId === "sheet-once") {
           if (sheetId === "sheet-qty") {
             state.gapPendingItemId = null;
             state.gapPendingDay = null;

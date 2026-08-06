@@ -406,6 +406,18 @@ body.sheet-open .insight-dock { display: none; }
   background: var(--bg); color: var(--ink); font-size: 16px;
 }
 .rev-macros { margin: 10px 0; }
+.once-portion-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.once-portion-row #once-qty {
+  flex: 0 0 5.5rem;
+  min-width: 0;
+}
+.once-portion-row #once-units { flex: 1 1 auto; justify-content: flex-start; }
+#once-macro-nudge[hidden] { display: none; }
 .banner { padding: 10px 12px; border-radius: 10px; margin-bottom: 8px; font-size: 13px; }
 .banner.danger { background: rgba(192, 68, 46, 0.12); color: var(--danger); }
 .banner.warn { background: rgba(208, 112, 60, 0.12); color: var(--warn); }

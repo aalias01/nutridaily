@@ -425,7 +425,7 @@ async function run(label, days) {
   ok(afterSecondArrow.classList.contains("active"),
     "Space activates the focused dock pill");
   ok(window.__ndScrollIntoView.filter((s) => s.nutrient === afterSecondArrow.dataset.nutrient).length === 1,
-    "Space activates exactly once (keydown preventDefault suppresses native keyup click)");
+    "Space activates the pill exactly once through the keydown handler");
   window.__ndScrollIntoView.length = 0;
   window.document.querySelector('#insight-nutrient [data-nutrient="potassium"]').click();
   await new Promise((r) => setTimeout(r, 30));
@@ -442,6 +442,28 @@ async function run(label, days) {
   ok(window.__ndScrollIntoView.some((s) => s.nutrient === "fiber" && s.args[0] && s.args[0].behavior === "auto"),
     "active pill scroll uses behavior:auto under prefers-reduced-motion");
   window.matchMedia = prevMatchMedia;
+  window.__ndScrollIntoView.length = 0;
+  window.document.querySelector('#insight-range [data-days="30"]').click();
+  await new Promise((r) => setTimeout(r, 30));
+  ok(window.__ndScrollIntoView.filter((s) => s.nutrient).length === 0,
+    "range change does not re-scroll the dock when nutrient is unchanged");
+  window.document.querySelector('#insight-range [data-days="14"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  const kcalPill = window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]');
+  kcalPill.click();
+  await new Promise((r) => setTimeout(r, 20));
+  kcalPill.focus();
+  kcalPill.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  const focusBrowse = window.document.activeElement;
+  ok(focusBrowse && focusBrowse.dataset.nutrient && focusBrowse.dataset.nutrient !== "kcal",
+    "setup: arrow browse leaves focus on a non-active dock pill");
+  window.document.querySelector('#rollup-seg [data-rollup="week"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(focusBrowse.tabIndex === 0 &&
+      [...window.document.querySelectorAll("#insight-nutrient [data-nutrient]")].filter((b) => b.tabIndex === 0).length === 1,
+    "roving tabindex stays with focused pill across an unrelated re-render");
+  window.document.querySelector('#rollup-seg [data-rollup="day"]').click();
+  await new Promise((r) => setTimeout(r, 20));
   window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
   await new Promise((r) => setTimeout(r, 20));
 
@@ -1416,6 +1438,8 @@ async function runSparse() {
   ok($("#section-energy").hidden && $("#section-composition").hidden && $("#section-compare").hidden,
     "thin maturity hides energy, composition, and compare");
   ok($("#dow-pattern").hidden, "thin maturity hides day-of-week pattern");
+  ok(!$("#insight-dock").hidden && window.document.body.classList.contains("has-insight-dock"),
+    "thin maturity keeps the nutrient dock visible");
 
   // P5-N1/N2: recovery path must unhide after crossing the <3 boundary mid-session.
   // Logging a 3rd day and re-entering Insights is the only way the full state is
@@ -1505,6 +1529,9 @@ async function runEmpty() {
     .filter((s) => !s.hidden);
   ok(visibleEmptySections.length === 0, "empty maturity hides every insight-section");
   ok($("#dow-pattern").hidden, "empty maturity hides day-of-week pattern");
+  ok($("#insight-dock").hidden, "empty maturity hides the nutrient dock");
+  ok(!window.document.body.classList.contains("has-insight-dock"),
+    "empty maturity clears has-insight-dock lane reservation");
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
 
@@ -3151,6 +3178,181 @@ async function runImportSecurity() {
     "day detail does not compare incomplete sodium with the full goal");
   ok(!$("#quick-xss") && /<img id="quick-xss"/.test($("#day-log").textContent),
     "quick-entry markup is escaped in the diary");
+
+  // One-off sheet (Step 2): Add entry, kcal-only log, library untouched,
+  // edit-prefill amends without opening qty, validation stays open.
+  {
+    const UI = window.eval("UI");
+    const foodsBefore = App.state.personalFoods.length;
+    const onceDay = "2019-06-15";
+    App.state.viewDay = onceDay;
+    // Do not click #day-label here — it jumps to today (see jumpToToday).
+    $("#fab-add").click();
+    ok(!!$("#btn-once-food"), "Add sheet exposes One-off food entry");
+    $("#btn-once-food").click();
+    ok(!$("#sheet-once").hidden && UI.topSheetId() === "sheet-once",
+      "One-off opens #sheet-once");
+    // Force-fail validation: blank name
+    $("#once-name").value = "";
+    $("#once-kcal").value = "700";
+    $("#once-qty").value = "1";
+    const beforeOnceReject = window.localStorage.getItem("nd_events_v1");
+    let onceRejectSyncs = 0;
+    const previousSchedulePush = Sync.schedulePush;
+    Sync.schedulePush = () => { onceRejectSyncs += 1; };
+    $("#once-save").click();
+    ok(window.localStorage.getItem("nd_events_v1") === beforeOnceReject && onceRejectSyncs === 0 &&
+        !$("#sheet-once").hidden && /Name is required/.test($("#once-errors").textContent),
+      "one-off validation keeps the sheet open with no event or sync");
+    Sync.schedulePush = previousSchedulePush;
+
+    $("#once-name").value = "Pad thai — Thai House";
+    $("#once-kcal").value = "850";
+    const portionChip = $("#once-units [data-unit='portion']");
+    if (portionChip) portionChip.click();
+    $("#once-qty").value = "1";
+    // kcal-only: leave macros <details> closed
+    ok(!$("#once-macros").open, "macros details start collapsed for a new one-off");
+    $("#once-save").click();
+    const onceEntries = Ledger.entriesFor(onceDay);
+    const onceEntry = onceEntries.find((e) => e.source === "once");
+    ok(onceEntry && onceEntry.name === "Pad thai — Thai House" && onceEntry.foodId == null &&
+        onceEntry.grams === 0 && onceEntry.unit === "portion" &&
+        onceEntry.macros.kcal === 850 && onceEntry.macros.p === 0 &&
+        onceEntry.macros.na === null && onceEntry.macros.k === null &&
+        !Object.prototype.hasOwnProperty.call(onceEntry, "per100") &&
+        onceEntry.sd === 0.40,
+      "kcal-only one-off lands as source:once with sd 0.40 and no per100",
+      onceEntry ? JSON.stringify({
+        name: onceEntry.name, source: onceEntry.source, sd: onceEntry.sd,
+        unit: onceEntry.unit, grams: onceEntry.grams, macros: onceEntry.macros,
+        hasPer100: Object.prototype.hasOwnProperty.call(onceEntry, "per100"),
+      }) : `missing; day has ${onceEntries.length}: ${onceEntries.map((e) => `${e.source}:${e.name}`).join("|")}`);
+    ok(App.state.personalFoods.length === foodsBefore,
+      "one-off save does not touch My Foods");
+    ok(!!onceEntry, "one-off was saved on the fixture day");
+
+    // Edit-prefill amends macros via the once sheet (Step 3 will route edit taps here).
+    if (onceEntry) {
+      App.state.editEntryId = onceEntry.id;
+      App.state.editEntryDay = onceDay;
+      App.state.viewDay = onceDay;
+      UI.fillOnceSheet({ from: onceEntry, allowRemove: true, imperial: false });
+      UI.openSheet("sheet-once");
+      ok(!$("#sheet-once").hidden && !$("#once-remove").hidden,
+        "editing a one-off shows Remove on #sheet-once");
+      ok($("#once-name").value === "Pad thai — Thai House" && $("#once-kcal").value === "850",
+        "edit-prefill restores name and kcal");
+      $("#once-macros").open = true;
+      $("#once-p").value = "32";
+      $("#once-c").value = "90";
+      $("#once-f").value = "28";
+      $("#once-fb").value = "6";
+      $("#once-confidence [data-confidence='estimated']").click();
+      $("#once-save").click();
+      const amended = Ledger.entriesFor(onceDay).find((e) => e.id === onceEntry.id);
+      ok(amended && amended.source === "once" && amended.macros.p === 32 && amended.macros.c === 90 &&
+          amended.macros.f === 28 && amended.sd === 0.25 &&
+          !Object.prototype.hasOwnProperty.call(amended, "per100"),
+        "one-off amend updates portion macros without introducing per100");
+      ok($("#sheet-qty").hidden, "one-off edit never opens the qty sheet");
+
+      // Step 3 Guard 1: Edit from the day log opens #sheet-once, not qty.
+      App.state.viewDay = onceDay;
+      UI.closeAllSheets();
+      await new Promise((r) => setTimeout(r, 220));
+      // Refresh the day log for the fixture day via a no-op toggle after manually painting.
+      const dayEntries = Ledger.entriesFor(onceDay);
+      UI.renderDayLog(onceDay, dayEntries);
+      $(`#day-log [data-action='toggle-entry'][data-id='${onceEntry.id}']`).click();
+      $(`#day-log [data-action='edit-entry'][data-id='${onceEntry.id}']`).click();
+      ok(!$("#sheet-once").hidden && $("#sheet-qty").hidden && UI.topSheetId() === "sheet-once",
+        "day-log Edit on a one-off opens #sheet-once and keeps #sheet-qty closed");
+      UI.closeSheet("sheet-once");
+      await new Promise((r) => setTimeout(r, 220));
+
+      // Step 3 Guard 1: Repeat yesterday prefilled one-off creates a *new* entry.
+      const beforeRepeat = Ledger.entriesFor(today).filter((e) => e.source === "once").length;
+      App.state.viewDay = today;
+      $("#fab-add").click();
+      // openAddSheet overwrites yesterdayKey to the calendar previous day — reseed
+      // both the strip and the lookup key so this fixture is reachable.
+      App.state.yesterdayKey = onceDay;
+      UI.renderPicker(App.state.personalFoods, "", true, {
+        yesterday: Ledger.entriesFor(onceDay),
+        yesterdayLabel: "Previous day",
+      });
+      const repeatBtn = $(`#pick-list [data-action='repeat-yesterday'][data-id='${onceEntry.id}']`);
+      ok(!!repeatBtn, "yesterday strip lists the one-off for repeat");
+      if (repeatBtn) {
+        repeatBtn.click();
+        ok(!$("#sheet-once").hidden && $("#sheet-qty").hidden,
+          "repeat-yesterday on a one-off opens #sheet-once, not qty");
+        ok($("#once-name").value === "Pad thai — Thai House",
+          "repeat prefill restores the one-off name");
+        ok($("#once-remove").hidden, "repeat-yesterday does not enter edit mode");
+        $("#once-kcal").value = "400";
+        $("#once-macros").open = false;
+        $("#once-save").click();
+        const afterRepeat = Ledger.entriesFor(today).filter((e) => e.source === "once");
+        ok(afterRepeat.length === beforeRepeat + 1 &&
+            afterRepeat.some((e) => e.macros.kcal === 400 && e.id !== onceEntry.id),
+          "repeat-yesterday save creates a new one-off, does not amend the original");
+        const stillOriginal = Ledger.entriesFor(onceDay).find((e) => e.id === onceEntry.id);
+        ok(stillOriginal && stillOriginal.macros.p === 32,
+          "original fixture-day one-off is unchanged after repeat");
+      }
+
+      // Step 3 Guard 2: refuse saveQty against a one-off edit target.
+      App.state.editEntryId = onceEntry.id;
+      App.state.editEntryDay = onceDay;
+      App.state.pickFood = {
+        id: null,
+        name: onceEntry.name,
+        per100: { kcal: 0, p: 0, c: 0, f: 0, fb: 0, na: 0, k: 0 },
+        units: {},
+        sd: 0.25,
+        cat: "dish",
+        _orphan: true,
+        _keptFoodId: null,
+      };
+      UI.fillQtySheet(App.state.pickFood, false, { qty: 1, unit: "portion", meal: "dinner", allowRemove: true });
+      UI.openSheet("sheet-qty");
+      const beforeGuard2 = JSON.stringify(Ledger.entriesFor(onceDay));
+      let guard2Syncs = 0;
+      const prevPush = Sync.schedulePush;
+      Sync.schedulePush = () => { guard2Syncs += 1; };
+      $("#qty-save").click();
+      ok(JSON.stringify(Ledger.entriesFor(onceDay)) === beforeGuard2 && guard2Syncs === 0,
+        "saveQty refuses a one-off edit target with no ledger change or sync");
+      const guarded = Ledger.entriesFor(onceDay).find((e) => e.id === onceEntry.id);
+      ok(guarded && guarded.source === "once" && guarded.macros.kcal === 850,
+        "refused qty save leaves source and kcal intact");
+      Sync.schedulePush = prevPush;
+      UI.closeSheet("sheet-qty");
+      await new Promise((r) => setTimeout(r, 220));
+      App.state.editEntryId = null;
+      App.state.editEntryDay = null;
+      App.state.pickFood = null;
+
+      // Regression: legacy quick kcal still routes to #sheet-kcal.
+      const quickLegacy = Ledger.entriesFor(today).find((e) => e.source === "quick");
+      ok(!!quickLegacy, "smoke fixture still has a quick-kcal entry on today");
+      if (quickLegacy) {
+        App.state.viewDay = today;
+        UI.closeAllSheets();
+        await new Promise((r) => setTimeout(r, 220));
+        UI.renderDayLog(today, Ledger.entriesFor(today));
+        $(`#day-log [data-action='toggle-entry'][data-id='${quickLegacy.id}']`).click();
+        $(`#day-log [data-action='edit-entry'][data-id='${quickLegacy.id}']`).click();
+        ok(UI.topSheetId() === "sheet-kcal" && !$("#sheet-kcal").hidden,
+          "legacy source:quick still opens #sheet-kcal, not once");
+        UI.closeSheet("sheet-kcal");
+        await new Promise((r) => setTimeout(r, 220));
+      }
+    }
+    App.state.viewDay = today;
+  }
 
   // Part IX.5: notScored() lacked incompleteMineral's empty-day guard, so a
   // declared fast with nothing logged at all printed "0 mg* · not scored

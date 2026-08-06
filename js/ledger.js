@@ -638,6 +638,7 @@ const Ledger = (() => {
   /** entry: { name, displayQty, grams, macros:{kcal,p,c,f,fb,na}, sd, meal, source, cat, foodId }
    *  Pass entry.id to restore a removed entry (undo) with the same identity. */
   function addEntry(day, entry) {
+    _assertNoOneOffPer100(entry);
     const entryId = entry && entry.id ? entry.id : uid();
     const { id: _ignore, addedTs: _a, history: _h, ...rest } = entry || {};
     const causal = _nextCausal(day, entryId, "add");
@@ -663,6 +664,11 @@ const Ledger = (() => {
 
   /** patch: full replacement fields (recomputed upstream): grams, displayQty, macros, sd, name?, meal? */
   function amendEntry(day, targetEntryId, patch, label) {
+    // One-offs must never grow a per100 via amend (§3.2 cannot delete keys later).
+    // Resolve by id — do not use findEntry (fuzzy name match); a patch that
+    // carries per100 without restating source must still see the live source.
+    const live = _liveEntryById(day, targetEntryId);
+    _assertNoOneOffPer100(Object.assign({}, live || {}, patch || {}));
     const causal = _nextCausal(day, targetEntryId, "amend");
     const parent = _load().find((event) => event && event.id === causal.parentEventId);
     return _append({
@@ -670,6 +676,31 @@ const Ledger = (() => {
       resetEpoch: _safeGeneration(parent && parent.resetEpoch),
       target: targetEntryId, patch, label: label || "",
     });
+  }
+
+  /**
+   * Project one entry by id without replaying every entry on the day
+   * (entriesFor would). Returns null if missing or removed.
+   */
+  function _liveEntryById(day, entryId) {
+    if (!entryId) return null;
+    const matching = _load().filter((ev) => _eventEntryId(ev) === entryId && ev.day === day);
+    if (!matching.length) return null;
+    return _projectGroup(_analyzeEvents(matching).groups.get(entryId));
+  }
+
+  /**
+   * §3.1 / §5.2: one-off and quick-kcal entries must not carry `per100`.
+   * Import validates per100 with food-catalog bounds; a portion-derived
+   * `per100.kcal` of tens of thousands bricks the next settings save / Drive sync.
+   */
+  function _assertNoOneOffPer100(entry) {
+    const src = entry && entry.source;
+    if ((src === "once" || src === "quick") && entry.per100 != null) {
+      const err = new Error("One-off entries cannot carry per100");
+      err.code = "ledger-once-per100";
+      throw err;
+    }
   }
 
   function removeEntry(day, targetEntryId, label) {
