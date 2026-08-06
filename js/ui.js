@@ -700,22 +700,26 @@ const UI = (() => {
       all = Foods.sortForPicker(personal).filter((f) => !recentIds.has(f.id) && !freq.find((x) => x.id === f.id));
     }
 
-    const check = (selected) => multiMode
+    const check = () => multiMode
       ? `<span class="pick-check" aria-hidden="true"></span>`
       : "";
     const personalRow = (f) => {
       const selected = selectedKeys.has(`food:${f.id}`);
       return `<button type="button" class="log-row${selected ? " pick-selected" : ""}" data-action="pick-food" data-id="${esc(f.id)}" aria-pressed="${selected ? "true" : "false"}">
-        ${check(selected)}
-        <div class="r-name">${esc(f.name)}</div>
+        ${check()}
+        <div class="pick-meta">
+          <div class="r-name">${esc(f.name)}</div>
+        </div>
         <span class="mini">${fmt(f.per100.kcal)} /100g</span>
       </button>`;
     };
     const catalogRow = (f) => {
       const selected = selectedKeys.has(`cat:${f.id}`);
       return `<button type="button" class="log-row${selected ? " pick-selected" : ""}" data-action="pick-catalog" data-id="${esc(f.id)}" aria-pressed="${selected ? "true" : "false"}">
-        ${check(selected)}
-        <div class="r-name">${esc(f.name)}</div>
+        ${check()}
+        <div class="pick-meta">
+          <div class="r-name">${esc(f.name)}</div>
+        </div>
         <span class="mini">${fmt(f.per100.kcal)} /100g</span>
       </button>`;
     };
@@ -725,8 +729,8 @@ const UI = (() => {
       const selected = selectedKeys.has(key);
       if (multiMode) {
         return `<button type="button" class="log-row${selected ? " pick-selected" : ""}" data-action="repeat-yesterday" data-id="${esc(e.id)}" aria-pressed="${selected ? "true" : "false"}">
-          ${check(selected)}
-          <div>
+          ${check()}
+          <div class="pick-meta">
             <div class="r-name">${esc(e.name)}${chrome.badge}</div>
             <div class="r-qty">${esc(e.displayQty)} · ${esc(e.meal || "")}</div>
           </div>
@@ -734,7 +738,7 @@ const UI = (() => {
         </button>`;
       }
       return `<button type="button" class="log-row" data-action="repeat-yesterday" data-id="${esc(e.id)}">
-        <div>
+        <div class="pick-meta">
           <div class="r-name">${esc(e.name)}${chrome.badge}</div>
           <div class="r-qty">${esc(e.displayQty)} · ${esc(e.meal || "")}</div>
         </div>
