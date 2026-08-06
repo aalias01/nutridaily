@@ -3835,10 +3835,48 @@ async function runImportSecurity() {
     $("#btn-once-food").click();
     ok(!$("#sheet-once").hidden && !$("#once-estimate-ai").hidden,
       "Estimate with AI lives on the Log once sheet");
+    const estBtn = $("#once-estimate-ai");
+    const saveBtn = $("#once-save");
+    const confEl = $("#once-confidence");
+    ok(!!estBtn && !!saveBtn && !!confEl &&
+        !!(confEl.compareDocumentPosition(estBtn) & window.Node.DOCUMENT_POSITION_FOLLOWING) &&
+        !!(estBtn.compareDocumentPosition(saveBtn) & window.Node.DOCUMENT_POSITION_FOLLOWING) &&
+        estBtn.classList.contains("btn") && estBtn.classList.contains("ghost"),
+      "Phase 1: Estimate with AI sits below confidence and above Save as a ghost full button");
+
+    $("#once-name").value = "Airport pad thai";
+    $("#once-kcal").value = "850";
+    const portionG = $("#once-units [data-unit='g']");
+    if (portionG) portionG.click();
+    $("#once-qty").value = "400";
     $("#once-estimate-ai").click();
     ok(App.state.foodSaveIntent === "estimate" &&
         /Estimate with AI/i.test(($("#paste-title") && $("#paste-title").textContent) || ""),
       "Estimate entry sets estimate intent and paste title");
+    ok(/What I ate \(attach/i.test(NutriParse.ESTIMATE_PROMPT),
+      "fixture: ESTIMATE_PROMPT is loaded in the page");
+    const promptText = NutriParse.ESTIMATE_PROMPT + String(App.state.estimateSeedText || "");
+    const ateIdx = promptText.indexOf("What I ate (attach");
+    ok(ateIdx >= 0 && /Airport pad thai/.test(promptText.slice(ateIdx)) &&
+        /850/.test(promptText.slice(ateIdx)) && /400 g/.test(promptText.slice(ateIdx)),
+      "Phase 1: Estimate prompt seeds name, kcal, and portion into the What I ate slot",
+      promptText.slice(Math.max(0, ateIdx)));
+    $("#sheet-paste [data-close='sheet-paste']").click();
+    await new Promise((r) => setTimeout(r, 40));
+    ok(!$("#sheet-once").hidden && $("#once-name").value === "Airport pad thai" &&
+        $("#once-kcal").value === "850",
+      "Phase 1: Cancel paste restores the Log once draft");
+    UI.closeSheet("sheet-once");
+    App.state.onceDraftPending = null;
+    App.state.estimateSeedText = "";
+    await new Promise((r) => setTimeout(r, 40));
+
+    $("#fab-add").click();
+    $("#btn-once-food").click();
+    $("#once-estimate-ai").click();
+    ok(App.state.foodSaveIntent === "estimate" &&
+        /Estimate with AI/i.test(($("#paste-title") && $("#paste-title").textContent) || ""),
+      "Estimate entry sets estimate intent and paste title (empty seed path)");
     ok(/What I ate \(attach/i.test(NutriParse.ESTIMATE_PROMPT),
       "fixture: ESTIMATE_PROMPT is loaded in the page");
     $("#btn-manual-food").click();
@@ -3913,6 +3951,9 @@ async function runImportSecurity() {
     await new Promise((r) => setTimeout(r, 40));
     ok(App.state.foodSaveIntent === "library",
       "closing paste sheet resets foodSaveIntent away from estimate");
+    if (!$("#sheet-once").hidden) UI.closeSheet("sheet-once");
+    App.state.onceDraftPending = null;
+    App.state.estimateSeedText = "";
     App.state.viewDay = today;
     await new Promise((r) => setTimeout(r, 220));
 
@@ -3937,6 +3978,15 @@ async function runImportSecurity() {
       $("#once-estimate-ai").click();
       ok(App.state.foodSaveIntent === "estimate" && App.state.editEntryId === before.id,
         "Estimate from edit keeps editEntryId armed for amend");
+      // Soft cancel restores Log once with edit still armed, then continue repair via Estimate again.
+      $("#sheet-paste [data-close='sheet-paste']").click();
+      await new Promise((r) => setTimeout(r, 40));
+      ok(!$("#sheet-once").hidden && App.state.editEntryId === before.id &&
+          /sandwich/i.test($("#once-name").value || ""),
+        "Phase 1: Cancel paste after Estimate-from-edit restores once sheet with editEntryId");
+      $("#once-estimate-ai").click();
+      ok(App.state.foodSaveIntent === "estimate" && App.state.editEntryId === before.id,
+        "Estimate from restored edit keeps editEntryId armed for amend");
       $("#btn-manual-food").click();
       $("#rev-name").value = "Repaired sandwich";
       $("#rev-kcal").value = "220";

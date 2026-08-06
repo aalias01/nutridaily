@@ -3168,6 +3168,112 @@ const UI = (() => {
     };
   }
 
+  /**
+   * Partial once-sheet read for Estimate with AI seeding — never blocks on
+   * missing required fields. Blank / unparsable nutrients become null.
+   */
+  function readOnceDraftLenient() {
+    const name = ($("#once-name") && $("#once-name").value || "").trim();
+    const unit = selectedOnceUnit();
+    const qtyParsed = parseNutrientNumber($("#once-qty") && $("#once-qty").value);
+    const qty = qtyParsed.ok && !qtyParsed.blank && qtyParsed.value > 0 ? qtyParsed.value : null;
+    const kcalParsed = parseNutrientNumber($("#once-kcal") && $("#once-kcal").value);
+    const kcal = kcalParsed.ok && !kcalParsed.blank && kcalParsed.value > 0 ? kcalParsed.value : null;
+    const macrosOpen = !!( $("#once-macros") && $("#once-macros").open );
+    const field = (id, nullable) => parseNutrientNumber($(id) && $(id).value, { nullable: !!nullable });
+    const numOrNull = (parsed) => {
+      if (!parsed.ok || parsed.blank || parsed.value == null) return null;
+      return parsed.value;
+    };
+    const p = field("#once-p"); const c = field("#once-c"); const f = field("#once-f");
+    const fb = field("#once-fb"); const na = field("#once-na", true); const k = field("#once-k", true);
+    return {
+      qty,
+      unit,
+      meal: selectedMealIn("#once-meals"),
+      draft: {
+        name,
+        cat: selectedOnceCat(),
+        confidence: selectedOnceConfidence(),
+        macrosOpened: macrosOpen,
+        macros: {
+          kcal,
+          p: numOrNull(p),
+          c: numOrNull(c),
+          f: numOrNull(f),
+          fb: numOrNull(fb),
+          na: na.ok ? na.value : null,
+          k: k.ok ? k.value : null,
+        },
+      },
+    };
+  }
+
+  /** Format a lenient once snapshot for the ESTIMATE_PROMPT “What I ate” slot. */
+  function formatOnceEstimateSeed(snap) {
+    const s = snap || {};
+    const d = s.draft || {};
+    const m = d.macros || {};
+    const lines = [];
+    if (d.name) lines.push(String(d.name));
+    if (s.meal) lines.push(`Meal: ${s.meal}`);
+    if (Number.isFinite(Number(s.qty)) && Number(s.qty) > 0 && s.unit) {
+      lines.push(`Portion: ${s.qty} ${s.unit}`);
+    }
+    if (Number.isFinite(Number(m.kcal)) && Number(m.kcal) > 0) {
+      lines.push(`Calories: ${m.kcal}`);
+    }
+    const known = [];
+    if (Number(m.p) > 0) known.push(`P ${m.p} g`);
+    if (Number(m.c) > 0) known.push(`C ${m.c} g`);
+    if (Number(m.f) > 0) known.push(`F ${m.f} g`);
+    if (Number(m.fb) > 0) known.push(`Fiber ${m.fb} g`);
+    if (m.na != null && Number.isFinite(Number(m.na))) known.push(`Na ${m.na} mg`);
+    if (m.k != null && Number.isFinite(Number(m.k))) known.push(`K ${m.k} mg`);
+    if (known.length) lines.push(`Known macros: ${known.join(", ")}`);
+    return lines.join("\n");
+  }
+
+  /**
+   * Refill #sheet-once from a lenient Estimate pending snapshot (draft persist).
+   */
+  function fillOnceSheetFromPending(pending, opts) {
+    const o = opts || {};
+    const p = pending || {};
+    const d = p.draft || {};
+    const m = d.macros || {};
+    const unit = p.unit === "oz" || p.unit === "g" || p.unit === "portion" ? p.unit : "portion";
+    const qty = Number.isFinite(Number(p.qty)) && Number(p.qty) > 0 ? Number(p.qty) : null;
+    let grams = 0;
+    if (unit === "g" && qty != null) grams = Math.round(qty);
+    else if (unit === "oz" && qty != null) grams = Math.round(qty * 28.35);
+    fillOnceSheet({
+      from: {
+        name: d.name || "",
+        meal: p.meal,
+        unit,
+        qty: qty != null ? qty : (unit === "portion" ? 1 : 0),
+        grams,
+        macros: {
+          kcal: m.kcal != null ? m.kcal : "",
+          p: m.p != null ? m.p : "",
+          c: m.c != null ? m.c : "",
+          f: m.f != null ? m.f : "",
+          fb: m.fb != null ? m.fb : "",
+          na: m.na,
+          k: m.k,
+        },
+        cat: d.cat || "dish",
+        source: d.macrosOpened ? "once" : undefined,
+      },
+      meal: p.meal,
+      imperial: !!o.imperial || !!p.imperial,
+      allowRemove: !!o.allowRemove,
+      macrosOpened: !!d.macrosOpened,
+      confidence: d.confidence || "estimated",
+    });
+  }
+
   function setOnceErrors(list) {
     const el = $("#once-errors");
     if (!el) return;
@@ -3514,7 +3620,8 @@ const UI = (() => {
     renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft, parseNutrientNumber,
     syncReviewLogAsUI, renderFoodDetail,
-    fillOnceSheet, readOnceDraft, setOnceErrors, selectedOnceUnit, selectedOnceCat, selectedOnceConfidence, syncOnceMacroNudge,
+    fillOnceSheet, readOnceDraft, readOnceDraftLenient, formatOnceEstimateSeed, fillOnceSheetFromPending,
+    setOnceErrors, selectedOnceUnit, selectedOnceCat, selectedOnceConfidence, syncOnceMacroNudge,
     renderInsights, renderTrends, renderWeightTrend,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX,
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
