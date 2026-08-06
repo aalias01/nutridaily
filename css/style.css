@@ -119,6 +119,13 @@ header { display: flex; justify-content: space-between; align-items: flex-start;
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 14px 16px; box-shadow: var(--shadow);
 }
+/* Own the kcal + macro flex row. Day-intent wrapped these in .hud-nutrients
+   so fasting can replace them; without flex here they stack and the macro
+   grid reads as shrunk next to empty card space. */
+.hud-nutrients {
+  display: flex; flex-wrap: wrap; gap: 12px 18px;
+  flex: 1 1 100%; width: 100%; min-width: 0;
+}
 .kcal-block { min-width: 140px; }
 #v-kcal-big { font-size: 30px; font-weight: 750; letter-spacing: -0.5px; }
 .kcal-unit { color: var(--muted); font-size: 13px; }
@@ -992,6 +999,7 @@ body.has-info-banner.has-insight-dock #toast {
 
 @media (max-width: 560px) {
   #hud { flex-direction: column; gap: 10px; }
+  .hud-nutrients { flex-direction: column; gap: 10px; }
 }
 
 /* ============================================================
