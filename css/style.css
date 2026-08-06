@@ -998,7 +998,12 @@ body.sheet-open .insight-dock { display: none; }
 .drive-blurb { margin: 0 0 8px; line-height: 1.45; }
 .about-card h3 { margin: 0 0 6px; font-size: 15px; }
 .about-card a { color: var(--accent-ink); }
-#feedback-card .btn { margin-top: 8px; }
+.settings-panel .card-block {
+  margin-top: 22px;
+  padding-top: 4px;
+}
+#feedback-card .muted.small { margin: 0 0 12px; line-height: 1.45; }
+#feedback-card .btn { margin-top: 0; }
 
 .info-banner {
   position: fixed; left: 12px; right: 12px;
