@@ -1,4 +1,4 @@
-/* NutriDaily in-app feedback: Report sheet → Discord webhook (+ mailto / offline queue). */
+/* NutriDaily in-app feedback: Feedback sheet → Discord webhook (+ mailto / offline queue). */
 window.Feedback = (() => {
   "use strict";
 
@@ -318,10 +318,10 @@ window.Feedback = (() => {
     return '<div class="fb-overlay" id="fb-ovl" role="presentation">' +
       '<div class="fb-sheet" role="dialog" aria-modal="true" aria-labelledby="fb-title">' +
       '<div class="sheet-grab"></div>' +
-      '<h2 id="fb-title">Report a problem</h2>' +
-      '<p class="muted small" style="margin-top:0">Tell us what went wrong or felt confusing. Screenshot optional.</p>' +
-      '<label class="fb-label" for="fb-text">What happened</label>' +
-      '<textarea id="fb-text" class="fb-text" rows="4" placeholder="Describe the issue…" maxlength="4000">' + esc(draft.text) + "</textarea>" +
+      '<h2 id="fb-title">Feedback</h2>' +
+      '<p class="muted small" style="margin-top:0">Share a bug, idea, or something that felt confusing. Screenshot optional.</p>' +
+      '<label class="fb-label" for="fb-text">Your message</label>' +
+      '<textarea id="fb-text" class="fb-text" rows="4" placeholder="Share a bug, idea, or confusion…" maxlength="4000">' + esc(draft.text) + "</textarea>" +
       '<div class="fb-chips" role="group" aria-label="Category">' + chips + "</div>" +
       '<label class="fb-label" for="fb-name">Name <span class="fb-opt">(optional)</span></label>' +
       '<input type="text" id="fb-name" class="fb-input" autocomplete="name" placeholder="Your name" value="' + esc(draft.name) + '">' +

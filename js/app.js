@@ -6427,7 +6427,7 @@ const App = (() => {
       viewDate: state.viewDay || Ledger.todayKey(),
       syncEnabled: !!st.enabled,
       sampleLoaded: false,
-      version: "nutridaily-v63",
+      version: "nutridaily-v64",
       prefillEmail: (st.enabled && st.email) ? st.email : "",
     }, () => {});
   }
