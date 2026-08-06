@@ -39,7 +39,7 @@ const App = (() => {
     updateFoodId: null,
     saveAsNew: false,
     editFoodDirect: false, // opened review without AI paste step
-    foodSaveIntent: "library", // "library" | "log" — after paste save
+    foodSaveIntent: "library", // "library" | "log" | "estimate" — paste prompt + review primary
     detailMode: "library", // food detail CTA mode
     insightDays: 14, // number or "phase"
     insightNutrient: "kcal",
@@ -2396,29 +2396,43 @@ const App = (() => {
     state.saveAsNew = false;
     state.editFoodDirect = false;
     state.reviewParsed = null;
-    // Library unless explicitly logging (Today Add → AI paste)
-    state.foodSaveIntent = (opts && opts.intent === "log") ? "log" : "library";
+    const intent = opts && opts.intent;
+    // Library: Foods → Add. Log: Homemade dish. Estimate: restaurant / photo path.
+    if (intent === "estimate") state.foodSaveIntent = "estimate";
+    else if (intent === "log") state.foodSaveIntent = "log";
+    else state.foodSaveIntent = "library";
     UI.$("#paste-text").value = "";
     UI.showPastePrompt();
+    const blurb = UI.$("#paste-prompt-blurb");
     if (state.updateFoodId) {
       const f = findFood(state.updateFoodId);
       const prov = f && Foods.provenance(f);
       UI.$("#paste-title").textContent = (prov && prov.kind === "ref")
         ? "Refine reference food with AI"
         : "Update from AI paste";
+      if (blurb) {
+        blurb.textContent = "Copy or share this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.";
+      }
+    } else if (state.foodSaveIntent === "estimate") {
+      UI.$("#paste-title").textContent = "Estimate with AI";
+      if (blurb) {
+        blurb.textContent = "Copy or share this prompt, then attach a photo / label / menu shot in the same chat message before sending. Paste the reply below — Log once is the usual next step.";
+      }
     } else {
       UI.$("#paste-title").textContent = "Add food from AI paste";
+      if (blurb) {
+        blurb.textContent = "Copy or share this prompt into ChatGPT, Claude, or any LLM, describe your dish, then paste the reply below.";
+      }
     }
     UI.openSheet("sheet-paste");
   }
 
   function currentNutriPromptText() {
-    let text = NutriParse.PROMPT;
     if (state.updateFoodId) {
       const f = findFood(state.updateFoodId);
-      if (f) text = NutriParse.foodUpdatePrompt(f);
+      if (f) return NutriParse.foodUpdatePrompt(f);
     }
-    return text;
+    return state.foodSaveIntent === "estimate" ? NutriParse.ESTIMATE_PROMPT : NutriParse.PROMPT;
   }
 
   function per100Same(a, b) {
@@ -2442,10 +2456,24 @@ const App = (() => {
   }
 
   function pickPasteResult(parsed) {
-    const savable = (parsed.results || []).filter((r) => r && r.canSave);
-    if (savable.length) return savable[savable.length - 1];
-    const all = parsed.results || [];
-    return all.length ? all[all.length - 1] : null;
+    return NutriParse.pickPasteResult(parsed);
+  }
+
+  /** AI Confidence: → one-off chip. Never auto-pick weighed / label. */
+  function onceConfidenceFromReview(foodConfidence) {
+    const c = String(foodConfidence || "").toLowerCase();
+    if (c === "low") return "rough";
+    return "estimated";
+  }
+
+  /** Estimate path: Log once is primary. Homemade / library: Save food is primary. */
+  function syncReviewActionPrimacy() {
+    const save = UI.$("#btn-review-save");
+    const once = UI.$("#btn-review-log-once");
+    if (!save || !once) return;
+    const estimatePrimary = state.foodSaveIntent === "estimate" && !state.updateFoodId;
+    save.classList.toggle("ghost", estimatePrimary);
+    once.classList.toggle("ghost", !estimatePrimary);
   }
 
   function applyReviewRefinePaste() {
@@ -2496,14 +2524,16 @@ const App = (() => {
       UI.toast(parsed.error);
       return;
     }
-    // Prefer the last savable block (prompt templates / drafts often precede the reply).
+    // Prefer the last complete savable block (truncated chat revisions trail a good one).
     const result = pickPasteResult(parsed);
     if (!result) {
       UI.toast("No usable NUTRI block");
       return;
     }
     if ((parsed.results || []).length > 1) {
-      UI.toast(`Found ${parsed.results.length} blocks — using the last complete one.`);
+      UI.toast(result.truncated
+        ? `Found ${parsed.results.length} blocks — none complete, using the last one.`
+        : `Found ${parsed.results.length} blocks — using the last complete one.`);
     }
     result.food.raw = String(result.raw || text).slice(0, 12000);
     state.reviewParsed = result;
@@ -2609,6 +2639,7 @@ const App = (() => {
       logOnce.hidden = !!state.updateFoodId;
       logOnce.disabled = !!state.updateFoodId || reasons.length > 0;
     }
+    syncReviewActionPrimacy();
     return reasons.length === 0;
   }
 
@@ -2631,7 +2662,7 @@ const App = (() => {
       name: draft.name,
       cat: draft.cat || "dish",
       macros,
-      confidence: "estimated",
+      confidence: onceConfidenceFromReview(draft.confidence),
       macrosOpened: true,
     }, grams, "g", Foods.inferMeal());
     const producerError = validateProducerEntry(entry);
@@ -2706,7 +2737,9 @@ const App = (() => {
     }
     savedFood = findFood(savedFood.id);
     const wasDirect = state.editFoodDirect;
-    const intent = state.foodSaveIntent === "log" ? "log" : "library";
+    const intent = (state.foodSaveIntent === "log" || state.foodSaveIntent === "estimate")
+      ? "log"
+      : "library";
     Sync.schedulePush();
     UI.toast(updateId ? "Food updated" : "Food saved");
     state.updateFoodId = null;
@@ -2716,7 +2749,7 @@ const App = (() => {
     UI.closeSheet("sheet-paste");
     refreshFoods();
     if (!savedFood) return;
-    // Library path: Foods + detail (building database). Log path: Today + qty.
+    // Library path: Foods + detail (building database). Log/estimate path: Today + qty.
     if (wasDirect || intent === "library" || updateId) {
       switchView("foods");
       openDetail(savedFood.id, "library");
@@ -4239,6 +4272,12 @@ const App = (() => {
       UI.closeSheet("sheet-add");
       openPaste({ intent: "log" });
     });
+    if (UI.$("#btn-estimate-ai")) {
+      UI.$("#btn-estimate-ai").addEventListener("click", () => {
+        UI.closeSheet("sheet-add");
+        openPaste({ intent: "estimate" });
+      });
+    }
     const openShared = () => openImportSharedSheet();
     if (UI.$("#btn-import-shared")) UI.$("#btn-import-shared").addEventListener("click", openShared);
     if (UI.$("#btn-import-shared-add")) UI.$("#btn-import-shared-add").addEventListener("click", openShared);
@@ -5256,14 +5295,23 @@ const App = (() => {
     if (UI.$("#btn-share-prompt")) {
       UI.$("#btn-share-prompt").addEventListener("click", () => { sharePrompt(); });
     }
+    // Settings label is "AI estimate prompt" — always copy ESTIMATE_PROMPT, not leftover paste intent.
     UI.$("#btn-settings-copy-prompt").addEventListener("click", () => {
-      navigator.clipboard.writeText(NutriParse.PROMPT).then(() => UI.toast("Prompt copied")).catch(() => {
-        window.prompt("Select all and copy (Cmd/Ctrl+C):", NutriParse.PROMPT);
+      const text = NutriParse.ESTIMATE_PROMPT;
+      navigator.clipboard.writeText(text).then(() => UI.toast("Prompt copied")).catch(() => {
+        UI.showPromptFallback(text);
+        UI.toast("Select the prompt below, then copy");
       });
     });
     if (UI.$("#btn-settings-share-prompt")) {
       UI.$("#btn-settings-share-prompt").addEventListener("click", () => {
-        sharePromptText(NutriParse.PROMPT, { okToast: "Prompt copied" });
+        sharePromptText(NutriParse.ESTIMATE_PROMPT, {
+          okToast: "Prompt copied",
+          onClipboardFail: (t) => {
+            UI.showPromptFallback(t);
+            UI.toast("Select the prompt below, then copy");
+          },
+        });
       });
     }
     UI.$("#btn-clipboard").addEventListener("click", async () => {

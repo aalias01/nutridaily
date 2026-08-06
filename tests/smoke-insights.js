@@ -3548,6 +3548,58 @@ async function runImportSecurity() {
     [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   }
 
+
+  // Step 6 — Estimate with AI entry: ESTIMATE_PROMPT + Log once primary.
+  {
+    const UI = window.eval("UI");
+    const NutriParse = window.eval("NutriParse");
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+    $("#fab-add").click();
+    ok(!!$("#btn-estimate-ai"), "Estimate with AI is on the Add sheet");
+    $("#btn-estimate-ai").click();
+    ok(App.state.foodSaveIntent === "estimate" &&
+        /Estimate with AI/i.test(($("#paste-title") && $("#paste-title").textContent) || ""),
+      "Estimate entry sets estimate intent and paste title");
+    ok(/What I ate \(attach/i.test(NutriParse.ESTIMATE_PROMPT),
+      "fixture: ESTIMATE_PROMPT is loaded in the page");
+    $("#btn-manual-food").click();
+    ok($("#btn-review-log-once").classList.contains("btn") &&
+        !$("#btn-review-log-once").classList.contains("ghost") &&
+        $("#btn-review-save").classList.contains("ghost"),
+      "Estimate path makes Log once primary and Save food secondary");
+    $("#rev-name").value = "Restaurant Bowl";
+    $("#rev-kcal").value = "180";
+    $("#rev-p").value = "12";
+    $("#rev-c").value = "20";
+    $("#rev-f").value = "5";
+    $("#rev-fb").value = "3";
+    $("#rev-na").value = "";
+    $("#rev-k").value = "";
+    if (App.state.reviewParsed && App.state.reviewParsed.food) {
+      App.state.reviewParsed.food.confidence = "low";
+    }
+    $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
+    const estDay = "2019-07-02";
+    App.state.viewDay = estDay;
+    $("#btn-review-log-once").click();
+    const estEntry = Ledger.entriesFor(estDay).find((e) => e.name === "Restaurant Bowl" && e.source === "once");
+    ok(estEntry && estEntry.sd === 0.40 && !Object.prototype.hasOwnProperty.call(estEntry, "per100"),
+      "Log once from estimate seeds low confidence as rough (sd 0.40) with no per100");
+    UI.closeSheet("sheet-paste");
+    App.state.viewDay = today;
+    await new Promise((r) => setTimeout(r, 220));
+
+    $("#fab-add").click();
+    $("#btn-paste-new").click();
+    $("#btn-manual-food").click();
+    ok($("#btn-review-save").classList.contains("btn") &&
+        !$("#btn-review-save").classList.contains("ghost") &&
+        $("#btn-review-log-once").classList.contains("ghost"),
+      "Homemade dish path keeps Save food primary");
+    UI.closeSheet("sheet-paste");
+    await new Promise((r) => setTimeout(r, 220));
+  }
+
   // Part IX.5: notScored() lacked incompleteMineral's empty-day guard, so a
   // declared fast with nothing logged at all printed "0 mg* · not scored
   // today" plus a spurious "N% covered" footnote — there was no food to

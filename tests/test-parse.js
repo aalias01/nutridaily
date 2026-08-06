@@ -434,5 +434,53 @@ console.log("\n[foods] untouched catalog migration");
   ok(!keptVersioned.changed && keptVersioned.foods[0] === versioned, "versioned/history-bearing catalog edits are preserved");
 }
 
+console.log("\n[parse] pickPasteResult + ESTIMATE_PROMPT");
+{
+  const completeBlock = (name) => `NUTRI v1
+Name: ${name}
+Batch: 200 g total, 1 servings
+Totals: 260 kcal | P 5.4 | C 56 | F 0.6 | Fiber 0.8 | Sodium 2
+Per 100 g: 130 kcal | P 2.7 | C 28 | F 0.3 | Fiber 0.4 | Sodium 1
+Confidence: medium
+END`;
+
+  const truncatedBlock = `NUTRI v1
+Name: Truncated revision
+Batch: 250 g total, 1 servings
+Per 100 g: 140 kcal | P 8 | C 20 | F 4 | Fiber 1 | Sodium 100
+Confidence: medium
+`;
+
+  // Complete then truncated → complete wins (the live bug Correction A fixes).
+  const cutOff = NutriParse.parse(`${completeBlock("Good first")}\n\n${truncatedBlock}`);
+  const cutPicked = NutriParse.pickPasteResult(cutOff);
+  ok(cutPicked && cutPicked.food.name === "Good first" && !cutPicked.truncated,
+    "complete block wins over a later truncated savable block");
+
+  // Two complete → last.
+  const two = NutriParse.parse(`${completeBlock("Old draft")}\n\n${completeBlock("Final dish")}`);
+  const twoPicked = NutriParse.pickPasteResult(two);
+  ok(twoPicked && twoPicked.food.name === "Final dish",
+    "two complete blocks still prefer the last");
+
+  // Only truncated → last truncated, flagged.
+  const onlyTrunc = NutriParse.parse(`${truncatedBlock}\nNUTRI v1\nName: Later truncate\nPer 100 g: 100 kcal | P 5 | C 10 | F 3 | Fiber 1 | Sodium 50\n`);
+  const truncPicked = NutriParse.pickPasteResult(onlyTrunc);
+  ok(truncPicked && truncPicked.truncated && truncPicked.food.name === "Later truncate",
+    "only-truncated paste returns the last truncated block");
+
+  // Prompt echo + real reply (strict prompt embeds a template block).
+  const echo = NutriParse.parse(`${NutriParse.PROMPT}\n${completeBlock("Real estimate")}`);
+  const echoPicked = NutriParse.pickPasteResult(echo);
+  ok(echoPicked && echoPicked.food.name === "Real estimate",
+    "PROMPT echo + reply picks the real food");
+
+  ok(/Attach whatever|clarifying questions|must not be high|What I ate \(attach/i.test(NutriParse.ESTIMATE_PROMPT),
+    "ESTIMATE_PROMPT invites evidence, questions, confidence cap, and an open slot");
+  ok(/No commentary before or after/i.test(NutriParse.PROMPT) &&
+      !/clarifying questions/i.test(NutriParse.PROMPT),
+    "strict PROMPT stays one-shot (estimate rules not mixed in)");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

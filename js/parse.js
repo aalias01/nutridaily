@@ -59,8 +59,72 @@ const NutriParse = (() => {
     "- No commentary before or after the code block.\n\n" +
     "My dish:\n";
 
+  /**
+   * Restaurant / photo / label path. Conversation OK; evidence encouraged.
+   * Do not loosen PROMPT — homemade one-shot discipline stays load-bearing.
+   */
+  const ESTIMATE_PROMPT =
+    "You are helping estimate nutrition for something I ate. Attach whatever I give you in this chat —\n" +
+    "a photo of the plate, the menu item, packaging, a nutrition label, or a receipt.\n\n" +
+    "Ask me up to 3 clarifying questions first if the answer would materially change the estimate\n" +
+    "(portion size, cooking fat, fried vs grilled, sauce). Then, when you have enough to work from,\n" +
+    "reply with exactly ONE NUTRI v1 … END block in your final message. Other messages in the chat\n" +
+    "may be free-form; I only need the block once at the end.\n\n" +
+    "Format (final message only):\n\n" +
+    "NUTRI v1\n" +
+    "Name: <short dish name>\n" +
+    "Aliases: <other names I might search for, comma separated>\n" +
+    "Category: <one of: dish, meat, protein, grain, legume, veg, fruit, dairy, fat, nuts, bev, snack>\n" +
+    "Batch: <finished weight in grams> g total, <number> servings\n" +
+    "Totals: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg> | Potassium <mg>\n" +
+    "Per 100 g: <kcal> kcal | P <g> | C <g> | F <g> | Fiber <g> | Sodium <mg> | Potassium <mg>\n" +
+    "Piece: <grams per ONE countable item, or omit>\n" +
+    "Log as: <piece | grams>\n" +
+    "Count as: <singular noun I would say, e.g. burger, taco — omit if Log as: grams>\n" +
+    "Serving: <optional grams; only if different from Piece>\n" +
+    "Ingredients:\n" +
+    "- <ingredient> - <amount in grams>\n" +
+    "Prep: <one or two lines: cooking method, oil used, anything that changes the numbers>\n" +
+    "Notes: <assumptions — oil absorbed, butter finish, sugar in sauces, and whether this came from a label, menu, or photo>\n" +
+    "Confidence: <high | medium | low>\n" +
+    "END\n\n" +
+    "Rules:\n" +
+    "- Plain numbers only. No ranges, no \"approx\", no units inside the number fields.\n" +
+    "- Demand an explicit portion estimate in grams in Batch (or Piece), with a stated basis in Notes.\n" +
+    "  That mass is the number that moves everything else.\n" +
+    "- Totals are for the finished portion you described after cooking.\n" +
+    "- Per 100 g must equal Totals divided by Batch grams, times 100. Do that arithmetic and check it.\n" +
+    "- Batch \"servings\" is recipe math only. It is NOT how I log day to day.\n" +
+    "- Log as / Piece: same rules as a homemade dish — piece when I would count items; grams when I would weigh.\n" +
+    "- Plain numbers only. No thousands separators (write 1153 not 1,153).\n" +
+    "- Use USDA-style values. Account for oil absorbed and water lost in cooking.\n" +
+    "- Sodium and potassium in milligrams. Everything else in grams.\n" +
+    "- If you are not reasonably confident about potassium, write Potassium unknown rather than guessing.\n" +
+    "- If you are working from a photo or a menu description rather than a nutrition label,\n" +
+    "  Confidence must not be high.\n" +
+    "- Where a nutrition label is present, prefer it, use the per-serving column, and state the\n" +
+    "  serving size assumed in Notes.\n" +
+    "- Before you reply with the block, Atwater-check: 4×P + 4×C + 9×F should land within about 10%\n" +
+    "  of the kcal on the same basis. Recompute if it does not.\n" +
+    "- Do not invent a food. If nothing follows the slot below — no description and no image —\n" +
+    "  ask what I ate instead of emitting a NUTRI block.\n\n" +
+    "What I ate (attach photos or the nutrition label in this same message):\n";
+
   function updatePrompt(raw) {
     return PROMPT + "\nThis is my current saved version. Return a corrected block in the same format:\n" + String(raw || "");
+  }
+
+  /**
+   * Prefer the last complete savable block. A truncated savable block after a
+   * complete one is the common chat-revision failure mode (see ONE-OFF plan §10 A).
+   */
+  function pickPasteResult(parsed) {
+    const results = (parsed && parsed.results) || [];
+    const savable = results.filter((r) => r && r.canSave);
+    const complete = savable.filter((r) => !r.truncated);
+    if (complete.length) return complete[complete.length - 1];
+    if (savable.length) return savable[savable.length - 1];
+    return results.length ? results[results.length - 1] : null;
   }
 
   /**
@@ -622,8 +686,8 @@ const NutriParse = (() => {
   }
 
   return {
-    PROMPT, updatePrompt, foodUpdatePrompt, sanitizeFoodRaw,
-    parse, preprocess, extractBlocks, parseMacros, parseBatch,
+    PROMPT, ESTIMATE_PROMPT, updatePrompt, foodUpdatePrompt, sanitizeFoodRaw,
+    pickPasteResult, parse, preprocess, extractBlocks, parseMacros, parseBatch,
   };
 })();
 
