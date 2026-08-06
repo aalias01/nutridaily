@@ -54,6 +54,10 @@
   </header>
 
   <section id="hud" aria-label="Day totals">
+    <div class="hud-gap-actions">
+      <button type="button" class="hud-planner-btn" id="btn-close-gap">Planner</button>
+      <button type="button" class="hud-planner-btn gap-plan-chip" id="btn-gap-plan" hidden>Plan: 0 left</button>
+    </div>
     <div id="hud-fasting" class="hud-fasting" hidden>
       <div class="hud-fasting-title">Fasting</div>
       <div class="hud-fasting-meta" id="hud-fasting-meta"></div>
@@ -89,10 +93,6 @@
         <button type="button" class="linkbtn" id="btn-weight-save">Save</button>
       </div>
       <p class="muted small weight-trend-line" id="weight-trend-line" hidden></p>
-      <div class="gap-row" id="gap-row">
-        <button type="button" class="btn ghost full" id="btn-close-gap">Planner</button>
-        <button type="button" class="btn ghost full gap-plan-chip" id="btn-gap-plan" hidden>Plan: 0 left</button>
-      </div>
       <div id="today-day-detail"></div>
       <div id="day-log" class="day-log"></div>
       <button id="fab-add" class="fab" type="button" aria-label="Add food">+</button>

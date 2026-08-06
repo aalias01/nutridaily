@@ -5116,10 +5116,16 @@ const App = (() => {
     });
 
     if (UI.$("#btn-close-gap")) {
-      UI.$("#btn-close-gap").addEventListener("click", () => openGapSheet({ plan: false }));
+      UI.$("#btn-close-gap").addEventListener("click", (e) => {
+        e.stopPropagation();
+        openGapSheet({ plan: false });
+      });
     }
     if (UI.$("#btn-gap-plan")) {
-      UI.$("#btn-gap-plan").addEventListener("click", () => openGapSheet({ plan: true }));
+      UI.$("#btn-gap-plan").addEventListener("click", (e) => {
+        e.stopPropagation();
+        openGapSheet({ plan: true });
+      });
     }
     if (UI.$("#btn-gap-to-prompt")) {
       UI.$("#btn-gap-to-prompt").addEventListener("click", () => {
