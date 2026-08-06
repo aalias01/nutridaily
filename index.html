@@ -359,28 +359,9 @@
       <input id="pick-search" type="search" placeholder="Search banana, eggs, rice…" aria-label="Search foods to log">
       <div id="pick-list" class="sheet-list"></div>
       <button id="btn-once-food" class="btn ghost full" type="button">+ One-off food (not saved)</button>
-      <button id="btn-quick-kcal" class="btn ghost full" type="button">+ Quick kcal only</button>
       <button id="btn-estimate-ai" class="btn ghost full" type="button">+ Estimate with AI</button>
       <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (AI paste)</button>
       <button id="btn-import-shared-add" class="btn ghost full" type="button">Import shared food</button>
-    </div>
-  </div>
-
-  <!-- Quick kcal sheet -->
-  <div id="sheet-kcal" class="sheet" hidden>
-    <div class="sheet-backdrop" data-close="sheet-kcal"></div>
-    <div class="sheet-card">
-      <div class="sheet-grab"></div>
-      <h3>Quick kcal</h3>
-      <p class="muted small">Log calories without building a full food (restaurant estimate, etc.).</p>
-      <label>Name<input id="kcal-name" type="text" placeholder="e.g. lunch out"></label>
-      <label>Calories<input id="kcal-amount" type="text" inputmode="decimal" placeholder="650"></label>
-      <div id="kcal-meals" class="unit-chips meal-chips"></div>
-      <button id="kcal-save" class="btn full" type="button">Save</button>
-      <div class="row qty-secondary">
-        <button id="kcal-cancel" class="btn ghost" type="button">Cancel</button>
-      </div>
-      <button id="kcal-remove" class="linkbtn danger" type="button" hidden>Remove this log entry</button>
     </div>
   </div>
 
@@ -390,7 +371,7 @@
     <div class="sheet-card tall">
       <div class="sheet-grab"></div>
       <h3 id="once-title">One-off food</h3>
-      <p class="muted small">Log this meal once. It is not added to My Foods.</p>
+      <p class="muted small">Log this meal once. It is not added to My Foods. Leave Macros closed to save calories only (same as the old Quick kcal).</p>
       <label>Name<input id="once-name" type="text" placeholder="e.g. Pad thai — Thai House" autocomplete="off"></label>
       <div id="once-meals" class="unit-chips meal-chips" role="group" aria-label="Meal"></div>
       <label class="small muted" for="once-qty">Portion</label>

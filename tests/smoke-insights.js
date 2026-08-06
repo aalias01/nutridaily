@@ -2501,23 +2501,26 @@ async function runImportSecurity() {
   const producerDay = "2020-01-02";
   App.state.viewDay = producerDay;
   $("#fab-add").click();
-  $("#btn-quick-kcal").click();
-  $("#kcal-name").value = "Q".repeat(161);
-  $("#kcal-amount").value = "1000000001";
+  $("#btn-once-food").click();
+  $("#once-name").value = "Q".repeat(161);
+  $("#once-kcal").value = "1000000001";
+  $("#once-qty").value = "1";
+  // Macros closed → calories-only (source:quick) producer path.
+  if ($("#once-macros")) $("#once-macros").open = false;
   const beforeQuickReject = window.localStorage.getItem("nd_events_v1");
   let producerRejectSyncs = 0;
   Sync.schedulePush = () => { producerRejectSyncs += 1; };
-  $("#kcal-save").click();
+  $("#once-save").click();
   ok(window.localStorage.getItem("nd_events_v1") === beforeQuickReject && producerRejectSyncs === 0 &&
-      !$("#sheet-kcal").hidden,
+      !$("#sheet-once").hidden,
     "overbound quick-kcal name and amount cause no event, UI close, or sync");
-  $("#kcal-name").value = "Q".repeat(160);
-  $("#kcal-amount").value = "1000000000";
+  $("#once-name").value = "Q".repeat(160);
+  $("#once-kcal").value = "1000000000";
   Sync.schedulePush = originalSchedulePush;
-  $("#kcal-save").click();
+  $("#once-save").click();
   const quickBoundary = Ledger.entriesFor(producerDay).find((entry) => entry.source === "quick");
   ok(quickBoundary && quickBoundary.name.length === 160 && quickBoundary.qty === 1e9 &&
-      quickBoundary.macros.kcal === 1e9,
+      quickBoundary.unit === "kcal" && quickBoundary.macros.kcal === 1e9,
     "quick-kcal accepts the exact producer/import name and numeric boundaries");
 
   $("#fab-add").click();
@@ -3181,13 +3184,16 @@ async function runImportSecurity() {
 
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   $("#fab-add").click();
-  $("#btn-quick-kcal").click();
-  $("#kcal-name").value = '<img id="quick-xss" src=x> Quick';
-  $("#kcal-amount").value = "500";
-  $("#kcal-save").click();
+  $("#btn-once-food").click();
+  $("#once-name").value = '<img id="quick-xss" src=x> Quick';
+  $("#once-kcal").value = "500";
+  $("#once-qty").value = "1";
+  if ($("#once-macros")) $("#once-macros").open = false;
+  $("#once-save").click();
   const quick = Ledger.entriesFor(today).slice(-1)[0];
   const totals = Ledger.totalsFor(today);
-  ok(quick.macros.na === null && quick.macros.k === null, "quick kcal stores sodium and potassium as unknown");
+  ok(quick && quick.source === "quick" && quick.macros.na === null && quick.macros.k === null,
+    "quick kcal stores sodium and potassium as unknown");
   ok(totals.naCoverage === 0 && totals.kCoverage === 0, "quick kcal does not claim electrolyte coverage");
   ok(/^0 mg\*$/.test($("#v-sodium").textContent.trim()) &&
       /^0 mg\*$/.test($("#v-potassium").textContent.trim()),
@@ -3232,21 +3238,21 @@ async function runImportSecurity() {
     const portionChip = $("#once-units [data-unit='portion']");
     if (portionChip) portionChip.click();
     $("#once-qty").value = "1";
-    // kcal-only: leave macros <details> closed
+    // kcal-only: leave macros <details> closed → source:quick (Step 7)
     ok(!$("#once-macros").open, "macros details start collapsed for a new one-off");
     $("#once-save").click();
     const onceEntries = Ledger.entriesFor(onceDay);
-    const onceEntry = onceEntries.find((e) => e.source === "once");
-    ok(onceEntry && onceEntry.name === "Pad thai — Thai House" && onceEntry.foodId == null &&
-        onceEntry.grams === 0 && onceEntry.unit === "portion" &&
+    let onceEntry = onceEntries.find((e) => e.name === "Pad thai — Thai House");
+    ok(onceEntry && onceEntry.source === "quick" && onceEntry.foodId == null &&
+        onceEntry.grams === 0 && onceEntry.unit === "kcal" && onceEntry.qty === 850 &&
         onceEntry.macros.kcal === 850 && onceEntry.macros.p === 0 &&
         onceEntry.macros.na === null && onceEntry.macros.k === null &&
         !Object.prototype.hasOwnProperty.call(onceEntry, "per100") &&
-        onceEntry.sd === 0.40,
-      "kcal-only one-off lands as source:once with sd 0.40 and no per100",
+        onceEntry.sd === 0.25,
+      "kcal-only (macros closed) lands as source:quick with unit:kcal and no per100",
       onceEntry ? JSON.stringify({
         name: onceEntry.name, source: onceEntry.source, sd: onceEntry.sd,
-        unit: onceEntry.unit, grams: onceEntry.grams, macros: onceEntry.macros,
+        unit: onceEntry.unit, grams: onceEntry.grams, qty: onceEntry.qty, macros: onceEntry.macros,
         hasPer100: Object.prototype.hasOwnProperty.call(onceEntry, "per100"),
       }) : `missing; day has ${onceEntries.length}: ${onceEntries.map((e) => `${e.source}:${e.name}`).join("|")}`);
     ok(App.state.personalFoods.length === foodsBefore,
@@ -3276,6 +3282,7 @@ async function runImportSecurity() {
           amended.macros.f === 28 && amended.sd === 0.25 &&
           !Object.prototype.hasOwnProperty.call(amended, "per100"),
         "one-off amend updates portion macros without introducing per100");
+      onceEntry = amended || onceEntry;
       ok($("#sheet-qty").hidden, "one-off edit never opens the qty sheet");
 
       // Step 3 Guard 1: Edit from the day log opens #sheet-once, not qty.
@@ -3312,8 +3319,8 @@ async function runImportSecurity() {
         ok($("#once-name").value === "Pad thai — Thai House",
           "repeat prefill restores the one-off name");
         ok($("#once-remove").hidden, "repeat-yesterday does not enter edit mode");
+        ok($("#once-macros").open, "repeat of a macro one-off keeps macros open");
         $("#once-kcal").value = "400";
-        $("#once-macros").open = false;
         $("#once-save").click();
         const afterRepeat = Ledger.entriesFor(today).filter((e) => e.source === "once");
         ok(afterRepeat.length === beforeRepeat + 1 &&
@@ -3356,7 +3363,7 @@ async function runImportSecurity() {
       App.state.editEntryDay = null;
       App.state.pickFood = null;
 
-      // Regression: legacy quick kcal still routes to #sheet-kcal.
+      // Regression: legacy quick kcal still opens for edit after #sheet-kcal is gone.
       const quickLegacy = Ledger.entriesFor(today).find((e) => e.source === "quick");
       ok(!!quickLegacy, "smoke fixture still has a quick-kcal entry on today");
       if (quickLegacy) {
@@ -3366,9 +3373,10 @@ async function runImportSecurity() {
         UI.renderDayLog(today, Ledger.entriesFor(today));
         $(`#day-log [data-action='toggle-entry'][data-id='${quickLegacy.id}']`).click();
         $(`#day-log [data-action='edit-entry'][data-id='${quickLegacy.id}']`).click();
-        ok(UI.topSheetId() === "sheet-kcal" && !$("#sheet-kcal").hidden,
-          "legacy source:quick still opens #sheet-kcal, not once");
-        UI.closeSheet("sheet-kcal");
+        ok(UI.topSheetId() === "sheet-once" && !$("#sheet-once").hidden &&
+            (!$("#once-macros") || !$("#once-macros").open),
+          "legacy source:quick still opens #sheet-once with macros closed");
+        UI.closeSheet("sheet-once");
         await new Promise((r) => setTimeout(r, 220));
       }
 

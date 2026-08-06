@@ -1900,32 +1900,9 @@ const App = (() => {
     return !!document.querySelector("#view-settings.active");
   }
 
-  function openQuickKcal(prefill) {
-    UI.closeSheet("sheet-add");
-    UI.closeSheet("sheet-qty");
-    UI.$("#kcal-name").value = (prefill && prefill.name) || "";
-    UI.$("#kcal-amount").value = prefill && prefill.kcal != null ? prefill.kcal : "";
-    UI.fillMealChips("#kcal-meals", (prefill && prefill.meal) || undefined);
-    if (prefill && prefill.editId) {
-      state.editEntryId = prefill.editId;
-      state.editEntryDay = prefill.editDay || state.viewDay;
-    } else if (!(prefill && prefill.keepEdit)) {
-      state.editEntryId = null;
-      state.editEntryDay = null;
-    }
-    const rem = UI.$("#kcal-remove");
-    if (rem) rem.hidden = !state.editEntryId;
-    UI.openSheet("sheet-kcal");
-  }
-
-  /**
-   * Open the one-off sheet for a new log or to edit/repeat an existing once entry.
-   * Prefill via { from: entry, editId, editDay } — Step 3 routes openQtyFromEntry here.
-   */
   function openOnceSheet(prefill) {
     UI.closeSheet("sheet-add");
     UI.closeSheet("sheet-qty");
-    UI.closeSheet("sheet-kcal");
     const p = prefill || {};
     if (p.editId) {
       state.editEntryId = p.editId;
@@ -1956,7 +1933,31 @@ const App = (() => {
       UI.setOnceErrors(read.errors);
       return;
     }
-    const entry = Foods.entryFromOnceDraft(read.draft, read.qty, read.unit, read.meal);
+    let entry;
+    // Macros <details> closed → calories-only Quick shape (source:quick, unit:kcal).
+    // Plan Step 7: keep that ledger identity so legacy tools and badges stay valid.
+    if (!read.draft.macrosOpened) {
+      const kcal = Math.round(Number(read.draft.macros.kcal));
+      if (!Number.isFinite(kcal) || kcal <= 0) {
+        UI.setOnceErrors(["Calories for that portion are required"]);
+        return;
+      }
+      entry = {
+        name: read.draft.name,
+        displayQty: `${kcal} kcal`,
+        grams: 0,
+        macros: { kcal, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
+        sd: 0.25,
+        meal: read.meal,
+        source: "quick",
+        cat: read.draft.cat || "snack",
+        foodId: null,
+        qty: kcal,
+        unit: "kcal",
+      };
+    } else {
+      entry = Foods.entryFromOnceDraft(read.draft, read.qty, read.unit, read.meal);
+    }
     if (!producerText(entry.name, PRODUCER_LIMITS.text.name)) {
       UI.setOnceErrors(["Name must be 160 characters or fewer"]);
       return;
@@ -1977,7 +1978,7 @@ const App = (() => {
     const day = editDay();
     try {
       if (state.editEntryId) {
-        Ledger.amendEntry(day, state.editEntryId, entry, "one-off edited");
+        Ledger.amendEntry(day, state.editEntryId, entry, entry.source === "quick" ? "quick kcal edited" : "one-off edited");
       } else {
         Ledger.addEntry(day, entry);
       }
@@ -2237,22 +2238,14 @@ const App = (() => {
       state.editEntryDay = null;
     }
     // §3.3 / Correction C Guard 1: never build an orphan qty shell for a
-    // one-off — missing per100 zeros the entry and rewrites source to personal.
-    if (entry.source === "once") {
+    // one-off / quick-kcal — missing per100 zeros the entry and rewrites source.
+    if (entry.source === "once" || entry.source === "quick" || entry.unit === "kcal") {
       openOnceSheet({
         from: entry,
         editId: (opts && opts.allowRemove) ? entry.id : null,
         editDay: state.viewDay,
-      });
-      return;
-    }
-    if (entry.source === "quick" || entry.unit === "kcal") {
-      openQuickKcal({
-        name: entry.name,
-        kcal: (entry.macros && entry.macros.kcal) || entry.qty || 0,
-        meal: entry.meal,
-        editId: (opts && opts.allowRemove) ? entry.id : null,
-        editDay: state.viewDay,
+        // Quick / kcal-only stays macros-closed so Save writes source:quick again.
+        macrosOpened: entry.source === "once" ? undefined : false,
       });
       return;
     }
@@ -5172,7 +5165,6 @@ const App = (() => {
       });
     }
 
-    UI.$("#btn-quick-kcal").addEventListener("click", () => openQuickKcal());
     UI.$("#btn-once-food").addEventListener("click", () => openOnceSheet());
     UI.$("#once-cancel").addEventListener("click", () => {
       resetQtyState();
@@ -5202,70 +5194,6 @@ const App = (() => {
       const id = state.editEntryId;
       const day = editDay();
       UI.closeSheet("sheet-once");
-      resetQtyState();
-      removeEntryWithUndo(day, id);
-    });
-
-    UI.$("#kcal-cancel").addEventListener("click", () => {
-      resetQtyState();
-      UI.closeSheet("sheet-kcal");
-    });
-    UI.$("#kcal-meals").addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-meal]");
-      if (!btn) return;
-      UI.$("#kcal-meals").querySelectorAll(".uchip").forEach((c) => {
-        const on = c === btn; c.classList.toggle("active", on); c.setAttribute("aria-pressed", String(on));
-      });
-    });
-    UI.$("#kcal-save").addEventListener("click", () => {
-      const name = UI.$("#kcal-name").value.trim() || "Quick kcal";
-      const kcal = parseAmount(UI.$("#kcal-amount").value);
-      if (!Number.isFinite(kcal) || kcal <= 0) { UI.toast("Enter calories"); return; }
-      if (!producerText(name, PRODUCER_LIMITS.text.name) || kcal > PRODUCER_LIMITS.amount) {
-        UI.toast("Name or calories exceed the supported storage limits");
-        return;
-      }
-      const meal = UI.selectedMealIn("#kcal-meals");
-      const payload = {
-        name,
-        displayQty: `${Math.round(kcal)} kcal`,
-        grams: 0,
-        // Calories-only estimates do not tell us anything about electrolytes.
-        // Unknown must stay null so this entry lowers Na/K coverage instead of
-        // claiming a measured zero-sodium, zero-potassium food.
-        macros: { kcal: Math.round(kcal), p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
-        sd: 0.25,
-        meal,
-        source: "quick",
-        cat: "snack",
-        foodId: null,
-        qty: kcal,
-        unit: "kcal",
-      };
-      const producerError = validateProducerEntry(payload);
-      if (producerError) { UI.toast(producerError); return; }
-      const day = editDay();
-      try {
-        if (state.editEntryId) {
-          Ledger.amendEntry(day, state.editEntryId, payload, "quick kcal edited");
-        } else {
-          Ledger.addEntry(day, payload);
-        }
-      } catch (error) {
-        UI.toast("Couldn’t save this log — nothing changed");
-        return;
-      }
-      Sync.schedulePush();
-      UI.closeSheet("sheet-kcal");
-      resetQtyState();
-      refreshDay();
-      UI.toast("Logged");
-    });
-    UI.$("#kcal-remove").addEventListener("click", () => {
-      if (!state.editEntryId) return;
-      const id = state.editEntryId;
-      const day = editDay();
-      UI.closeSheet("sheet-kcal");
       resetQtyState();
       removeEntryWithUndo(day, id);
     });
@@ -5617,7 +5545,7 @@ const App = (() => {
       if (close) {
         const sheetId = close.dataset.close;
         UI.closeSheet(sheetId);
-        if (sheetId === "sheet-qty" || sheetId === "sheet-kcal" || sheetId === "sheet-once") {
+        if (sheetId === "sheet-qty" || sheetId === "sheet-once") {
           if (sheetId === "sheet-qty") {
             state.gapPendingItemId = null;
             state.gapPendingDay = null;

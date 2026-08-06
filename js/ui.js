@@ -2982,6 +2982,9 @@ const UI = (() => {
       : entry && entry.unit === "portion" ? "portion"
       : entry && entry.unit === "g" ? "g"
       : "portion";
+    // Legacy quick-kcal used unit:"kcal" with qty = calories — show a 1-portion
+    // shell; Save with macros closed rewrites unit:kcal from the kcal field.
+    if (entry && (entry.source === "quick" || entry.unit === "kcal")) unit = "portion";
     if (unit === "oz" && !imperial) unit = "g";
     const units = imperial ? ["g", "oz", "portion"] : ["g", "portion"];
     const unitsRoot = $("#once-units");
@@ -2990,9 +2993,10 @@ const UI = (() => {
         `<button type="button" class="uchip${u === unit ? " active" : ""}" data-unit="${u}" aria-pressed="${u === unit}">${u}</button>`
       ).join("");
     }
-    const qty = entry && Number.isFinite(Number(entry.qty)) && Number(entry.qty) > 0
+    let qty = entry && Number.isFinite(Number(entry.qty)) && Number(entry.qty) > 0
       ? entry.qty
       : (unit === "portion" ? 1 : "");
+    if (entry && (entry.source === "quick" || entry.unit === "kcal")) qty = 1;
     if (qtyEl) qtyEl.value = qty === "" ? "" : String(qty);
 
     const m = (entry && entry.macros) || {};
@@ -3009,11 +3013,16 @@ const UI = (() => {
     setMacro("#once-na", m.na);
     setMacro("#once-k", m.k);
 
-    const macrosOpened = !!(o.macrosOpened
-      || (entry && (
+    let macrosOpened;
+    if (o.macrosOpened === true) macrosOpened = true;
+    else if (o.macrosOpened === false || (entry && (entry.source === "quick" || entry.unit === "kcal"))) {
+      macrosOpened = false;
+    } else {
+      macrosOpened = !!(entry && (
         Number(m.p) > 0 || Number(m.c) > 0 || Number(m.f) > 0 || Number(m.fb) > 0
         || m.na != null || m.k != null
-      )));
+      ));
+    }
     if (macrosEl) macrosEl.open = macrosOpened;
     if (nudge) nudge.hidden = macrosOpened;
 
