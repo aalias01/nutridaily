@@ -14,6 +14,7 @@ const UI = (() => {
   let _weightHit = null; // { keys, pad, iw, w, byDay, unit }
   let expandedEntryId = null;
   let expandedDayKey = null;
+  let expandedGapItemId = null;
   let _modalInert = [];
 
   function clearModalInert() {
@@ -582,6 +583,10 @@ const UI = (() => {
 
   function toggleEntryExpand(id) {
     expandedEntryId = expandedEntryId === id ? null : id;
+  }
+
+  function toggleGapItemExpand(id) {
+    expandedGapItemId = expandedGapItemId === id ? null : id;
   }
 
   function renderDayLog(dayKey, entries) {
@@ -3720,32 +3725,76 @@ const UI = (() => {
   }
 
   /**
-   * Plan items list. pending first, then logged.
-   * items: [{ id, name, meal, qtyLabel, macros, macrosExtra, status }]
+   * Plan items list (Today log layout). pending first, then logged.
+   * items: [{ id, name, meal, qtyLabel, qty, unit, macrosObj, status }]
    */
   function renderGapPlanList(items) {
     const root = $("#gap-plan-list");
     if (!root) return;
     if (!items || !items.length) {
+      expandedGapItemId = null;
       root.innerHTML = `<div class="empty small">Nothing planned yet. Add a food or fill remaining with AI.</div>`;
       return;
     }
+    if (expandedGapItemId && !items.some((it) => it.id === expandedGapItemId)) {
+      expandedGapItemId = null;
+    }
     root.innerHTML = items.map((it) => {
       const logged = it.status === "logged";
+      const isExp = it.id === expandedGapItemId;
       const meal = it.meal || "";
       const head = [meal, it.qtyLabel].filter(Boolean).join(" · ");
-      const macros = it.macros || "";
-      const extra = it.macrosExtra
-        ? `<span class="gap-macros-extra"> · ${esc(it.macrosExtra)}</span>`
+      const m = it.macrosObj;
+      const kcal = m && Number.isFinite(Number(m.kcal)) ? fmt(m.kcal) : "?";
+      const protein = m && Number.isFinite(Number(m.p)) ? Number(m.p) : "?";
+      const unitLabel = it.unit && it.unit !== "g" && it.unit !== "grams" ? it.unit : "g";
+      const qtyVal = it.qty != null && Number.isFinite(Number(it.qty)) ? it.qty : "";
+      const expanded = isExp
+        ? `<div class="r-expanded">
+            <div class="r-expanded-main">
+              <div class="r-contrib">${m ? esc(fmtMacros(m)) : "Macros unavailable"}</div>
+              ${logged ? "" : `<label class="gap-plan-amt">Amount
+                <span class="gap-plan-amt-row">
+                  <input type="number" inputmode="decimal" min="0" step="any" class="gap-plan-qty" data-id="${esc(it.id)}" value="${esc(qtyVal)}" aria-label="Planned amount">
+                  <span class="muted small">${esc(unitLabel)}</span>
+                </span>
+              </label>`}
+            </div>
+            <div class="r-expanded-actions">
+              ${logged
+                ? `<span class="muted small">Logged</span>`
+                : `<button type="button" class="linkbtn edit-entry-btn" data-action="edit-gap-item" data-id="${esc(it.id)}">Edit</button>`}
+            </div>
+          </div>`
         : "";
-      return `
-        <div class="gap-plan-row">
-          <button type="button" class="gap-plan-item${logged ? " logged" : ""}" data-action="log-gap-item" data-id="${esc(it.id)}" ${logged ? "disabled" : ""}>
-            <div class="r-name">${esc(it.name)}</div>
-            <div class="r-qty">${esc(head)}${macros ? ` · ${esc(macros)}` : ""}${extra}${logged ? " · logged" : ""}</div>
+      return `<div class="log-row-stack${isExp ? " is-expanded" : ""}${logged ? " is-logged" : ""}" data-id="${esc(it.id)}">
+        <div class="log-row${isExp ? " expanded" : ""}">
+          <button type="button" class="log-row-main" data-action="toggle-gap-item" data-id="${esc(it.id)}">
+            <div class="r-top">
+              <div>
+                <div class="r-name">${esc(it.name)}</div>
+                <div class="r-qty">${esc(head)}${logged ? " · logged" : ""}</div>
+              </div>
+              <div class="r-macros">
+                <span class="mini">${kcal} kcal</span>
+                <span class="mini">P ${esc(protein)}</span>
+              </div>
+            </div>
           </button>
-          ${logged ? "" : `<button type="button" class="linkbtn danger gap-plan-remove" data-action="remove-gap-item" data-id="${esc(it.id)}" aria-label="Remove ${esc(it.name)} from plan">Remove</button>`}
-        </div>`;
+          ${logged ? "" : `
+            <button type="button" class="log-row-add" data-action="log-gap-item" data-id="${esc(it.id)}" aria-label="Log ${esc(it.name)}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                <path d="M12 5v14"/><path d="M5 12h14"/>
+              </svg>
+            </button>
+            <button type="button" class="log-row-delete" data-action="remove-gap-item" data-id="${esc(it.id)}" aria-label="Remove ${esc(it.name)} from plan">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+              </svg>
+            </button>`}
+        </div>
+        ${expanded}
+      </div>`;
     }).join("");
   }
 
@@ -3811,7 +3860,7 @@ const UI = (() => {
 
   return {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
-    renderDayLog, toggleEntryExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
+    renderDayLog, toggleEntryExpand, toggleGapItemExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     weightPrefillFromHistory, renderMultiQtyList, readMultiQtyRow, updateMultiRowPreview,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft, parseNutrientNumber,
     syncReviewLogAsUI, renderFoodDetail,

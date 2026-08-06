@@ -996,22 +996,25 @@ body.sheet-open .insight-dock { display: none; }
 .gap-proj-metric .gap-proj-k { color: var(--muted); font-weight: 550; }
 .gap-proj-metric.flag .gap-proj-v { color: var(--warn); }
 .gap-macros-extra { color: var(--muted); }
-.gap-plan-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
-.gap-plan-row {
-  display: flex; align-items: stretch; gap: 6px;
+.gap-plan-list { display: flex; flex-direction: column; gap: 0; margin: 10px 0 14px; }
+.gap-plan-list .log-row-stack.is-logged .log-row { opacity: 0.55; }
+.log-row-add {
+  flex-shrink: 0; width: 42px; min-height: 42px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--accent-ink);
+  border-radius: calc(var(--radius) - 2px); cursor: pointer; padding: 0;
 }
-.gap-plan-item {
-  border: 1px solid var(--line); border-radius: 12px;
-  padding: 12px; background: var(--card); text-align: left; flex: 1; min-width: 0;
-  cursor: pointer; color: inherit;
+.log-row-add:hover, .log-row-add:focus-visible { background: rgba(61, 153, 112, 0.12); }
+.log-row-add:active { transform: scale(0.96); }
+.gap-plan-amt {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--muted);
 }
-.gap-plan-item:disabled { opacity: 0.55; cursor: default; }
-.gap-plan-item .r-name { font-weight: 650; margin: 0 0 2px; }
-.gap-plan-item .r-qty { color: var(--muted); font-size: 12.5px; }
-.gap-plan-item.logged { opacity: 0.55; }
-.gap-plan-remove {
-  flex: 0 0 auto; align-self: center; padding: 8px 6px; min-height: 44px;
-  font-size: 12.5px; white-space: nowrap;
+.gap-plan-amt-row { display: flex; align-items: center; gap: 8px; }
+.gap-plan-qty {
+  width: 96px; max-width: 40vw; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: inherit; font: inherit; font-weight: 600;
 }
 #gap-paste { width: 100%; margin: 10px 0; }
 #gap-food-search { width: 100%; margin: 6px 0 4px; }

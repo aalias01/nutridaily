@@ -2007,17 +2007,18 @@ const App = (() => {
           ? `${it.qty} ${it.unit} (≈ ${UI.fmt(g)} g)`
           : `${UI.fmt(g)} g`)
         : `${it.qty} ${it.unit || "g"}`;
+      const unit = it.unit || "g";
+      const qty = unit !== "g" && unit !== "grams" && it.qty != null
+        ? it.qty
+        : (g != null ? g : it.qty);
       return {
         id: it.id,
         name: UI.titleCaseName(it.name),
         meal: it.meal || "snack",
         qtyLabel,
-        macros: macros
-          ? `${UI.fmt(macros.kcal)} kcal · P ${UI.fmt(macros.p)} · C ${UI.fmt(macros.c)} · F ${UI.fmt(macros.f)}`
-          : "",
-        macrosExtra: macros
-          ? `Fb ${UI.fmt(macros.fb)} · Na ${UI.fmt(macros.na || 0)}`
-          : "",
+        qty,
+        unit,
+        macrosObj: macros,
         status: it.status,
       };
     }));
@@ -2243,14 +2244,113 @@ const App = (() => {
       UI.toast("Food not in library — import it first or pick again");
       return;
     }
-    const unit = item.unit === "piece" && FoodMatch.pieceGrams(food) ? "piece" : "g";
-    const qty = unit === "piece" ? item.qty : (item.grams != null ? item.grams : (item.suggestedGrams != null ? item.suggestedGrams : item.qty));
+    const unit = item.unit === "piece" && FoodMatch.pieceGrams(food) ? "piece" : (item.unit || "g");
+    const qty = unit === "piece" || (unit !== "g" && unit !== "grams")
+      ? item.qty
+      : (item.grams != null ? item.grams : (item.suggestedGrams != null ? item.suggestedGrams : item.qty));
     UI.closeSheet("sheet-gap");
     state.qtyIntent = "log";
     // openQty clears any stale gapPendingItemId; set after
     openQty(food, { qty, unit, meal: item.meal || Foods.inferMeal() });
     state.gapPendingItemId = item.id;
     state.gapPendingDay = day;
+  }
+
+  /** Log a pending plan item at its planned amount (no qty sheet). */
+  function logGapItemNow(itemId) {
+    const day = state.viewDay;
+    const plan = dayPlan(day);
+    if (!plan || !itemId) return;
+    const item = (plan.items || []).find((it) => it && it.id === itemId);
+    if (!item || item.status === "logged") return;
+    const food = resolveGapFood(item);
+    if (!food) {
+      UI.toast("Food not in library — import it first or pick again");
+      return;
+    }
+    if (!confirmOffTodayLog(day)) return;
+    const unit = item.unit || "g";
+    const qty = unit !== "g" && unit !== "grams" && item.qty != null
+      ? Number(item.qty)
+      : Number(item.grams != null ? item.grams : (item.suggestedGrams != null ? item.suggestedGrams : item.qty));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      UI.toast("Enter a valid amount");
+      return;
+    }
+    const entry = Foods.entryFromQty(food, qty, unit, item.meal || Foods.inferMeal());
+    const producerError = validateProducerEntry(entry);
+    if (producerError) { UI.toast(producerError); return; }
+    const warns = FoodMatch.plausibility(entry);
+    if (warns.length && !confirm(warns[0] + "\n\nLog it anyway?")) return;
+
+    let nextPersonal = cloneLocalData(state.personalFoods);
+    if (food.id && !food._orphan && !nextPersonal.some((f) => f.id === food.id)) {
+      nextPersonal.push(cloneLocalData(food));
+    }
+    const idx = nextPersonal.findIndex((f) => f.id === food.id);
+    if (idx >= 0) nextPersonal[idx] = Foods.touchUse(nextPersonal[idx]);
+    if (!entry.foodId && food.id && !food._orphan) entry.foodId = food.id;
+
+    try {
+      commitGapEntryChange(day, entry, null, nextPersonal, item.id);
+    } catch (error) {
+      UI.toast("Couldn’t log this plan item — nothing changed");
+      return;
+    }
+    Sync.schedulePush();
+    refreshDay();
+    refreshGapChip();
+    renderGapPlanStep();
+    UI.toast("Logged");
+  }
+
+  /** Update planned qty/grams from the inline expand field (blur / Enter). */
+  function updateGapPlanItemQty(itemId, rawValue) {
+    const day = state.viewDay;
+    const plan = dayPlan(day);
+    if (!plan || !itemId) return;
+    const items = Array.isArray(plan.items) ? plan.items : [];
+    const idx = items.findIndex((it) => it && it.id === itemId);
+    if (idx < 0) return;
+    const item = items[idx];
+    if (!item || item.status === "logged") return;
+
+    const n = Number(String(rawValue == null ? "" : rawValue).replace(/,/g, "").trim());
+    if (!Number.isFinite(n) || n <= 0) {
+      UI.toast("Enter a valid amount");
+      renderGapPlanStep();
+      return;
+    }
+
+    const unit = item.unit || "g";
+    const food = resolveGapFood(item);
+    let grams;
+    if (food) {
+      grams = Foods.entryFromQty(food, n, unit, item.meal || "snack").grams;
+    } else if (unit === "g" || unit === "grams") {
+      grams = Math.round(n);
+    } else {
+      UI.toast("Food not in library — tap Edit to change units");
+      renderGapPlanStep();
+      return;
+    }
+
+    const prevQty = Number(item.qty);
+    const prevG = item.grams != null ? Number(item.grams) : Number(item.suggestedGrams);
+    if (prevQty === n && prevG === grams) return;
+
+    const next = cloneLocalData(plan);
+    next.items[idx] = {
+      ...next.items[idx],
+      qty: n,
+      grams,
+      suggestedGrams: grams,
+    };
+    next.projected = projectPlanFromItems(day, next.items, state.personalFoods);
+    next.updatedAt = Date.now();
+    try { saveDayPlan(day, next); }
+    catch (error) { UI.toast("Couldn’t update amount — nothing changed"); return; }
+    renderGapPlanStep();
   }
 
   function removeGapPlanItem(itemId) {
@@ -5099,12 +5199,43 @@ const App = (() => {
         const removeBtn = e.target.closest("[data-action='remove-gap-item']");
         if (removeBtn) {
           e.preventDefault();
+          e.stopPropagation();
           removeGapPlanItem(removeBtn.dataset.id);
           return;
         }
-        const btn = e.target.closest("[data-action='log-gap-item']");
-        if (!btn || btn.disabled) return;
-        openGapItemQty(btn.dataset.id);
+        const logBtn = e.target.closest("[data-action='log-gap-item']");
+        if (logBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          logGapItemNow(logBtn.dataset.id);
+          return;
+        }
+        const editBtn = e.target.closest("[data-action='edit-gap-item']");
+        if (editBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          openGapItemQty(editBtn.dataset.id);
+          return;
+        }
+        const toggleBtn = e.target.closest("[data-action='toggle-gap-item']");
+        if (toggleBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          UI.toggleGapItemExpand(toggleBtn.dataset.id);
+          renderGapPlanStep();
+        }
+      });
+      UI.$("#gap-plan-list").addEventListener("change", (e) => {
+        const input = e.target.closest(".gap-plan-qty");
+        if (!input) return;
+        updateGapPlanItemQty(input.dataset.id, input.value);
+      });
+      UI.$("#gap-plan-list").addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        const input = e.target.closest(".gap-plan-qty");
+        if (!input) return;
+        e.preventDefault();
+        input.blur();
       });
     }
     UI.$("#btn-add-food").addEventListener("click", () => openPaste({ intent: "library" }));
