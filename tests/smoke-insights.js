@@ -3622,6 +3622,37 @@ async function runImportSecurity() {
   }
 
 
+  // Step 6 M1 — Settings estimate-prompt clipboard fallback stays visible in Settings.
+  {
+    const UI = window.eval("UI");
+    const NutriParse = window.eval("NutriParse");
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "settings").click();
+    await new Promise((r) => setTimeout(r, 20));
+    ok($("#sheet-paste").hidden, "fixture: paste sheet is closed while in Settings");
+    // jsdom often has no clipboard; absent and rejecting both must open the Settings fallback.
+    const desc = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: () => Promise.reject(new Error("denied")),
+        readText: () => Promise.reject(new Error("denied")),
+      },
+    });
+    $("#btn-settings-copy-prompt").click();
+    await new Promise((r) => setTimeout(r, 40));
+    const setFb = $("#settings-prompt-fallback");
+    const setTa = $("#settings-prompt-fallback-text");
+    ok(!!$("#sheet-paste").hidden && setFb && !setFb.hidden && setFb.open &&
+        setTa && setTa.value === NutriParse.ESTIMATE_PROMPT,
+      "Settings clipboard fallback shows ESTIMATE_PROMPT under Settings, not inside the closed paste sheet");
+    ok($("#sheet-paste").hidden,
+      "clipboard failure in Settings does not open the paste sheet");
+    if (desc) Object.defineProperty(navigator, "clipboard", desc);
+    else delete navigator.clipboard;
+    if (setFb) { setFb.hidden = true; setFb.open = false; }
+    if (setTa) setTa.value = "";
+  }
+
   // Part IX.5: notScored() lacked incompleteMineral's empty-day guard, so a
   // declared fast with nothing logged at all printed "0 mg* · not scored
   // today" plus a spurious "N% covered" footnote — there was no food to

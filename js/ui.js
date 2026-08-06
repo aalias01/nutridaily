@@ -828,9 +828,11 @@ const UI = (() => {
     if (fb) fb.hidden = true;
   }
 
-  function showPromptFallback(text) {
-    const fb = $("#prompt-fallback");
-    const ta = $("#prompt-fallback-text");
+  function showPromptFallback(text, opts) {
+    const fbSel = (opts && opts.fallbackId) || "#prompt-fallback";
+    const taSel = (opts && opts.textId) || "#prompt-fallback-text";
+    const fb = $(fbSel);
+    const ta = $(taSel);
     if (!fb || !ta) return;
     ta.value = text;
     fb.hidden = false;

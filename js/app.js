@@ -5332,21 +5332,31 @@ const App = (() => {
       UI.$("#btn-share-prompt").addEventListener("click", () => { sharePrompt(); });
     }
     // Settings label is "AI estimate prompt" — always copy ESTIMATE_PROMPT, not leftover paste intent.
+    // Fallback must stay in Settings (paste-sheet #prompt-fallback is hidden here — Step 6 M1).
+    const settingsPromptFallback = {
+      fallbackId: "#settings-prompt-fallback",
+      textId: "#settings-prompt-fallback-text",
+    };
+    const showSettingsPromptFallback = (text) => {
+      UI.showPromptFallback(text, settingsPromptFallback);
+      UI.toast("Select the prompt below, then copy");
+    };
     UI.$("#btn-settings-copy-prompt").addEventListener("click", () => {
       const text = NutriParse.ESTIMATE_PROMPT;
-      navigator.clipboard.writeText(text).then(() => UI.toast("Prompt copied")).catch(() => {
-        UI.showPromptFallback(text);
-        UI.toast("Select the prompt below, then copy");
+      const clip = navigator.clipboard;
+      if (!clip || typeof clip.writeText !== "function") {
+        showSettingsPromptFallback(text);
+        return;
+      }
+      clip.writeText(text).then(() => UI.toast("Prompt copied")).catch(() => {
+        showSettingsPromptFallback(text);
       });
     });
     if (UI.$("#btn-settings-share-prompt")) {
       UI.$("#btn-settings-share-prompt").addEventListener("click", () => {
         sharePromptText(NutriParse.ESTIMATE_PROMPT, {
           okToast: "Prompt copied",
-          onClipboardFail: (t) => {
-            UI.showPromptFallback(t);
-            UI.toast("Select the prompt below, then copy");
-          },
+          onClipboardFail: showSettingsPromptFallback,
         });
       });
     }

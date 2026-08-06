@@ -294,6 +294,10 @@
         <p class="muted small">For restaurant / photo guesses. Homemade dishes use a stricter one-shot prompt from Add → Homemade dish.</p>
         <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy estimate prompt</button>
         <button id="btn-settings-share-prompt" class="btn ghost full" type="button" hidden>Share to AI</button>
+        <details id="settings-prompt-fallback" class="example-details" hidden>
+          <summary class="muted small">Select prompt manually</summary>
+          <textarea id="settings-prompt-fallback-text" rows="6" readonly></textarea>
+        </details>
 
         <label class="set-label">Data</label>
         <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
