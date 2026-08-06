@@ -2284,11 +2284,15 @@ const App = (() => {
   function removeEntryWithUndo(day, entryId) {
     const entry = Ledger.entriesFor(day).find((e) => e.id === entryId);
     if (!entry) return;
+    // Carry per100 only when present. Normalising absence to `null` writes a
+    // key onto one-offs on Undo (plan F3 / §3.2) — import drops nulls, but the
+    // full-key-set contract and in-memory shape break.
     const snapshot = {
       ...entry,
       macros: { ...entry.macros },
-      per100: entry.per100 ? { ...entry.per100 } : null,
     };
+    if (entry.per100) snapshot.per100 = { ...entry.per100 };
+    else delete snapshot.per100;
     Ledger.removeEntry(day, entryId, "removed");
     Sync.schedulePush();
     if (state.viewDay === day) refreshDay();

@@ -3420,6 +3420,30 @@ async function runImportSecurity() {
         ok(!!qBadge && /Quick/.test(qBadge.textContent),
           "day log shows a Quick badge on source:quick rows");
       }
+
+      // F3: remove → Undo must not write per100:null onto a one-off.
+      const beforeRemove = Ledger.entriesFor(onceDay).find((e) => e.id === onceEntry.id);
+      ok(beforeRemove && !Object.prototype.hasOwnProperty.call(beforeRemove, "per100"),
+        "F3 fixture: live one-off still has no per100 key before remove");
+      App.state.viewDay = onceDay;
+      App.state.editEntryId = onceEntry.id;
+      App.state.editEntryDay = onceDay;
+      UI.fillOnceSheet({ from: beforeRemove, allowRemove: true, imperial: false });
+      UI.openSheet("sheet-once");
+      $("#once-remove").click();
+      ok(!Ledger.entriesFor(onceDay).some((e) => e.id === onceEntry.id),
+        "once-remove deletes the live one-off");
+      const undoBtn = $("#toast .toast-action");
+      ok(!!undoBtn && /Undo/.test(undoBtn.textContent), "remove toast offers Undo");
+      if (undoBtn) undoBtn.click();
+      // UI.toast defers onClick with setTimeout(0) so a nested "Restored" toast
+      // is not cleared immediately — wait one turn before reading the ledger.
+      await new Promise((r) => setTimeout(r, 20));
+      const restored = Ledger.entriesFor(onceDay).find((e) => e.id === onceEntry.id);
+      ok(restored && restored.source === "once" && restored.macros.kcal === 850 &&
+          restored.macros.p === 32 &&
+          !Object.prototype.hasOwnProperty.call(restored, "per100"),
+        "Undo restores the one-off without inventing a per100 key");
     }
     App.state.viewDay = today;
   }
