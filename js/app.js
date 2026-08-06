@@ -2603,7 +2603,56 @@ const App = (() => {
     if (producerError && !reasons.includes(producerError)) reasons.push(producerError);
     UI.setReviewErrors(reasons);
     UI.$("#btn-review-save").disabled = reasons.length > 0;
+    const logOnce = UI.$("#btn-review-log-once");
+    if (logOnce) {
+      // Log once is meaningless while updating a library food.
+      logOnce.hidden = !!state.updateFoodId;
+      logOnce.disabled = !!state.updateFoodId || reasons.length > 0;
+    }
     return reasons.length === 0;
+  }
+
+  /**
+   * Log the review draft as a one-off (source:once) without writing My Foods.
+   * Portion = 1 piece if logging by count, else 1 serving if set, else 100 g.
+   */
+  function logOnceFromReview() {
+    if (state.updateFoodId) return;
+    if (!validateReviewSave()) { UI.toast("Fix the highlighted fields"); return; }
+    const draft = UI.readReviewDraft(state.reviewParsed && state.reviewParsed.food);
+    let grams = 100;
+    if (draft.logAs === "piece" && draft.units && Number(draft.units.piece) > 0) {
+      grams = Number(draft.units.piece);
+    } else if (draft.units && Number(draft.units.serving) > 0) {
+      grams = Number(draft.units.serving);
+    }
+    const macros = FoodMatch.computeMacros(draft.per100, grams);
+    const entry = Foods.entryFromOnceDraft({
+      name: draft.name,
+      cat: draft.cat || "dish",
+      macros,
+      confidence: "estimated",
+      macrosOpened: true,
+    }, grams, "g", Foods.inferMeal());
+    const producerError = validateProducerEntry(entry);
+    if (producerError) { UI.toast(producerError); return; }
+    const day = state.viewDay || Ledger.todayKey();
+    try {
+      Ledger.addEntry(day, entry);
+    } catch (error) {
+      UI.toast("Couldn’t save this log — nothing changed");
+      return;
+    }
+    Sync.schedulePush();
+    state.updateFoodId = null;
+    state.saveAsNew = false;
+    state.editFoodDirect = false;
+    state.foodSaveIntent = "library";
+    state.reviewParsed = null;
+    UI.closeSheet("sheet-paste");
+    switchView("today");
+    refreshDay();
+    UI.toast("Logged once · not saved to My Foods");
   }
 
   function saveReview() {
@@ -5267,6 +5316,7 @@ const App = (() => {
       UI.showPastePrompt();
     });
     UI.$("#btn-review-save").addEventListener("click", saveReview);
+    UI.$("#btn-review-log-once").addEventListener("click", logOnceFromReview);
     ["#rev-name", "#rev-kcal", "#rev-p", "#rev-c", "#rev-f", "#rev-fb", "#rev-na", "#rev-k"].forEach((sel) => {
       UI.$(sel).addEventListener("input", validateReviewSave);
     });
@@ -5599,10 +5649,14 @@ const App = (() => {
         state.updateFoodId = id;
         state.saveAsNew = false;
         UI.$("#review-dup").hidden = true;
+        // Keep Log once hidden/disabled in sync — it is meaningless while
+        // updating a library food (Step 5 / REVIEW-ONE-OFF-STEP-5 F1).
+        validateReviewSave();
       } else if (action === "save-new-anyway") {
         state.saveAsNew = true;
         state.updateFoodId = null;
         UI.$("#review-dup").hidden = true;
+        validateReviewSave();
       }
     });
 

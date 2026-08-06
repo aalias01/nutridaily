@@ -3448,6 +3448,106 @@ async function runImportSecurity() {
     App.state.viewDay = today;
   }
 
+  // Step 5 — Log once from the review sheet (no My Foods write).
+  {
+    const UI = window.eval("UI");
+    const foodsBefore = App.state.personalFoods.length;
+    const logOnceDay = "2019-07-01";
+    App.state.viewDay = logOnceDay;
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+    $("#fab-add").click();
+    $("#btn-paste-new").click();
+    $("#btn-manual-food").click();
+    ok(!$("#btn-review-log-once").hidden,
+      "Log once is visible when creating a new food");
+    $("#rev-name").value = "Review Pad Thai";
+    $("#rev-kcal").value = "200";
+    $("#rev-p").value = "10";
+    $("#rev-c").value = "25";
+    $("#rev-f").value = "8";
+    $("#rev-fb").value = "2";
+    $("#rev-na").value = "";
+    $("#rev-k").value = "";
+    $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
+    ok(!$("#btn-review-log-once").disabled && !$("#btn-review-save").disabled,
+      "Log once enables alongside Save food when the review is valid");
+    $("#btn-review-log-once").click();
+    const logged = Ledger.entriesFor(logOnceDay).find((e) => e.source === "once" && e.name === "Review Pad Thai");
+    ok(logged && logged.foodId == null && logged.grams === 100 &&
+        logged.macros.kcal === 200 && logged.macros.p === 10 &&
+        logged.macros.na === null && logged.macros.k === null &&
+        !Object.prototype.hasOwnProperty.call(logged, "per100"),
+      "Log once writes a 100 g portion one-off with no per100 and unknown minerals");
+    ok(App.state.personalFoods.length === foodsBefore,
+      "Log once does not add anything to My Foods");
+
+    // Hidden while updating a library food.
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "foods").click();
+    await new Promise((r) => setTimeout(r, 20));
+    const libFood = App.state.personalFoods.find((f) => f.id === "baseline-food")
+      || App.state.personalFoods[0];
+    if (libFood) {
+      $(`#foods-list [data-id='${libFood.id}']`).click();
+      await new Promise((r) => setTimeout(r, 20));
+      const editBtn = $("#detail-body [data-action='edit-food']");
+      if (editBtn) {
+        editBtn.click();
+        ok(!!$("#btn-review-log-once") && $("#btn-review-log-once").hidden,
+          "Log once is hidden while updating a library food");
+        $("#btn-review-back").click();
+      }
+      UI.closeSheet("sheet-detail");
+      await new Promise((r) => setTimeout(r, 220));
+    }
+
+    // N1 / Step 5 F1: Update that one must hide Log once (not leave it clickable/inert).
+    const dupFood = App.state.personalFoods.find((f) => f.id === "baseline-food")
+      || App.state.personalFoods[0];
+    ok(!!dupFood, "fixture: a library food exists for the duplicate-banner path");
+    if (dupFood) {
+      [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+      $("#fab-add").click();
+      $("#btn-paste-new").click();
+      $("#btn-manual-food").click();
+      App.state.updateFoodId = null;
+      App.state.saveAsNew = false;
+      UI.showReview(App.state.reviewParsed, {
+        forceEnable: true,
+        duplicate: dupFood,
+        title: "Review food",
+      });
+      $("#rev-name").value = dupFood.name;
+      $("#rev-kcal").value = "100";
+      $("#rev-p").value = "5";
+      $("#rev-c").value = "10";
+      $("#rev-f").value = "2";
+      $("#rev-fb").value = "1";
+      $("#rev-na").value = "";
+      $("#rev-k").value = "";
+      $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
+      ok(!$("#review-dup").hidden && !$("#btn-review-log-once").hidden,
+        "duplicate banner shows with Log once still available before choosing");
+      $("#review-dup [data-action='update-dup']").click();
+      ok(App.state.updateFoodId === dupFood.id && $("#btn-review-log-once").hidden,
+        "Update that one hides Log once via validateReviewSave");
+      // Re-arm the banner (update-dup hides it) to exercise save-new-anyway.
+      UI.$("#review-dup").hidden = false;
+      UI.$("#review-dup").innerHTML = `You already have “Baseline”.
+        <div class="row" style="margin-top:8px">
+          <button type="button" class="btn ghost" data-action="update-dup" data-id="${dupFood.id}">Update that one</button>
+          <button type="button" class="btn ghost" data-action="save-new-anyway">Save as separate</button>
+        </div>`;
+      $("#review-dup [data-action='save-new-anyway']").click();
+      ok(App.state.updateFoodId == null && !$("#btn-review-log-once").hidden,
+        "Save as separate clears updateFoodId and restores Log once");
+      UI.closeSheet("sheet-paste");
+      await new Promise((r) => setTimeout(r, 220));
+    }
+
+    App.state.viewDay = today;
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+  }
+
   // Part IX.5: notScored() lacked incompleteMineral's empty-day guard, so a
   // declared fast with nothing logged at all printed "0 mg* · not scored
   // today" plus a spurious "N% covered" footnote — there was no food to
