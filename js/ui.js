@@ -3639,12 +3639,16 @@ const UI = (() => {
     const title = $("#gap-sheet-title");
     if (title) {
       title.textContent = step === "plan"
-        ? "Today’s plan"
+        ? "Planner"
         : step === "prompt"
-          ? "AI gap prompt"
+          ? "AI fill prompt"
           : step === "choose"
             ? "Choose a plan"
-            : "Close the gap";
+            : step === "select"
+              ? "Pick foods for AI"
+              : step === "intro"
+                ? "Fill with AI"
+                : "Planner";
     }
     const disclaimer = $("#gap-disclaimer");
     // Intro carries its own copy; select/plan stay compact without the banner.

@@ -52,13 +52,14 @@ const App = (() => {
     dayContribMetric: null, // when set, Today shows contribution breakdown for viewDay
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
     yesterdayKey: null,
-    // Close-the-gap sheet
+    // Planner / close-the-gap sheet
     gapSelected: {}, // key -> food object (personal or catalog copy)
     gapPendingItemId: null, // plan item id while qty sheet open
     gapPendingDay: null, // day the pending item belongs to (survives midnight roll)
     gapParsed: null, // last GapPrompt.parseGapBlock result (multi-option)
     gapStep: "select",
     gapPortionCache: null, // Map foodId -> portionStats for select list
+    qtyIntent: "log", // "log" | "plan" — qty sheet saves to ledger or dayPlans
   };
 
   function parseAmount(v) {
@@ -859,7 +860,7 @@ const App = (() => {
 
   function isToday() { return state.viewDay === Ledger.todayKey(); }
 
-  /** Soft confirm when creating a new log on a past or future day. Edits skip. */
+  /** Soft confirm when creating a new log/plan item on a past or future day. Edits skip. */
   function confirmOffTodayLog(day) {
     if (state.editEntryId) return true;
     const today = Ledger.todayKey();
@@ -869,7 +870,10 @@ const App = (() => {
     const relative = day > today
       ? "that’s tomorrow, not today"
       : "that’s not today (past day)";
-    return confirm(`You’re logging on ${label} — ${relative}.\n\nLog it anyway?`);
+    const planning = state.qtyIntent === "plan";
+    const verb = planning ? "planning" : "logging";
+    const cta = planning ? "Add it anyway?" : "Log it anyway?";
+    return confirm(`You’re ${verb} on ${label} — ${relative}.\n\n${cta}`);
   }
 
   function yesterdayKey() {
@@ -945,12 +949,52 @@ const App = (() => {
     refreshTodayContrib();
   }
 
-  // ---------- Close the gap ----------
+  // ---------- Planner (dayPlans / optional AI fill) ----------
   function dayPlan(day) {
     const d = day || state.viewDay;
     const map = state.settings.dayPlans || {};
     const plan = map[d];
     return plan && !plan.cleared ? plan : null;
+  }
+
+  function emptyPlanScaffold() {
+    return {
+      updatedAt: Date.now(),
+      reachable: null,
+      safe: null,
+      complete: null,
+      reviewedManually: true,
+      reviewFlags: [],
+      note: "",
+      optionLabel: "Manual",
+      candidates: [],
+      items: [],
+      projected: null,
+    };
+  }
+
+  /** Clone of existing plan or a fresh manual scaffold (not yet persisted). */
+  function ensureDayPlan(day) {
+    const existing = dayPlan(day);
+    return existing ? cloneLocalData(existing) : emptyPlanScaffold();
+  }
+
+  function projectPlanFromItems(day, items, foods) {
+    const library = foods || state.personalFoods;
+    const pending = (items || []).filter((it) => it && it.status === "pending");
+    const addends = [];
+    for (const it of pending) {
+      let food = null;
+      if (it.foodId) food = library.find((f) => !f.deleted && f.id === it.foodId) || null;
+      if (!food && it.name) food = Foods.findByName(library, it.name);
+      const g = it.grams != null ? it.grams : it.suggestedGrams;
+      if (food && food.per100 && g != null) {
+        addends.push(GapPrompt.macroMeans(FoodMatch.computeMacros(food.per100, g || 0)));
+      }
+    }
+    if (!addends.length) return null;
+    const means = GapPrompt.totalsMeans(Ledger.totalsFor(day));
+    return GapPrompt.projectTotals(means, addends);
   }
 
   function pendingPlanCount(day) {
@@ -1221,7 +1265,7 @@ const App = (() => {
     const resolved = typeof Phases !== "undefined" ? Phases.effectiveGoals(totals, goals) : goals;
     // An honoured fast has nothing to close — do not print P150 against 0 kcal.
     if (resolved && resolved._dayPlan && resolved._dayPlan.intent === "fast" && resolved._unscored) {
-      el.textContent = "Declared fast — targets for this day are not scored, so Close the Gap has nothing to fill.";
+      el.textContent = "Declared fast — targets for this day are not scored, so Planner has nothing to fill.";
       return;
     }
     const remaining = GapPrompt.remainingFrom(GapPrompt.totalsMeans(totals), goals, totals);
@@ -1468,14 +1512,13 @@ const App = (() => {
 
   function openGapSheet(opts) {
     const preferPlan = opts && opts.plan;
-    const plan = dayPlan(state.viewDay);
     state.gapPortionCache = null;
 
     const totals = Ledger.totalsFor(state.viewDay);
     const goals = goalsForView();
     const resolved = Phases.effectiveGoals(totals, goals);
     if (resolved && resolved._dayPlan && resolved._dayPlan.intent === "fast" && resolved._unscored) {
-      UI.toast("Declared fast — Close the Gap has nothing to fill while the day stays unscored.");
+      UI.toast("Declared fast — Planner has nothing to fill while the day stays unscored.");
       return;
     }
 
@@ -1489,16 +1532,22 @@ const App = (() => {
       }
     }
 
-    if (preferPlan && plan) {
-      restoreGapSelectionFromPlan(plan, true);
-      UI.openSheet("sheet-gap", { noAutofocus: true });
-      showGapSheetStep("plan");
-      return;
-    }
-    if (!Object.keys(state.gapSelected).length) {
-      if (!restoreGapDraft() && plan) restoreGapSelectionFromPlan(plan, false);
-    }
+    // Plan-first: empty or existing plan opens on the plan surface.
     UI.openSheet("sheet-gap", { noAutofocus: true });
+    showGapSheetStep("plan");
+  }
+
+  function openAddForPlan() {
+    state.qtyIntent = "plan";
+    UI.closeSheet("sheet-gap");
+    openAddSheet();
+  }
+
+  function startGapAiFill() {
+    const plan = dayPlan(state.viewDay);
+    // Preserve an in-progress selection when there is no plan yet (tests / mid-flow).
+    if (plan) restoreGapSelectionFromPlan(plan, true);
+    if (UI.$("#gap-paste")) UI.$("#gap-paste").value = "";
     showGapSheetStep(gapIntroSeen() ? "select" : "intro");
   }
 
@@ -1543,7 +1592,7 @@ const App = (() => {
     if (!plan) {
       if (noteEl) {
         noteEl.hidden = false;
-        noteEl.textContent = "No plan saved for this day yet.";
+        noteEl.textContent = "Nothing planned yet. Add a food, or fill remaining macros with AI.";
       }
       if (labelEl) { labelEl.hidden = true; labelEl.textContent = ""; }
       UI.renderGapPlanStatus(statusEl, []);
@@ -1702,12 +1751,8 @@ const App = (() => {
       }
     }
     const prev = dayPlan(state.viewDay);
-    const prevLogged = (prev && prev.items || []).filter((it) => it && it.status === "logged");
-    if (prevLogged.length) {
-      if (!confirm(`Replace the current plan? ${prevLogged.length} already-logged suggestion(s) will stay listed as done.`)) {
-        return;
-      }
-    }
+    const prevPending = (prev && prev.items || []).filter((it) => it && it.status === "pending");
+    const carried = (prev && prev.items || []).filter((it) => it && it.status === "logged");
     const nextPersonal = cloneLocalData(state.personalFoods);
     const items = opt.items.map((it) => {
       const cand = candidates.find((c) => c.id && c.id === it.foodId)
@@ -1743,7 +1788,20 @@ const App = (() => {
         loggedEntryId: null,
       };
     });
-    const carried = prevLogged.map((it) => ({ ...it }));
+    // Append AI suggestions onto existing pending manuals; keep already-logged items.
+    const mergedItems = [...prevPending, ...items, ...carried];
+    const mergedCandidates = [
+      ...(prev && prev.candidates || []),
+      ...candidates.map((c) => ({ foodId: c.id, name: c.name })),
+    ];
+    const seenCand = new Set();
+    const uniqueCandidates = [];
+    for (const c of mergedCandidates) {
+      const key = c.foodId || `n:${String(c.name || "").toLowerCase()}`;
+      if (seenCand.has(key)) continue;
+      seenCand.add(key);
+      uniqueCandidates.push(c);
+    }
     const plan = {
       updatedAt: Date.now(),
       reachable: opt.reachable === true,
@@ -1752,10 +1810,11 @@ const App = (() => {
       reviewedManually: manuallyReviewed,
       reviewFlags: (opt.manualConfirmFlags || opt.flags || []).slice(),
       note: (opt.note || "").trim(),
-      optionLabel: opt.label || "",
-      candidates: candidates.map((c) => ({ foodId: c.id, name: c.name })),
-      items: [...items, ...carried],
-      projected: opt.localProjected || opt.projected || null,
+      optionLabel: opt.label || (prev && prev.optionLabel) || "",
+      candidates: uniqueCandidates,
+      items: mergedItems,
+      projected: projectPlanFromItems(state.viewDay, mergedItems, nextPersonal)
+        || opt.localProjected || opt.projected || null,
     };
     try { commitGapPlanAndFoods(state.viewDay, plan, nextPersonal); }
     catch (error) { UI.toast("Couldn’t save this plan — nothing changed"); return; }
@@ -1808,6 +1867,7 @@ const App = (() => {
     const unit = item.unit === "piece" && FoodMatch.pieceGrams(food) ? "piece" : "g";
     const qty = unit === "piece" ? item.qty : (item.grams != null ? item.grams : (item.suggestedGrams != null ? item.suggestedGrams : item.qty));
     UI.closeSheet("sheet-gap");
+    state.qtyIntent = "log";
     // openQty clears any stale gapPendingItemId; set after
     openQty(food, { qty, unit, meal: item.meal || Foods.inferMeal() });
     state.gapPendingItemId = item.id;
@@ -1816,7 +1876,7 @@ const App = (() => {
 
   function clearGapPlan() {
     if (!dayPlan(state.viewDay) && !(state.settings.gapDrafts && state.settings.gapDrafts[state.viewDay])) return;
-    if (!confirm("Clear this day’s gap plan?")) return;
+    if (!confirm("Clear this day’s food plan?")) return;
     const nextSettings = cloneLocalData(state.settings);
     if (!nextSettings.dayPlans || typeof nextSettings.dayPlans !== "object") nextSettings.dayPlans = {};
     nextSettings.dayPlans[state.viewDay] = { cleared: true, updatedAt: Date.now() };
@@ -1838,17 +1898,44 @@ const App = (() => {
     UI.toast("Plan cleared");
   }
 
-  function startGapRecalc() {
-    const plan = dayPlan(state.viewDay);
-    // Pending items only — do not re-propose foods already logged from this plan
-    restoreGapSelectionFromPlan(plan, true);
-    if (Object.keys(state.gapSelected).length < 1) {
-      UI.toast("Pick foods to recalculate");
-      showGapSheetStep("select");
-      return;
+  function addManualPlanItem(day, food, entry) {
+    const d = day || state.viewDay;
+    let nextPersonal = cloneLocalData(state.personalFoods);
+    if (food && food.id && !food._orphan && !nextPersonal.some((f) => f.id === food.id)) {
+      nextPersonal.push(cloneLocalData(food));
     }
-    if (UI.$("#gap-paste")) UI.$("#gap-paste").value = "";
-    showGapSheetStep("prompt");
+    if (food && food.id && !food._orphan) {
+      const idx = nextPersonal.findIndex((f) => f.id === food.id);
+      if (idx >= 0) nextPersonal[idx] = Foods.touchUse(nextPersonal[idx]);
+    }
+    const foodId = food && food._orphan ? null : (entry.foodId || (food && food.id) || null);
+    const grams = entry.grams != null ? entry.grams : null;
+    const item = {
+      id: Ledger.uid(),
+      foodId,
+      name: (food && food.name) || entry.name,
+      grams,
+      suggestedGrams: grams,
+      qty: entry.qty,
+      unit: entry.unit || "g",
+      meal: entry.meal || "snack",
+      status: "pending",
+      loggedEntryId: null,
+    };
+    const plan = ensureDayPlan(d);
+    plan.items = [...(plan.items || []), item];
+    if (!Array.isArray(plan.candidates)) plan.candidates = [];
+    if (foodId && !plan.candidates.some((c) => c.foodId === foodId)) {
+      plan.candidates.push({ foodId, name: item.name });
+    } else if (!foodId && item.name && !plan.candidates.some((c) =>
+      !c.foodId && String(c.name || "").toLowerCase() === String(item.name).toLowerCase()
+    )) {
+      plan.candidates.push({ foodId: null, name: item.name });
+    }
+    if (!plan.optionLabel) plan.optionLabel = "Manual";
+    plan.reviewedManually = true;
+    plan.projected = projectPlanFromItems(d, plan.items, nextPersonal);
+    commitGapPlanAndFoods(d, plan, nextPersonal);
   }
 
   function refreshFoods() {
@@ -2187,6 +2274,7 @@ const App = (() => {
     state.editEntryId = null;
     state.editEntryDay = null;
     state.pendingCatalogFood = null;
+    state.qtyIntent = "log";
   }
 
   function openQty(food, prefill) {
@@ -2203,6 +2291,8 @@ const App = (() => {
       ...(prefill || {}),
       allowRemove: !!(prefill && prefill.allowRemove),
     });
+    const saveBtn = UI.$("#qty-save");
+    if (saveBtn) saveBtn.textContent = state.qtyIntent === "plan" ? "Add to plan" : "Save";
     UI.closeSheet("sheet-add");
     UI.openSheet("sheet-qty");
     setTimeout(() => {
@@ -2486,11 +2576,33 @@ const App = (() => {
     const producerError = validateProducerEntry(entry);
     if (producerError) { UI.toast(producerError); return; }
     const warns = FoodMatch.plausibility(entry);
-    if (warns.length && !confirm(warns[0] + "\n\nLog it anyway?")) return;
+    const planAnyway = state.qtyIntent === "plan" ? "Add it anyway?" : "Log it anyway?";
+    if (warns.length && !confirm(warns[0] + "\n\n" + planAnyway)) return;
 
     const gapItemId = state.gapPendingItemId;
     const day = gapItemId ? (state.gapPendingDay || editDay()) : editDay();
     if (!confirmOffTodayLog(day)) return;
+
+    // Manual Planner add: pending item on dayPlans, not a ledger entry.
+    if (state.qtyIntent === "plan" && !state.editEntryId && !gapItemId) {
+      if (!entry.foodId && food.id && !food._orphan) entry.foodId = food.id;
+      if (food._orphan) entry.foodId = null;
+      try {
+        addManualPlanItem(day, food, entry);
+      } catch (error) {
+        UI.toast("Couldn’t add to plan — nothing changed");
+        return;
+      }
+      if (state.pendingCatalogFood && state.pendingCatalogFood.id === food.id) state.pendingCatalogFood = null;
+      Sync.schedulePush();
+      UI.closeSheet("sheet-qty");
+      resetQtyState();
+      refreshDay();
+      openGapSheet({ plan: true });
+      UI.toast("Added to plan");
+      return;
+    }
+
     let loggedEntryId = null;
     let nextPersonal = cloneLocalData(state.personalFoods);
     if (!state.editEntryId) {
@@ -4474,7 +4586,10 @@ const App = (() => {
     });
     UI.$("#btn-day-prev").addEventListener("click", () => shiftDay(-1));
     UI.$("#btn-day-next").addEventListener("click", () => shiftDay(1));
-    UI.$("#fab-add").addEventListener("click", openAddSheet);
+    UI.$("#fab-add").addEventListener("click", () => {
+      state.qtyIntent = "log";
+      openAddSheet();
+    });
 
     if (UI.$("#btn-close-gap")) {
       UI.$("#btn-close-gap").addEventListener("click", () => openGapSheet({ plan: false }));
@@ -4533,10 +4648,10 @@ const App = (() => {
       });
     }
     if (UI.$("#btn-gap-recalc")) {
-      UI.$("#btn-gap-recalc").addEventListener("click", startGapRecalc);
+      UI.$("#btn-gap-recalc").addEventListener("click", startGapAiFill);
     }
     if (UI.$("#btn-gap-add-foods")) {
-      UI.$("#btn-gap-add-foods").addEventListener("click", () => showGapSheetStep("select"));
+      UI.$("#btn-gap-add-foods").addEventListener("click", openAddForPlan);
     }
     if (UI.$("#btn-gap-clear-plan")) {
       UI.$("#btn-gap-clear-plan").addEventListener("click", clearGapPlan);
@@ -5862,6 +5977,9 @@ const App = (() => {
           }
           if (sheetId === "sheet-once") clearOnceEstimatePending();
           resetQtyState();
+        }
+        if (sheetId === "sheet-add" && state.qtyIntent === "plan") {
+          state.qtyIntent = "log";
         }
         if (sheetId === "sheet-gap") {
                 state.gapPortionCache = null;

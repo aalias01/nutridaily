@@ -90,7 +90,7 @@
       </div>
       <p class="muted small weight-trend-line" id="weight-trend-line" hidden></p>
       <div class="gap-row" id="gap-row">
-        <button type="button" class="btn ghost full" id="btn-close-gap">Close the gap</button>
+        <button type="button" class="btn ghost full" id="btn-close-gap">Planner</button>
         <button type="button" class="btn ghost full gap-plan-chip" id="btn-gap-plan" hidden>Plan: 0 left</button>
       </div>
       <div id="today-day-detail"></div>
@@ -512,12 +512,12 @@
     </div>
   </div>
 
-  <!-- Close the gap (NUTRI import / gap-fill plan) -->
+  <!-- Planner (manual pending items + optional AI gap-fill) -->
   <div id="sheet-gap" class="sheet" hidden>
     <div class="sheet-backdrop" data-close="sheet-gap"></div>
     <div class="sheet-card sheet-card-tall">
       <div class="sheet-grab"></div>
-      <h3 id="gap-sheet-title">Close the gap</h3>
+      <h3 id="gap-sheet-title">Planner</h3>
       <p class="disclaimer" id="gap-disclaimer">
         LLM guidance is reference only, not medical advice. Quantities come from a paste you bring back from your own chat.
       </p>
@@ -526,7 +526,7 @@
         <p class="disclaimer">
           LLM guidance is reference only, not medical advice. Quantities come from a paste you bring back from your own chat.
         </p>
-        <p class="muted small">Pick foods you still plan to eat. We’ll copy a prompt with today’s log, targets, remaining macros, and your usual portion ranges.</p>
+        <p class="muted small">Pick foods you still plan to eat. We’ll copy a prompt with this day’s log, targets, remaining macros, and your usual portion ranges.</p>
         <p class="muted small">New dish? Add it under Foods → NUTRI import first, then pick it here.</p>
         <div class="col-actions">
           <button id="btn-gap-intro-ok" class="btn full" type="button">Continue</button>
@@ -582,9 +582,9 @@
         <p class="muted small" id="gap-plan-hint">Tap a food to log (you can edit grams).</p>
         <div id="gap-plan-list" class="gap-plan-list"></div>
         <div class="col-actions">
-          <button id="btn-gap-recalc" class="btn full" type="button">Recalculate with AI</button>
-          <button id="btn-gap-add-foods" class="btn ghost full" type="button">Add more foods</button>
-          <button id="btn-gap-clear-plan" class="btn ghost full" type="button">Clear day plan</button>
+          <button id="btn-gap-add-foods" class="btn full" type="button">Add food to plan</button>
+          <button id="btn-gap-recalc" class="btn ghost full" type="button">Fill remaining with AI</button>
+          <button id="btn-gap-clear-plan" class="btn ghost full" type="button">Clear plan</button>
           <button id="btn-gap-plan-close" class="btn ghost full" type="button">Close</button>
         </div>
       </div>

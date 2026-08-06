@@ -957,7 +957,7 @@ END`;
       goals: { kcal: 2200, protein: 150, carbs: 250, fat: 70, fiber: 30, sodium: 2300, potassium: 3400 },
       candidates: [],
     });
-    ok(/Potassium 3400 mg/.test(gapText) && /salt substitutes/.test(gapText), "Close the Gap includes potassium and safety guidance");
+    ok(/Potassium 3400 mg/.test(gapText) && /salt substitutes/.test(gapText), "Planner AI fill includes potassium and safety guidance");
 
     // GAP paste is untrusted: truncated blocks fail, and dishonest safety/
     // projection claims cannot bypass local food math or manual review.
@@ -973,12 +973,9 @@ END`;
     const todayTab = [...window.document.querySelectorAll(".tab")].find((x) => x.dataset.view === "today");
     todayTab.click();
     $("#btn-close-gap").click();
-    // First open of this session lands on the one-time intro step (gap
-    // sessionStorage flag is unset), which leaves #btn-gap-to-prompt at its
-    // static disabled attribute — that button is only re-enabled by
-    // refreshGapSelectList, which runs for the "select" step. Dismiss the
-    // intro the way a real user would before continuing; this scenario is
-    // exercising the paste-rejection flow below, not the intro screen.
+    // Planner opens plan-first; enter the AI fill path, then dismiss the
+    // one-time intro if shown so #btn-gap-to-prompt is enabled.
+    $("#btn-gap-recalc").click();
     if (!$("#gap-step-intro").hidden) $("#btn-gap-intro-ok").click();
     $("#btn-gap-to-prompt").click();
     $("#gap-paste").value = `GAP v1
