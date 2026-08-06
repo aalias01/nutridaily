@@ -3750,8 +3750,10 @@ async function runImportSecurity() {
     const NutriParse = window.eval("NutriParse");
     [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
     $("#fab-add").click();
-    ok(!!$("#btn-estimate-ai"), "Estimate with AI is on the Add sheet");
-    $("#btn-estimate-ai").click();
+    $("#btn-once-food").click();
+    ok(!$("#sheet-once").hidden && !$("#once-estimate-ai").hidden,
+      "Estimate with AI lives on the Log once sheet for new entries");
+    $("#once-estimate-ai").click();
     ok(App.state.foodSaveIntent === "estimate" &&
         /Estimate with AI/i.test(($("#paste-title") && $("#paste-title").textContent) || ""),
       "Estimate entry sets estimate intent and paste title");

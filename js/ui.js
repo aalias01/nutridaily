@@ -3068,6 +3068,8 @@ const UI = (() => {
     setOnceErrors([]);
     const rem = $("#once-remove");
     if (rem) rem.hidden = !o.allowRemove;
+    const estimateAi = $("#once-estimate-ai");
+    if (estimateAi) estimateAi.hidden = !!o.allowRemove;
     const promote = $("#once-promote");
     if (promote) {
       const canPromote = !!(entry && entry.source === "once" && Number(entry.grams) > 0 && o.allowRemove);

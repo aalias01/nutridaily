@@ -4406,9 +4406,9 @@ const App = (() => {
       UI.closeSheet("sheet-add");
       openPaste({ intent: "log" });
     });
-    if (UI.$("#btn-estimate-ai")) {
-      UI.$("#btn-estimate-ai").addEventListener("click", () => {
-        UI.closeSheet("sheet-add");
+    if (UI.$("#once-estimate-ai")) {
+      UI.$("#once-estimate-ai").addEventListener("click", () => {
+        UI.closeSheet("sheet-once");
         openPaste({ intent: "estimate" });
       });
     }
