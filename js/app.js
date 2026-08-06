@@ -1947,7 +1947,7 @@ const App = (() => {
         displayQty: `${kcal} kcal`,
         grams: 0,
         macros: { kcal, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
-        sd: 0.25,
+        sd: 0.40,
         meal: read.meal,
         source: "quick",
         cat: read.draft.cat || "snack",
@@ -2714,6 +2714,7 @@ const App = (() => {
   /**
    * Log the review draft as a one-off (source:once) without writing My Foods.
    * Portion = 1 piece if logging by count, else 1 serving if set, else 100 g.
+   * When editing a ledger entry (Estimate-from-edit), amend that id — do not add a duplicate.
    */
   function logOnceFromReview() {
     if (state.updateFoodId) return;
@@ -2726,23 +2727,36 @@ const App = (() => {
       grams = Number(draft.units.serving);
     }
     const macros = FoodMatch.computeMacros(draft.per100, grams);
+    const day = state.editEntryId
+      ? (state.editEntryDay || state.viewDay || Ledger.todayKey())
+      : (state.viewDay || Ledger.todayKey());
+    let meal = Foods.inferMeal();
+    if (state.editEntryId) {
+      const existing = Ledger.entriesFor(day).find((e) => e.id === state.editEntryId);
+      if (existing && existing.meal) meal = existing.meal;
+    }
     const entry = Foods.entryFromOnceDraft({
       name: draft.name,
       cat: draft.cat || "dish",
       macros,
       confidence: onceConfidenceFromReview(draft.confidence),
       macrosOpened: true,
-    }, grams, "g", Foods.inferMeal());
+    }, grams, "g", meal);
     const producerError = validateProducerEntry(entry);
     if (producerError) { UI.toast(producerError); return; }
-    const day = state.viewDay || Ledger.todayKey();
     try {
-      Ledger.addEntry(day, entry);
+      if (state.editEntryId) {
+        Ledger.amendEntry(day, state.editEntryId, entry, "one-off from estimate");
+      } else {
+        Ledger.addEntry(day, entry);
+      }
     } catch (error) {
       UI.toast("Couldn’t save this log — nothing changed");
       return;
     }
     Sync.schedulePush();
+    state.editEntryId = null;
+    state.editEntryDay = null;
     state.updateFoodId = null;
     state.saveAsNew = false;
     state.editFoodDirect = false;

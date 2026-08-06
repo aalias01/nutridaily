@@ -1291,7 +1291,11 @@ const Analytics = (() => {
     }
 
     if (typeof o.entriesForDay === "function") {
-      const once = onceDays(days.map((d) => d.day), o.entriesForDay, opts);
+      // Pass only entriesForDay-related opts — do not forward todayKey or onceDays
+      // will silently drop today's disclose note (scoreOpts is spread onto observations).
+      const once = onceDays(days.map((d) => d.day), o.entriesForDay, {
+        excludeDay: o.excludeOnceDay || null,
+      });
       if (once.n > 0) {
         const sharePct = once.share != null ? Math.round(once.share * 100) : null;
         const shareText = sharePct != null
@@ -1400,15 +1404,20 @@ const Analytics = (() => {
    *
    * @param {string[]} keys day keys in range
    * @param {(day: string) => object[]} entriesForDay
-   * @returns {{ days: Array<{day, onceKcal, dayKcal, share, n}>, n, onceKcal, dayKcal, share }}
+   * @param {{ excludeDay?: string|null }} [opts]
+   *   Optional day to omit (caller-chosen). Do not pass Insights `todayKey` by
+   *   default — unlike partialDays, once/quick disclosure should include today.
    */
-  function onceDays(keys, entriesForDay) {
+  function onceDays(keys, entriesForDay, opts) {
     const empty = { days: [], n: 0, onceKcal: 0, dayKcal: 0, share: null };
     if (!keys || !keys.length || typeof entriesForDay !== "function") return empty;
+    const o = opts || {};
+    const skipDay = o.excludeDay || null;
     const days = [];
     let onceKcal = 0;
     let dayKcal = 0;
     for (const day of keys) {
+      if (skipDay && day === skipDay) continue;
       const entries = entriesForDay(day) || [];
       const once = entries.filter((e) => e && (e.source === "once" || e.source === "quick"));
       if (!once.length) continue;

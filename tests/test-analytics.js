@@ -2193,6 +2193,8 @@ console.log("\n[onceDays] One-off / quick disclosure (Step 9)");
   ok(Analytics.onceDays(keys, () => [{ source: "library", macros: { kcal: 100 } }]).n === 0,
     "library-only range reports n:0");
   ok(Analytics.onceDays([], () => []).n === 0, "empty keys → empty result");
+  ok(Analytics.onceDays(keys, (day) => byDay[day] || [], { excludeDay: "2024-01-02" }).n === 1,
+    "onceDays opts.excludeDay skips that day from the disclosure set");
 
   const days = Analytics.buildDays({
     keys,

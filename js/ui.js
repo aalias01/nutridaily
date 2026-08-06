@@ -3068,8 +3068,9 @@ const UI = (() => {
     setOnceErrors([]);
     const rem = $("#once-remove");
     if (rem) rem.hidden = !o.allowRemove;
+    // Keep Estimate available while editing so Edit → Estimate can amend (not hide it).
     const estimateAi = $("#once-estimate-ai");
-    if (estimateAi) estimateAi.hidden = !!o.allowRemove;
+    if (estimateAi) estimateAi.hidden = false;
     const promote = $("#once-promote");
     if (promote) {
       const canPromote = !!(entry && entry.source === "once" && Number(entry.grams) > 0 && o.allowRemove);

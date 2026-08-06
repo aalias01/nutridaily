@@ -3250,8 +3250,8 @@ async function runImportSecurity() {
         onceEntry.macros.kcal === 850 && onceEntry.macros.p === 0 &&
         onceEntry.macros.na === null && onceEntry.macros.k === null &&
         !Object.prototype.hasOwnProperty.call(onceEntry, "per100") &&
-        onceEntry.sd === 0.25,
-      "kcal-only (macros closed) lands as source:quick with unit:kcal and no per100",
+        onceEntry.sd === 0.40,
+      "kcal-only (macros closed) lands as source:quick with unit:kcal, sd 0.40, and no per100",
       onceEntry ? JSON.stringify({
         name: onceEntry.name, source: onceEntry.source, sd: onceEntry.sd,
         unit: onceEntry.unit, grams: onceEntry.grams, qty: onceEntry.qty, macros: onceEntry.macros,
@@ -3752,7 +3752,7 @@ async function runImportSecurity() {
     $("#fab-add").click();
     $("#btn-once-food").click();
     ok(!$("#sheet-once").hidden && !$("#once-estimate-ai").hidden,
-      "Estimate with AI lives on the Log once sheet for new entries");
+      "Estimate with AI lives on the Log once sheet");
     $("#once-estimate-ai").click();
     ok(App.state.foodSaveIntent === "estimate" &&
         /Estimate with AI/i.test(($("#paste-title") && $("#paste-title").textContent) || ""),
@@ -3831,6 +3831,53 @@ async function runImportSecurity() {
     await new Promise((r) => setTimeout(r, 40));
     ok(App.state.foodSaveIntent === "library",
       "closing paste sheet resets foodSaveIntent away from estimate");
+    App.state.viewDay = today;
+    await new Promise((r) => setTimeout(r, 220));
+
+    // Phase 0.2: Edit Quick → Estimate → Log once amends the same id (no duplicate).
+    {
+      const repairDay = "2019-07-04";
+      App.state.viewDay = repairDay;
+      Ledger.addEntry(repairDay, {
+        name: "Quick sandwich",
+        foodId: null, cat: "meal", grams: 0, displayQty: "500 kcal", qty: 500, unit: "kcal",
+        macros: { kcal: 500, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
+        sd: 0.40, meal: "lunch", source: "quick",
+      });
+      const before = Ledger.entriesFor(repairDay).find((e) => e.name === "Quick sandwich");
+      ok(!!before && before.source === "quick", "fixture: quick entry on repair day");
+      UI.renderDayLog(repairDay, Ledger.entriesFor(repairDay));
+      $(`#day-log [data-action='toggle-entry'][data-id='${before.id}']`).click();
+      $(`#day-log [data-action='edit-entry'][data-id='${before.id}']`).click();
+      await new Promise((r) => setTimeout(r, 40));
+      ok(!$("#sheet-once").hidden && App.state.editEntryId === before.id && !$("#once-estimate-ai").hidden,
+        "editing a quick entry keeps Estimate with AI available");
+      $("#once-estimate-ai").click();
+      ok(App.state.foodSaveIntent === "estimate" && App.state.editEntryId === before.id,
+        "Estimate from edit keeps editEntryId armed for amend");
+      $("#btn-manual-food").click();
+      $("#rev-name").value = "Repaired sandwich";
+      $("#rev-kcal").value = "220";
+      $("#rev-p").value = "18";
+      $("#rev-c").value = "20";
+      $("#rev-f").value = "8";
+      $("#rev-fb").value = "2";
+      $("#rev-na").value = "";
+      $("#rev-k").value = "";
+      $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
+      $("#btn-review-log-once").click();
+      await new Promise((r) => setTimeout(r, 40));
+      const after = Ledger.entriesFor(repairDay);
+      const repaired = after.find((e) => e.id === before.id);
+      ok(after.filter((e) => /sandwich/i.test(e.name)).length === 1,
+        "repair leaves exactly one sandwich entry on the day",
+        after.map((e) => `${e.id}:${e.name}:${e.source}`).join(" | "));
+      ok(repaired && repaired.source === "once" && repaired.name === "Repaired sandwich" &&
+          repaired.meal === "lunch" && repaired.macros.p === 18 &&
+          !Object.prototype.hasOwnProperty.call(repaired, "per100"),
+        "Log once from estimate amends the quick entry into a full once (same id, meal preserved)");
+      ok(!App.state.editEntryId, "editEntryId cleared after amend repair");
+    }
     App.state.viewDay = today;
     await new Promise((r) => setTimeout(r, 220));
 
