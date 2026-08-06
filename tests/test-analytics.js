@@ -2169,5 +2169,51 @@ console.log("\n[47] Day-intent: reverted fast keeps marker; observations + TDEE 
   ok(tdee.loggedDays === 12, "loggedDays stays eating-day count", `got ${tdee.loggedDays}`);
 }
 
+console.log("\n[onceDays] One-off / quick disclosure (Step 9)");
+{
+  const keys = ["2024-01-01", "2024-01-02", "2024-01-03"];
+  const byDay = {
+    "2024-01-01": [
+      { source: "once", macros: { kcal: 400 } },
+      { source: "label", macros: { kcal: 600 } },
+    ],
+    "2024-01-02": [
+      { source: "quick", macros: { kcal: 250 } },
+    ],
+    "2024-01-03": [
+      { source: "library", macros: { kcal: 1800 } },
+    ],
+  };
+  const r = Analytics.onceDays(keys, (day) => byDay[day] || []);
+  ok(r.n === 2, "counts days with once or quick entries", `got ${r.n}`);
+  ok(r.onceKcal === 650 && r.dayKcal === 1250, "sums once kcal vs day kcal on those days",
+    `once=${r.onceKcal} day=${r.dayKcal}`);
+  approx(r.share, 0.52, 0.01, "share is onceKcal / dayKcal across flagged days");
+  ok(r.days[0].share === 0.4, "per-day share for mixed once+library day");
+  ok(Analytics.onceDays(keys, () => [{ source: "library", macros: { kcal: 100 } }]).n === 0,
+    "library-only range reports n:0");
+  ok(Analytics.onceDays([], () => []).n === 0, "empty keys → empty result");
+
+  const days = Analytics.buildDays({
+    keys,
+    totalsForDay: (day) => {
+      const kcal = (byDay[day] || []).reduce((s, e) => s + e.macros.kcal, 0);
+      return kcal
+        ? { count: 1, kcal: { mean: kcal }, p: { mean: 0 }, c: { mean: 0 }, f: { mean: 0 }, fb: { mean: 0 }, na: { mean: 0 } }
+        : { count: 0 };
+    },
+    goalsForDay: () => ({ ...GOALS }),
+  });
+  const withNote = Analytics.observations(days, { entriesForDay: (day) => byDay[day] || [] });
+  const note = withNote.find((o) => o.id === "once-days");
+  ok(!!note && note.priority === 0 && /2 days include one-off/.test(note.text),
+    "observations emit honesty once-days note when entriesForDay is provided",
+    note && note.text);
+  ok(!Analytics.observations(days, {}).some((o) => o.id === "once-days"),
+    "without entriesForDay, once-days note is omitted");
+  const stats = Analytics.summaryStats(days, "kcal");
+  ok(stats.n === 3, "once/quick days remain in underlying stats (disclose, never drop)");
+}
+
 console.log(`\nanalytics: ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

@@ -1357,6 +1357,8 @@ const UI = (() => {
       weightUnit: settings.weightUnit === "kg" ? "kg" : "lb",
       // Today is still in progress; counting it as a miss would be wrong.
       scoreOpts: { todayKey: viewingPastPhase ? null : todayKey },
+      // One context surface for entry-level panels (topFoods / byMeal / onceDays).
+      entriesForDay: (day) => Ledger.entriesFor(day),
       rangeLabel: daysBack === "phase" && selectedPhase
         ? Phases.labelForDay(selectedPhase, selectedPhase.endDay || todayKey)
         : `${keys.length} days`,
@@ -1457,8 +1459,11 @@ const UI = (() => {
   function renderObservations(ctx) {
     const root = $("#insight-observations");
     if (!root) return;
-    const HONESTY = new Set(["partial-days", "bumps", "fasts"]);
-    const obs = Analytics.observations(ctx.days, ctx.scoreOpts)
+    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days"]);
+    const obs = Analytics.observations(ctx.days, {
+      ...(ctx.scoreOpts || {}),
+      entriesForDay: ctx.entriesForDay,
+    })
       .slice()
       .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
     const always = obs.filter((o) => o.tone === "watch" || HONESTY.has(o.id));
@@ -2053,7 +2058,7 @@ const UI = (() => {
   function renderMealSplit(ctx) {
     const root = $("#meal-split");
     if (!root) return;
-    const meals = Analytics.byMeal(ctx.keys, (day) => Ledger.entriesFor(day));
+    const meals = Analytics.byMeal(ctx.keys, ctx.entriesForDay || ((day) => Ledger.entriesFor(day)));
     const total = meals.reduce((s, m) => s + m.kcal, 0);
     if (!total) {
       root.innerHTML = `<b>Calories by meal</b><p class="muted small">Appears once you log meals.</p>`;
@@ -2134,7 +2139,7 @@ const UI = (() => {
     if (!root) return;
     const metric = ctx.topFoodMetric;
     const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg", potassium: " mg" }[metric] || "";
-    const rows = Analytics.topFoods(ctx.keys, (day) => Ledger.entriesFor(day), metric, 6);
+    const rows = Analytics.topFoods(ctx.keys, ctx.entriesForDay || ((day) => Ledger.entriesFor(day)), metric, 6);
     const scope = $("#topfoods-scope");
     if (scope) scope.textContent = nutMeta(metric).label;
     if (!rows.length) {

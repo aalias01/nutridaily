@@ -706,7 +706,7 @@ async function run(label, days) {
   // §3 test #9 (light check on the main fixture) — honesty top-level + jump.
   // Cap / <details> branch coverage lives in runObservationsTriage().
   {
-    const HONESTY = new Set(["partial-days", "bumps", "fasts"]);
+    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days"]);
     const root = $("#insight-observations");
     const topNotes = [...root.children].filter((el) => el.matches(".obs"));
     const moreNotes = [...root.querySelectorAll("details.obs-more .obs")];
@@ -1345,7 +1345,7 @@ async function runObservationsTriage() {
     firstAddAt: (day) => Ledger.firstAddAt(day),
   });
   const emitted = Analytics.observations(days, { todayKey });
-  const HONESTY = new Set(["partial-days", "bumps", "fasts"]);
+  const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days"]);
   const cappable = emitted.filter((o) => o.tone !== "watch" && !HONESTY.has(o.id));
   ok(cappable.length >= 4, "obs-triage fixture fires ≥4 cappable info notes (enough to force the cap)",
     emitted.map((o) => o.id).join(", "));
@@ -1384,7 +1384,7 @@ async function runObservationsTriage() {
       !!$('#insight-observations > [data-obs-id="partial-days"]'),
     "partial-days and bumps both stay top-level regardless of the info cap");
 
-  const pri = { "partial-days": 0, bumps: 0, fasts: 0, coverage: 10, "weekend-logging": 20,
+  const pri = { "partial-days": 0, bumps: 0, fasts: 0, "once-days": 0, coverage: 10, "weekend-logging": 20,
     "weekend-kcal": 30, variability: 40, momentum: 50, "protein-per-kg": 60 };
   const priOk = (ids) => {
     for (let i = 1; i < ids.length; i++) {
@@ -3580,6 +3580,65 @@ async function runImportSecurity() {
     UI.closeSheet("sheet-paste");
     App.state.viewDay = today;
     await new Promise((r) => setTimeout(r, 220));
+  }
+
+  // Step 9 — onceDays honesty: disclose one-off/quick days in Insights, never drop them.
+  {
+    const Analytics = window.eval("Analytics");
+    const onceInsightsDay = "2019-06-15";
+    const fixtureEntries = {
+      [onceInsightsDay]: [
+        {
+          name: "Airport sandwich", source: "quick",
+          macros: { kcal: 450, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
+        },
+        {
+          name: "Library lunch", source: "personal",
+          macros: { kcal: 550, p: 30, c: 50, f: 20, fb: 5, na: 400, k: 500 },
+        },
+      ],
+    };
+    const counted = Analytics.onceDays([onceInsightsDay], (d) => fixtureEntries[d] || []);
+    ok(counted.n === 1 && counted.onceKcal === 450 && Math.abs(counted.share - 0.45) < 0.01,
+      "onceDays counts quick share on a mixed day",
+      JSON.stringify(counted));
+
+    const days = Analytics.buildDays({
+      keys: [onceInsightsDay],
+      totalsForDay: () => ({
+        count: 2,
+        kcal: { mean: 1000 }, p: { mean: 30 }, c: { mean: 50 }, f: { mean: 20 },
+        fb: { mean: 5 }, na: { mean: 400 },
+      }),
+      goalsForDay: () => (App.state.settings && App.state.settings.goals) || {},
+    });
+    const note = Analytics.observations(days, {
+      entriesForDay: (d) => fixtureEntries[d] || [],
+    }).find((o) => o.id === "once-days");
+    ok(!!note && /^1 day includes one-off/.test(note.text),
+      "observations once-days note for a single mixed day",
+      note && note.text);
+    const stats = Analytics.summaryStats(days, "kcal");
+    ok(stats.n === 1 && Math.round(stats.avg) === 1000,
+      "one-off day stays in kcal stats (disclose, never exclude)",
+      JSON.stringify(stats));
+
+    // Live Insights panel: seed an in-range quick entry so the honesty note is visible.
+    const todayKey = Ledger.todayKey();
+    Ledger.addEntry(todayKey, {
+      name: "Today quick snack",
+      foodId: null, cat: "snack", grams: 0, displayQty: "200 kcal", qty: 200, unit: "kcal",
+      macros: { kcal: 200, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
+      sd: 0.25, meal: "snack", source: "quick",
+    });
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+    await new Promise((r) => setTimeout(r, 80));
+    const live = $('#insight-observations [data-obs-id="once-days"]');
+    ok(!!live && /one-off or quick-kcal/.test(live.textContent || ""),
+      "Insights shows once-days honesty note for in-range quick entries",
+      live && live.textContent);
+    App.state.viewDay = today;
+    await new Promise((r) => setTimeout(r, 40));
   }
 
   // Step 5 — Log once from the review sheet (no My Foods write).

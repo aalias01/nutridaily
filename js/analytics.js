@@ -1290,6 +1290,22 @@ const Analytics = (() => {
       });
     }
 
+    if (typeof o.entriesForDay === "function") {
+      const once = onceDays(days.map((d) => d.day), o.entriesForDay, opts);
+      if (once.n > 0) {
+        const sharePct = once.share != null ? Math.round(once.share * 100) : null;
+        const shareText = sharePct != null
+          ? ` About ${sharePct}% of the calories on those days came from one-offs.`
+          : "";
+        out.push({
+          id: "once-days",
+          tone: "info",
+          priority: 0,
+          text: `${once.n} day${once.n === 1 ? " includes" : "s include"} one-off or quick-kcal entries.${shareText} They stay in every average — disclosed, not dropped.`,
+        });
+      }
+    }
+
     const bumps = dayPlanAudit(days, opts);
     if (bumps.total) {
       const late = bumps.declaredLate
@@ -1375,6 +1391,45 @@ const Analytics = (() => {
       threshold,
       avg: mean(logged.map((d) => d.kcal)),
       adjustedAvg: rest.length ? mean(rest.map((d) => d.kcal)) : null,
+    };
+  }
+
+  /**
+   * Days in range that contain one-off / quick-kcal entries, and what share of
+   * those days' calories they account for. Disclosure only — never exclude.
+   *
+   * @param {string[]} keys day keys in range
+   * @param {(day: string) => object[]} entriesForDay
+   * @returns {{ days: Array<{day, onceKcal, dayKcal, share, n}>, n, onceKcal, dayKcal, share }}
+   */
+  function onceDays(keys, entriesForDay) {
+    const empty = { days: [], n: 0, onceKcal: 0, dayKcal: 0, share: null };
+    if (!keys || !keys.length || typeof entriesForDay !== "function") return empty;
+    const days = [];
+    let onceKcal = 0;
+    let dayKcal = 0;
+    for (const day of keys) {
+      const entries = entriesForDay(day) || [];
+      const once = entries.filter((e) => e && (e.source === "once" || e.source === "quick"));
+      if (!once.length) continue;
+      const oK = once.reduce((s, e) => s + (Number(e.macros && e.macros.kcal) || 0), 0);
+      const dK = entries.reduce((s, e) => s + (Number(e.macros && e.macros.kcal) || 0), 0);
+      days.push({
+        day,
+        onceKcal: oK,
+        dayKcal: dK,
+        share: dK > 0 ? oK / dK : null,
+        n: once.length,
+      });
+      onceKcal += oK;
+      dayKcal += dK;
+    }
+    return {
+      days,
+      n: days.length,
+      onceKcal,
+      dayKcal,
+      share: dayKcal > 0 ? onceKcal / dayKcal : null,
     };
   }
 
@@ -1647,7 +1702,7 @@ const Analytics = (() => {
     weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods,
     proteinPerKg, heatmapCells, heatmapWeeks, extremes, momentum, observations,
     phaseKcalOf,
-    partialDays, dayPlanAudit, dayPlanProvenance,
+    partialDays, onceDays, dayPlanAudit, dayPlanProvenance,
     rangeSummary, compareSummaries, retargetForKcal,
     fmtNum, fmtSigned, kgToDisplay,
   };
