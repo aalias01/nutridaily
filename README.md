@@ -25,6 +25,8 @@ For always-connected Drive auth locally, prefer `npx vercel dev` (see Deploy bel
 
 **Common foods (no AI needed):** Today → **+** → pick from **Common foods** (banana, apple, eggs, rice, …) or search the catalog → enter grams / pieces → Save. First pick copies it into My Foods. Tap **Edit food** to change macros or name. Catalog values are USDA-style averages (good defaults, not brand-specific); override anytime.
 
+**Log once (not saved to My Foods):** Today → **+** → **Log once**. Name the meal, pick a portion, enter calories. Leave Macros closed for calories only, or open them when you know protein and friends. **Estimate with AI** (on that sheet) copies a prompt for restaurant / label / photo guesses; paste the reply and **Log once** from review. Nothing is added to My Foods unless you later choose **Save to My Foods** on a weighed entry.
+
 **Homemade dishes:**
 
 1. Tap **+** → **Homemade dish (AI paste)**.
@@ -71,7 +73,7 @@ Order on the tab:
 
 On a brand-new or very thin log, Insights stays quiet on purpose: energy and composition wait until a few days exist rather than stacking eight "not enough data" cards.
 
-It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), and calorie heatmaps mark days that used a day plan. Declared low-calorie days and declared fasts are user-stamped, not inferred: they stay out of unfinished-log flags and out of eating-day averages; when a low plan makes a floor or ceiling arithmetically incoherent, that nutrient is left unscored and disclosed rather than quietly dropped; fasts count toward consistency at zero calories and are included in the TDEE intake average as zero; and a declaration made after the day ended is reported rather than quietly rewritten. Because a reduced plan locks after the first logged food, it cannot be added later to turn an over-target result into a hit.
+It also tells you when the numbers deserve less trust: days logged with one small entry are flagged as possible unfinished logs (still counted, with the alternative average shown), days that include Log once / calories-only entries are disclosed the same way (still counted), and calorie heatmaps mark days that used a day plan. Declared low-calorie days and declared fasts are user-stamped, not inferred: they stay out of unfinished-log flags and out of eating-day averages; when a low plan makes a floor or ceiling arithmetically incoherent, that nutrient is left unscored and disclosed rather than quietly dropped; fasts count toward consistency at zero calories and are included in the TDEE intake average as zero; and a declaration made after the day ended is reported rather than quietly rewritten. Because a reduced plan locks after the first logged food, it cannot be added later to turn an over-target result into a hit.
 
 Numbers are estimates from logged data. Nothing here is medical advice; talk to a clinician or dietitian for anything that matters.
 
