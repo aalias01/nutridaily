@@ -250,7 +250,7 @@
             <div><label class="small muted" for="set-sodium">Sodium mg</label><input id="set-sodium" type="number" min="0" step="50"></div>
             <div><label class="small muted" for="set-potassium">Potassium mg</label><input id="set-potassium" type="number" min="0" step="100"></div>
           </div>
-          <label class="check-row"><input id="set-phase-major" type="checkbox"> Force major version (vN.0)</label>
+          <label class="check-row" id="set-phase-major-row"><input id="set-phase-major" type="checkbox"> Force major version (vN.0)</label>
           <div class="phase-actions">
             <button id="btn-save-settings" class="btn full" type="button">Save phase</button>
             <button id="btn-ai-targets" class="btn ghost full" type="button">Get AI targets…</button>
@@ -443,7 +443,7 @@
     <div class="sheet-card">
       <div class="sheet-grab"></div>
       <h3>Start new phase</h3>
-      <p class="muted small">Ends the current phase yesterday and starts Kind v1.0 today. Past Insights keep their old targets.</p>
+      <p class="muted small" id="np-blurb">Ends the current phase yesterday and starts Kind v1.0 today. Past Insights keep their old targets.</p>
       <label class="small muted">Kind</label>
       <div class="phase-kind-seg seg" id="np-kind-seg" role="group" aria-label="New phase kind">
         <button type="button" data-np-kind="cut">Cut</button>

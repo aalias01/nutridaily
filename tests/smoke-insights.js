@@ -834,11 +834,11 @@ async function run(label, days) {
         window.eval("Sync").schedulePush = originalSchedulePush;
         window.confirm = originalConfirm;
       }
-      ok(!failTdeeWriteOnce && JSON.stringify(TdeeApp.state.settings) === beforeTdeeMemory &&
-          window.localStorage.getItem(settingsKey) === beforeTdeeDisk,
-        "failed TDEE Apply leaves exact live and durable settings unchanged");
-      ok(tdeeSyncCalls === 0 && /nothing changed/i.test(text("#toast")),
-        "failed TDEE Apply reports no success and schedules no sync");
+      ok(/Food logged today.*Start new phase/i.test(text("#toast")) &&
+          JSON.stringify(TdeeApp.state.settings) === beforeTdeeMemory &&
+          window.localStorage.getItem(settingsKey) === beforeTdeeDisk &&
+          tdeeSyncCalls === 0,
+        "TDEE Apply is locked after today's first food and leaves settings unchanged");
       failedApply.remove();
       TdeeApp.state.settings.profile = fixtureProfile;
       originalSetItem.call(window.localStorage, settingsKey, fixtureSettingsRaw);
@@ -886,17 +886,24 @@ END`;
     $("#btn-parse-phase").click();
     apply = $("#ai-phase-options .ai-apply-opt");
     apply.click();
-    ok($("#set-potassium").value === "3400", "legacy PHASE reply preserves potassium target");
+    ok($("#np-potassium").value === "3400" && !$("#sheet-new-phase").hidden,
+      "legacy PHASE reply preserves potassium and opens Start new phase when today is locked");
+    $("#np-cancel").click();
     const PhaseMath = window.eval("Phases");
     const DateMath = window.eval("Analytics");
     const loggedToday = window.eval("Ledger.todayKey()");
     const targetBeforeSave = PhaseMath.goalsForDay(loggedToday, JSON.parse(window.localStorage.getItem("nd_settings_v1"))).kcal;
-    $("#set-kcal").value = String(targetBeforeSave + 100);
-    $("#btn-save-settings").click();
+    ok($("#btn-save-settings").hidden || $("#btn-save-settings").disabled,
+      "Save phase is locked after today's first food");
+    $("#btn-start-phase").click();
+    $("#np-copy").checked = false;
+    $("#np-goals").hidden = false;
+    $("#np-kcal").value = String(targetBeforeSave + 100);
+    $("#np-save").click();
     const deferredSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
     ok(PhaseMath.goalsForDay(loggedToday, deferredSettings).kcal === targetBeforeSave &&
         PhaseMath.goalsForDay(DateMath.addDays(loggedToday, 1), deferredSettings).kcal === targetBeforeSave + 100,
-      "phase target changes made after today's first add take effect tomorrow");
+      "Start new phase after today's first add takes effect tomorrow");
 
     // Once today's logging has begun, a Reduced plan cannot be created — Fast
     // grace remains open (§10), so the sheet may still open on Fast.

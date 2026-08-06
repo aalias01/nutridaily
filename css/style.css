@@ -519,6 +519,12 @@ body.sheet-open .insight-dock { display: none; }
   padding: 7px 12px; min-height: 36px; border-radius: 8px; cursor: pointer; text-transform: capitalize;
 }
 .seg button.on { background: var(--card); color: var(--ink); box-shadow: var(--shadow); }
+.seg button:disabled { opacity: 0.45; cursor: default; }
+.phase-card.phase-locked .goals-grid input:disabled {
+  opacity: 0.72;
+  color: var(--muted);
+  cursor: default;
+}
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .row.end { justify-content: flex-end; margin-top: 16px; }
 .row input { flex: 1; }
