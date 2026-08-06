@@ -514,7 +514,12 @@ body.sheet-open .insight-dock { display: none; }
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.card-block { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin: 10px 0; box-shadow: var(--shadow); }
+.macro-culprits { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.macro-culprit-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 0;
+}
+.macro-culprit-row .btn { flex: 0 0 auto; min-height: 36px; padding: 6px 12px; }
 .range-pills { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; }
 .range-pills button {
   padding: 7px 10px; min-height: 40px; border-radius: 999px; border: 1px solid var(--line);

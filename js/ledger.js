@@ -994,6 +994,7 @@ const Ledger = (() => {
 
   return {
     todayKey, addEntry, amendEntry, removeEntry, entriesFor, totalsFor, totalsOf,
+    entryMacrosKnown,
     recentDays, recentSummary, portionStats, findEntry, allEvents, loggedDayKeys, hasEverAdded, firstAddAt,
     replayEvents, validateEvents, rootAddEvents, filterEventsByResetEpoch, configureContext,
     replaceAll, clearAll, _resetCacheForTests, _setStoreForTests,

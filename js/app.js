@@ -5720,6 +5720,14 @@ const App = (() => {
     document.body.addEventListener("click", (e) => {
       const jump = e.target.closest("[data-jump]");
       if (jump && jump.closest("#insight-observations")) {
+        const jumpDay = jump.dataset.jumpDay;
+        if (jumpDay) {
+          UI.renderDayDetail(jumpDay, {
+            goals: Phases.goalsForDay(jumpDay, state.settings),
+            settings: state.settings,
+            metric: state.insightNutrient || "kcal",
+          });
+        }
         const sel = jump.dataset.jump;
         const target = sel && UI.$(sel);
         if (target) {
@@ -5778,8 +5786,16 @@ const App = (() => {
         UI.toggleEntryExpand(id);
         UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
       } else if (action === "edit-entry") {
-        const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);
+        const day = actionEl.dataset.day || state.viewDay;
+        const entry = Ledger.entriesFor(day).find((x) => x.id === id);
         if (!entry) return;
+        if (actionEl.dataset.day && actionEl.dataset.day !== state.viewDay) {
+          state.viewDay = day;
+          switchView("today");
+          refreshDay();
+        } else if (actionEl.dataset.day) {
+          switchView("today");
+        }
         openQtyFromEntry(entry, { allowRemove: true });
       } else if (action === "promote-once") {
         const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);

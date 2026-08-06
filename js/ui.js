@@ -1465,7 +1465,7 @@ const UI = (() => {
   function renderObservations(ctx) {
     const root = $("#insight-observations");
     if (!root) return;
-    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days"]);
+    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete"]);
     const obs = Analytics.observations(ctx.days, {
       ...(ctx.scoreOpts || {}),
       entriesForDay: ctx.entriesForDay,
@@ -1481,8 +1481,9 @@ const UI = (() => {
     const renderNote = (o) => {
       const cls = `obs obs-${esc(o.tone)}`;
       const idAttr = ` data-obs-id="${esc(o.id)}"`;
+      const dayAttr = o.jumpDay ? ` data-jump-day="${esc(o.jumpDay)}"` : "";
       if (o.panel) {
-        return `<button type="button" class="${cls} obs-jump"${idAttr} data-jump="${esc(o.panel)}">${esc(o.text)}</button>`;
+        return `<button type="button" class="${cls} obs-jump"${idAttr}${dayAttr} data-jump="${esc(o.panel)}">${esc(o.text)}</button>`;
       }
       return `<p class="${cls}"${idAttr}>${esc(o.text)}</p>`;
     };
@@ -2897,6 +2898,9 @@ const UI = (() => {
       : metric === "potassium"
         ? (typeof Phases !== "undefined" && Phases.potassiumCovered(t))
         : true;
+    const macrosCovered = typeof Phases === "undefined" || Phases.macrosCovered(t);
+    const macroNutrient = metric === "protein" || metric === "carbs"
+      || metric === "fat" || metric === "fiber";
     let headLine;
     if (unscoredReason) {
       // Same wording as Today's own "not scored today" — a delta against a
@@ -2908,6 +2912,10 @@ const UI = (() => {
         ? ` · ${Math.round(mineralCoverage * 100)}% covered`
         : "";
       headLine = `${fmt(value)}${esc(unitSuffix)} known subtotal${coverageText} · incomplete; not compared with the full ${metric === "sodium" ? "limit" : "floor"}`;
+    } else if (macroNutrient && !macrosCovered) {
+      const cov = Number(t.macroCoverage);
+      const coverageText = Number.isFinite(cov) ? ` · ${Math.round(cov * 100)}% covered` : "";
+      headLine = `${fmt(value)}${esc(unitSuffix)} known subtotal${coverageText} · incomplete; macros not scored`;
     } else if (!goal) {
       headLine = `${fmt(value)}${esc(unitSuffix)} ${esc(meta.label.toLowerCase())}`;
     } else {
@@ -2964,10 +2972,35 @@ const UI = (() => {
         <p class="muted small">${footer}</p>`;
     }
 
+    // Design Phase 3: name foods that pull macro coverage down + Edit to repair.
+    let culpritsHtml = "";
+    if (!macrosCovered && typeof Ledger.entryMacrosKnown === "function") {
+      const culprits = entries.filter((e) => !Ledger.entryMacrosKnown(e));
+      if (culprits.length) {
+        const items = culprits.map((e) => {
+          const kind = (e.source === "quick") ? "quick" : (e.source === "once" ? "once" : "");
+          const badge = sourceBadgeForKind(kind) || (kind === ""
+            ? ` <span class="src-badge" title="Incomplete macros">Incomplete</span>`
+            : "");
+          const kcal = Number(e.macros && e.macros.kcal) || 0;
+          return `<li class="macro-culprit-row">
+            <span class="tf-name">${esc(e.name || "Untitled")}${badge}
+              <span class="muted small"> · ${fmt(kcal)} kcal</span></span>
+            <button type="button" class="btn ghost" data-action="edit-entry" data-day="${esc(dayKey)}" data-id="${esc(e.id)}">Edit</button>
+          </li>`;
+        }).join("");
+        culpritsHtml = `<div class="macro-culprits">
+          <p class="muted small"><b>Incomplete macros</b> — calories count; protein and other macros for these items are not scored.</p>
+          <ul class="topfood-list">${items}</ul>
+        </div>`;
+      }
+    }
+
     root.innerHTML = `<div class="card-block day-contrib">
       <div class="card-head-row"><b>${esc(label)}</b><span class="muted small">${esc(meta.label)}</span></div>
       <p class="day-contrib-head">${headLine}</p>
       ${body}
+      ${culpritsHtml}
       ${actions}
     </div>`;
   }

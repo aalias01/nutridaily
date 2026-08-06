@@ -1208,6 +1208,14 @@ console.log("\n[26b] Macro coverage (Design Phase 2)");
   ok(tdeeFull.intakeAvg === tdeeThin.intakeAvg && tdeeFull.tdee === tdeeThin.tdee,
     "TDEE intake/tdee unchanged when macros are incomplete",
     `full=${tdeeFull.intakeAvg}/${tdeeFull.tdee} thin=${tdeeThin.intakeAvg}/${tdeeThin.tdee}`);
+
+  const macroNote = Analytics.observations(mkRows(0.3), {}).find((o) => o.id === "macro-incomplete");
+  ok(!!macroNote && /without complete macros/.test(macroNote.text) && macroNote.priority === 0 &&
+      macroNote.panel === "#day-detail" && macroNote.jumpDay === dayKey,
+    "observations emit macro-incomplete honesty note that jumps to day detail",
+    macroNote && JSON.stringify(macroNote));
+  ok(!Analytics.observations(mkRows(1), {}).some((o) => o.id === "macro-incomplete"),
+    "fully covered macros emit no macro-incomplete note");
 }
 
 console.log("\n[27] Exactly one mineral-composite slot");
@@ -2257,8 +2265,7 @@ console.log("\n[onceDays] One-off / quick disclosure (Step 9)");
   });
   const withNote = Analytics.observations(days, { entriesForDay: (day) => byDay[day] || [] });
   const note = withNote.find((o) => o.id === "once-days");
-  ok(!!note && note.priority === 0 && /2 days include one-off/.test(note.text) &&
-      /Calories stay in every average/.test(note.text) && /macros on incomplete days are not scored/.test(note.text),
+  ok(!!note && note.priority === 0 && /2 days include one-off/.test(note.text),
     "observations emit honesty once-days note when entriesForDay is provided",
     note && note.text);
   ok(!Analytics.observations(days, {}).some((o) => o.id === "once-days"),

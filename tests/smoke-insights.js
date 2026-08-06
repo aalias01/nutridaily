@@ -706,7 +706,7 @@ async function run(label, days) {
   // §3 test #9 (light check on the main fixture) — honesty top-level + jump.
   // Cap / <details> branch coverage lives in runObservationsTriage().
   {
-    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days"]);
+    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete"]);
     const root = $("#insight-observations");
     const topNotes = [...root.children].filter((el) => el.matches(".obs"));
     const moreNotes = [...root.querySelectorAll("details.obs-more .obs")];
@@ -1345,7 +1345,7 @@ async function runObservationsTriage() {
     firstAddAt: (day) => Ledger.firstAddAt(day),
   });
   const emitted = Analytics.observations(days, { todayKey });
-  const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days"]);
+  const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete"]);
   const cappable = emitted.filter((o) => o.tone !== "watch" && !HONESTY.has(o.id));
   ok(cappable.length >= 4, "obs-triage fixture fires ≥4 cappable info notes (enough to force the cap)",
     emitted.map((o) => o.id).join(", "));
@@ -1384,7 +1384,7 @@ async function runObservationsTriage() {
       !!$('#insight-observations > [data-obs-id="partial-days"]'),
     "partial-days and bumps both stay top-level regardless of the info cap");
 
-  const pri = { "partial-days": 0, bumps: 0, fasts: 0, "once-days": 0, coverage: 10, "weekend-logging": 20,
+  const pri = { "partial-days": 0, bumps: 0, fasts: 0, "once-days": 0, "macro-incomplete": 0, coverage: 10, "weekend-logging": 20,
     "weekend-kcal": 30, variability: 40, momentum: 50, "protein-per-kg": 60 };
   const priOk = (ids) => {
     for (let i = 1; i < ids.length; i++) {
@@ -3669,6 +3669,7 @@ async function runImportSecurity() {
   // Step 9 — onceDays honesty: disclose one-off/quick days in Insights, never drop them.
   {
     const Analytics = window.eval("Analytics");
+    const UI = window.eval("UI");
     const onceInsightsDay = "2019-06-15";
     const fixtureEntries = {
       [onceInsightsDay]: [
@@ -3699,7 +3700,7 @@ async function runImportSecurity() {
     const note = Analytics.observations(days, {
       entriesForDay: (d) => fixtureEntries[d] || [],
     }).find((o) => o.id === "once-days");
-    ok(!!note && /^1 day includes one-off/.test(note.text) && /Calories stay in every average/.test(note.text),
+    ok(!!note && /^1 day includes one-off/.test(note.text),
       "observations once-days note for a single mixed day",
       note && note.text);
     const stats = Analytics.summaryStats(days, "kcal");
@@ -3734,6 +3735,32 @@ async function runImportSecurity() {
     ok(kcalBig.trim() !== "" && !/not scored/i.test(kcalBig),
       "Phase 2: Today still shows calorie totals when macros are incomplete",
       kcalBig);
+
+    // Phase 3: disclosure note + day-detail culprits with Edit.
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+    await new Promise((r) => setTimeout(r, 80));
+    const macroObs = $('#insight-observations [data-obs-id="macro-incomplete"]');
+    ok(!!macroObs && /without complete macros/.test(macroObs.textContent || "") &&
+        macroObs.dataset.jump === "#day-detail" && !!macroObs.dataset.jumpDay,
+      "Phase 3: Insights shows macro-incomplete honesty note that jumps to day detail",
+      macroObs && macroObs.textContent);
+    if (macroObs) macroObs.click();
+    await new Promise((r) => setTimeout(r, 40));
+    const detail = $("#day-detail");
+    ok(!!detail && /Incomplete macros/.test(detail.textContent || "") &&
+        /Today quick snack/.test(detail.textContent || ""),
+      "Phase 3: day detail lists incomplete-macro culprits",
+      detail && detail.textContent);
+    const editBtn = detail && detail.querySelector("[data-action='edit-entry']");
+    ok(!!editBtn && editBtn.dataset.day && editBtn.dataset.id,
+      "Phase 3: culprit exposes Edit with day and entry id");
+    if (editBtn) {
+      editBtn.click();
+      await new Promise((r) => setTimeout(r, 40));
+      ok(!$("#sheet-once").hidden && App.state.editEntryId === editBtn.dataset.id,
+        "Phase 3: Edit from culprits opens Log once for that entry");
+      UI.closeSheet("sheet-once");
+    }
 
     App.state.viewDay = today;
     await new Promise((r) => setTimeout(r, 40));

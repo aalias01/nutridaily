@@ -1315,9 +1315,24 @@ const Analytics = (() => {
           id: "once-days",
           tone: "info",
           priority: 0,
-          text: `${once.n} day${once.n === 1 ? " includes" : "s include"} one-off or quick-kcal entries.${shareText} Calories stay in every average; protein and other macros on incomplete days are not scored.`,
+          text: `${once.n} day${once.n === 1 ? " includes" : "s include"} one-off or quick-kcal entries.${shareText}`,
         });
       }
+    }
+
+    // Design Phase 3: separate honesty note for macro-incomplete days (scoring),
+    // distinct from once-days (provenance). Jump opens the first incomplete day.
+    const incompleteMacro = logged.filter((d) => d.macrosCovered === false);
+    if (incompleteMacro.length) {
+      const n = incompleteMacro.length;
+      out.push({
+        id: "macro-incomplete",
+        tone: "info",
+        priority: 0,
+        panel: "#day-detail",
+        jumpDay: incompleteMacro[0].day,
+        text: `${n} day${n === 1 ? " has" : "s have"} calories without complete macros; those macros are not scored.`,
+      });
     }
 
     const bumps = dayPlanAudit(days, opts);
