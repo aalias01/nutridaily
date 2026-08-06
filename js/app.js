@@ -1993,6 +1993,66 @@ const App = (() => {
     UI.toast("Logged");
   }
 
+  /**
+   * Promote a source:once entry into My Foods via the review sheet.
+   * Requires grams > 0 (hard precondition — no inventing per100 from thin air).
+   * Does not back-link foodId onto the historical entry (§10 Correction B).
+   */
+  function promoteOnce(entry) {
+    if (!entry || entry.source !== "once" || !(Number(entry.grams) > 0)) return;
+    const grams = Number(entry.grams);
+    const scale = 100 / grams;
+    const m = entry.macros || {};
+    const round1 = (n) => Math.round(Number(n) * 10) / 10;
+    const per100 = {
+      kcal: round1((Number(m.kcal) || 0) * scale),
+      p: round1((Number(m.p) || 0) * scale),
+      c: round1((Number(m.c) || 0) * scale),
+      f: round1((Number(m.f) || 0) * scale),
+      fb: round1((Number(m.fb) || 0) * scale),
+      na: m.na == null || m.na === "" ? null : round1(Number(m.na) * scale),
+      k: m.k == null || m.k === "" ? null : round1(Number(m.k) * scale),
+    };
+    if (per100.na != null && !Number.isFinite(per100.na)) per100.na = null;
+    if (per100.k != null && !Number.isFinite(per100.k)) per100.k = null;
+    state.updateFoodId = null;
+    state.saveAsNew = true;
+    state.editFoodDirect = true;
+    state.foodSaveIntent = "library";
+    state.reviewParsed = {
+      canSave: true,
+      food: {
+        name: entry.name,
+        aliases: [],
+        cat: entry.cat || "dish",
+        per100,
+        units: {},
+        logAs: "grams",
+        batch: null,
+        recipe: {
+          ingredients: [],
+          prep: "",
+          notes: "Promoted from a one-off log.",
+        },
+        confidence: "low",
+        sd: Math.max(Number(entry.sd) || 0.25, 0.2),
+        raw: "",
+      },
+      warnings: [],
+      rejects: [],
+    };
+    UI.closeSheet("sheet-once");
+    UI.closeSheet("sheet-add");
+    UI.openSheet("sheet-paste");
+    UI.showReview(state.reviewParsed, {
+      forceEnable: true,
+      title: "Save to My Foods",
+      duplicate: Foods.findByName(state.personalFoods, entry.name) || null,
+      suppressUpdateDup: true,
+    });
+    validateReviewSave();
+  }
+
   function jumpToToday() {
     state.viewDay = Ledger.todayKey();
     state.lastCalendarToday = state.viewDay;
@@ -5197,6 +5257,14 @@ const App = (() => {
       resetQtyState();
       removeEntryWithUndo(day, id);
     });
+    if (UI.$("#once-promote")) {
+      UI.$("#once-promote").addEventListener("click", () => {
+        if (!state.editEntryId) return;
+        const entry = Ledger.entriesFor(editDay()).find((e) => e.id === state.editEntryId);
+        if (!entry) return;
+        promoteOnce(entry);
+      });
+    }
 
     UI.$("#qty-input").addEventListener("input", () => state.pickFood && UI.updateQtyPreview(state.pickFood));
     UI.$("#qty-units").addEventListener("click", (e) => {
@@ -5580,6 +5648,10 @@ const App = (() => {
         const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);
         if (!entry) return;
         openQtyFromEntry(entry, { allowRemove: true });
+      } else if (action === "promote-once") {
+        const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);
+        if (!entry) return;
+        promoteOnce(entry);
       } else if (action === "repeat-yesterday") {
         const entry = Ledger.entriesFor(state.yesterdayKey || yesterdayKey()).find((x) => x.id === id);
         if (!entry) return;

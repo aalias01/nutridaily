@@ -3477,6 +3477,111 @@ async function runImportSecurity() {
     App.state.viewDay = today;
   }
 
+  // Step 8 — Promote a weighed one-off to My Foods without rewriting history or a same-name food.
+  {
+    const UI = window.eval("UI");
+    const Foods = window.eval("Foods");
+    const promoteDay = "2019-08-01";
+    App.state.viewDay = promoteDay;
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+
+    // grams:0 → disabled control.
+    Ledger.addEntry(promoteDay, {
+      name: "Unknown mass bowl",
+      foodId: null, cat: "dish", grams: 0, displayQty: "1 portion", qty: 1, unit: "portion",
+      macros: { kcal: 600, p: 20, c: 70, f: 18, fb: 4, na: null, k: null },
+      sd: 0.25, meal: "dinner", source: "once",
+    });
+    const zeroG = Ledger.entriesFor(promoteDay).find((e) => e.name === "Unknown mass bowl");
+    UI.renderDayLog(promoteDay, Ledger.entriesFor(promoteDay));
+    $(`#day-log [data-action='toggle-entry'][data-id='${zeroG.id}']`).click();
+    const disabledBtn = [...$("#day-log").querySelectorAll("button.linkbtn")]
+      .find((b) => /Save to My Foods/.test(b.textContent) && b.disabled);
+    ok(!$(`#day-log [data-action='promote-once'][data-id='${zeroG.id}']`) && !!disabledBtn,
+      "grams:0 one-off shows Save to My Foods disabled (no inventing per100)");
+
+    // Library same-name fixture for the banner path.
+    const foodsBeforeLib = App.state.personalFoods.length;
+    const padThaiLib = Foods.createFromDraft({
+      name: "Pad thai", cat: "dish",
+      per100: { kcal: 150, p: 8, c: 20, f: 4, fb: 1, na: 200, k: 100 },
+      units: {}, logAs: "grams",
+      recipe: { ingredients: [], prep: "", notes: "fixture library pad thai" },
+      confidence: "medium", sd: 0.12, raw: "",
+    });
+    padThaiLib.id = "lib-pad-thai-promote";
+    padThaiLib.version = 3;
+    padThaiLib.history = [];
+    padThaiLib.resetEpoch = Sync.getResetAt();
+    App.state.personalFoods = App.state.personalFoods.concat([padThaiLib]);
+    window.localStorage.setItem("nd_personal_v1", JSON.stringify(App.state.personalFoods));
+
+    Ledger.addEntry(promoteDay, {
+      name: "Pad thai",
+      foodId: null, cat: "dish", grams: 250, displayQty: "250 g", qty: 250, unit: "g",
+      macros: { kcal: 500, p: 25, c: 60, f: 15, fb: 5, na: null, k: 400 },
+      sd: 0.25, meal: "lunch", source: "once",
+    });
+    const weighed = Ledger.entriesFor(promoteDay).find((e) => e.source === "once" && e.grams === 250 && e.name === "Pad thai");
+    const libBefore = JSON.parse(JSON.stringify(App.state.personalFoods.find((f) => f.id === "lib-pad-thai-promote")));
+    UI.renderDayLog(promoteDay, Ledger.entriesFor(promoteDay));
+    $(`#day-log [data-action='toggle-entry'][data-id='${weighed.id}']`).click();
+    $(`#day-log [data-action='promote-once'][data-id='${weighed.id}']`).click();
+    ok(App.state.saveAsNew === true && !App.state.updateFoodId,
+      "promote arms saveAsNew and clears updateFoodId");
+    ok(!$("#review-dup").hidden && !$("#review-dup [data-action='update-dup']"),
+      "same-name library food shows a notice without Update that one");
+    ok($("#rev-na").value === "" && Number($("#rev-k").value) === 160,
+      "unknown sodium stays blank; potassium scales 400→160 per 100 g");
+
+    // Capture length immediately before Save — includes the fixture library food.
+    const foodsBeforeSave = App.state.personalFoods.length;
+    ok(!$("#btn-review-save").disabled, "promote review is saveable");
+    $("#btn-review-save").click();
+    await new Promise((r) => setTimeout(r, 40));
+    const libAfter = App.state.personalFoods.find((f) => f.id === "lib-pad-thai-promote");
+    ok(libAfter && libAfter.version === libBefore.version &&
+        JSON.stringify(libAfter.per100) === JSON.stringify(libBefore.per100),
+      "promote does not mutate the same-named library food");
+    const created = App.state.personalFoods.filter((f) =>
+      !f.deleted && f.id !== "lib-pad-thai-promote" &&
+      String(f.name || "").toLowerCase() === "pad thai");
+    ok(created.length >= 1 && created.some((f) => f.per100 && Math.abs(Number(f.per100.kcal) - 200) < 0.6 && f.per100.na == null),
+      "promote creates a scaled Pad thai with unknown sodium kept null",
+      `count=${created.length}; toast=${($("#toast") && $("#toast").textContent) || ""}`);
+    ok(App.state.personalFoods.length === foodsBeforeSave + 1,
+      "promote adds exactly one My Foods row");
+    const sourceStill = Ledger.entriesFor(promoteDay).find((e) => e.id === weighed.id);
+    ok(sourceStill && sourceStill.foodId == null && sourceStill.source === "once",
+      "promotion does not back-link foodId onto the historical entry");
+
+    Ledger.addEntry(promoteDay, {
+      name: "Tiny dense bite",
+      foodId: null, cat: "snack", grams: 5, displayQty: "5 g", qty: 5, unit: "g",
+      macros: { kcal: 80, p: 1, c: 1, f: 8, fb: 0, na: null, k: null },
+      sd: 0.25, meal: "snack", source: "once",
+    });
+    const tiny = Ledger.entriesFor(promoteDay).find((e) => e.name === "Tiny dense bite");
+    const foodsMid = App.state.personalFoods.length;
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+    App.state.viewDay = promoteDay;
+    UI.closeAllSheets();
+    await new Promise((r) => setTimeout(r, 220));
+    UI.renderDayLog(promoteDay, Ledger.entriesFor(promoteDay));
+    const tinyToggle = $(`#day-log [data-action='toggle-entry'][data-id='${tiny.id}']`);
+    ok(!!tinyToggle, "fixture: tiny dense one-off is on the day log");
+    if (tinyToggle) tinyToggle.click();
+    const tinyPromote = $(`#day-log [data-action='promote-once'][data-id='${tiny.id}']`);
+    ok(!!tinyPromote, "fixture: tiny dense one-off exposes Save to My Foods");
+    if (tinyPromote) tinyPromote.click();
+    ok($("#btn-review-save").disabled && /kcal per 100 g looks impossibly high/i.test($("#review-errors").textContent || ""),
+      "derived per100 out of bounds is refused by validateReviewSave");
+    ok(App.state.personalFoods.length === foodsMid, "refused promote writes nothing to My Foods");
+    UI.closeSheet("sheet-paste");
+    App.state.viewDay = today;
+    await new Promise((r) => setTimeout(r, 220));
+  }
+
   // Step 5 — Log once from the review sheet (no My Foods write).
   {
     const UI = window.eval("UI");

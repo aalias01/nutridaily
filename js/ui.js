@@ -584,7 +584,14 @@ const UI = (() => {
                 ${chrome.detailLine || ""}
                 ${editNote ? `<div class="r-edits">${esc(editNote)}</div>` : ""}
               </div>
-              <button type="button" class="linkbtn edit-entry-btn" data-action="edit-entry" data-id="${esc(e.id)}">Edit</button>
+              <div class="r-expanded-actions">
+                <button type="button" class="linkbtn edit-entry-btn" data-action="edit-entry" data-id="${esc(e.id)}">Edit</button>
+                ${e.source === "once" && Number(e.grams) > 0
+                  ? `<button type="button" class="linkbtn" data-action="promote-once" data-id="${esc(e.id)}">Save to My Foods</button>`
+                  : (e.source === "once" || e.source === "quick"
+                    ? `<button type="button" class="linkbtn" disabled title="Add a portion weight first; a saved food needs to know what 100 g looks like.">Save to My Foods</button>`
+                    : "")}
+              </div>
             </div>`
           : "";
         return `<div class="log-row-stack${isExp ? " is-expanded" : ""}">
@@ -902,11 +909,16 @@ const UI = (() => {
     const dup = $("#review-dup");
     if (opts && opts.duplicate) {
       dup.hidden = false;
-      dup.innerHTML = `You already have “${esc(opts.duplicate.name)}”.
-        <div class="row" style="margin-top:8px">
-          <button type="button" class="btn ghost" data-action="update-dup" data-id="${esc(opts.duplicate.id)}">Update that one</button>
-          <button type="button" class="btn ghost" data-action="save-new-anyway">Save as separate</button>
-        </div>`;
+      if (opts.suppressUpdateDup) {
+        // Promote path: saveAsNew is already armed — do not offer overwrite.
+        dup.innerHTML = `You already have “${esc(opts.duplicate.name)}”. Saving creates a <b>separate</b> food; the existing one is left alone.`;
+      } else {
+        dup.innerHTML = `You already have “${esc(opts.duplicate.name)}”.
+          <div class="row" style="margin-top:8px">
+            <button type="button" class="btn ghost" data-action="update-dup" data-id="${esc(opts.duplicate.id)}">Update that one</button>
+            <button type="button" class="btn ghost" data-action="save-new-anyway">Save as separate</button>
+          </div>`;
+      }
     } else {
       dup.hidden = true;
       dup.innerHTML = "";
@@ -3051,6 +3063,16 @@ const UI = (() => {
     setOnceErrors([]);
     const rem = $("#once-remove");
     if (rem) rem.hidden = !o.allowRemove;
+    const promote = $("#once-promote");
+    if (promote) {
+      const canPromote = !!(entry && entry.source === "once" && Number(entry.grams) > 0 && o.allowRemove);
+      promote.hidden = !canPromote;
+      promote.disabled = !canPromote;
+      promote.title = canPromote
+        ? ""
+        : "Add a portion weight first; a saved food needs to know what 100 g looks like.";
+      promote.dataset.entryId = (entry && entry.id) || "";
+    }
   }
 
   function selectedOnceChip(rootSel, attr) {

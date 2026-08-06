@@ -393,6 +393,7 @@ body.sheet-open .insight-dock { display: none; }
   padding: 8px 14px 10px; margin-bottom: 8px; box-shadow: var(--shadow);
 }
 .r-expanded-main { flex: 1; min-width: 0; }
+.r-expanded-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 .r-contrib { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
 .r-edits { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
 .r-prov { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
