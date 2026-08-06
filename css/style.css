@@ -444,6 +444,32 @@ body.sheet-open .insight-dock { display: none; }
 }
 .once-portion-row #once-units { flex: 1 1 auto; justify-content: flex-start; }
 #once-macro-nudge[hidden] { display: none; }
+/* Keep chip rows clear of the name field and Save — default label/chip spacing
+   was too tight and looked like overlap on phone widths. */
+#sheet-once #once-estimate-ai {
+  display: inline-block;
+  margin: 2px 0 6px;
+  padding-left: 0;
+}
+#sheet-once #once-meals {
+  margin-top: 12px;
+  margin-bottom: 16px;
+}
+#sheet-once #once-cats {
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+#sheet-once #once-confidence {
+  margin-top: 4px;
+  margin-bottom: 18px;
+}
+#sheet-once #once-save {
+  margin-top: 4px;
+}
+#sheet-once #once-errors:not([hidden]) {
+  margin-top: 4px;
+  margin-bottom: 12px;
+}
 .banner { padding: 10px 12px; border-radius: 10px; margin-bottom: 8px; font-size: 13px; }
 .banner.danger { background: rgba(192, 68, 46, 0.12); color: var(--danger); }
 .banner.warn { background: rgba(208, 112, 60, 0.12); color: var(--warn); }
