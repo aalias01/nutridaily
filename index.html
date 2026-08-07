@@ -37,27 +37,29 @@
 <div class="shell">
 
   <header>
-    <div class="head-left">
+    <div class="head-brand-row">
       <div class="brand">NutriDaily</div>
+      <div class="head-right">
+        <button id="sync-pill" class="pill" title="Cloud backup status" type="button">local only</button>
+      </div>
+    </div>
+    <div id="day-row" class="day-row">
       <div id="day-controls" class="day-controls">
         <button id="btn-day-prev" class="iconbtn" type="button" aria-label="Previous day">‹</button>
         <div class="day-meta">
           <button type="button" class="day day-btn" id="day-label" title="Jump to today"></button>
-          <button type="button" class="linkbtn day-goals-link" id="btn-day-goals" title="Plan a reduced-energy day or declare a fast">Day plan</button>
         </div>
         <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
       </div>
-    </div>
-    <div class="head-right">
-      <button id="sync-pill" class="pill" title="Cloud backup status" type="button">local only</button>
+      <div class="day-actions">
+        <button type="button" class="day-action-btn day-goals-btn" id="btn-day-goals" title="Plan a reduced-energy day or declare a fast">Day plan</button>
+        <button type="button" class="day-action-btn hud-planner-btn" id="btn-close-gap">Planner</button>
+        <button type="button" class="day-action-btn hud-planner-btn gap-plan-chip" id="btn-gap-plan" hidden>Plan: 0 left</button>
+      </div>
     </div>
   </header>
 
   <section id="hud" aria-label="Day totals">
-    <div class="hud-gap-actions">
-      <button type="button" class="hud-planner-btn" id="btn-close-gap">Planner</button>
-      <button type="button" class="hud-planner-btn gap-plan-chip" id="btn-gap-plan" hidden>Plan: 0 left</button>
-    </div>
     <div id="hud-fasting" class="hud-fasting" hidden>
       <div class="hud-fasting-title">Fasting</div>
       <div class="hud-fasting-meta" id="hud-fasting-meta"></div>

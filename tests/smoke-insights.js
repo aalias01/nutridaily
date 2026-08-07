@@ -1678,8 +1678,8 @@ async function runEmpty() {
   ok(after.kcal === before.kcal + 300, "planned calorie adjustment changes today's calorie target");
   ok(after.protein === before.protein && after.sodium === before.sodium && after.potassium === before.potassium,
     "energy adjustment does not change protein, sodium, or potassium targets");
-  ok(!/· late/.test($("#btn-day-goals").textContent),
-    "on-time day plan does not show a late marker");
+  ok(!/late/i.test($("#btn-day-goals").title) && $("#btn-day-goals").textContent === "Planned",
+    "on-time day plan keeps short Planned chrome without a late title");
 
   const firstAdd = Ledger.addEntry(todayKey, {
     name: "First log", displayQty: "100 kcal", grams: 0, meal: "snack",
@@ -1687,9 +1687,9 @@ async function runEmpty() {
   });
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(/Planned calories/i.test($("#btn-day-goals").textContent) && !/locked/i.test($("#btn-day-goals").textContent),
+  ok($("#btn-day-goals").textContent === "Planned" && !/locked/i.test($("#btn-day-goals").title),
     "existing planned calories remain visible and editable after logging begins");
-  ok(!/· late/.test($("#btn-day-goals").textContent),
+  ok(!/late/i.test($("#btn-day-goals").title),
     "a plan set before the first log is not labeled late after food is logged");
   // S3: rewrite plannedAt after first-add to force declaredLate provenance and
   // confirm Today's link discloses the same fact Insights would report.
@@ -1700,8 +1700,9 @@ async function runEmpty() {
   window.localStorage.setItem("nd_settings_v1", JSON.stringify(App.state.settings));
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(/· late/.test($("#btn-day-goals").textContent) && !/locked/i.test($("#btn-day-goals").textContent),
-    "Today's day-plan link shows · late when provenance is declaredLate");
+  ok($("#btn-day-goals").textContent === "Planned" && /late/i.test($("#btn-day-goals").title) &&
+      !/locked/i.test($("#btn-day-goals").title),
+    "Today's day-plan chrome stays Planned; title discloses late when provenance is declaredLate");
   ok(/after logging began/i.test($("#btn-day-goals").title),
     "late marker title explains the disclosure without punishing");
   // Restore on-time plannedAt so the remainder of the edit scenario stays stable.
@@ -1739,7 +1740,7 @@ async function runEmpty() {
   Ledger.removeEntry(todayKey, firstAdd.entry.id);
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
-  ok(Ledger.entriesFor(todayKey).length === 0 && /Planned calories/i.test($("#btn-day-goals").textContent),
+  ok(Ledger.entriesFor(todayKey).length === 0 && $("#btn-day-goals").textContent === "Planned",
     "deleting the last visible entry keeps the day plan available");
 
   $("#btn-day-prev").click();
@@ -1754,8 +1755,8 @@ async function runEmpty() {
     "previous-day Reduced stays blocked even though Fast grace is still open");
 
   // F4 / S3: declare yesterday's Fast through the live producer and assert the
-  // persisted declaredAfterDay path — label + "day ended" title, not the
-  // derived "after logging began" copy used for reduced late plans.
+  // persisted declaredAfterDay path — short Fast chrome + "day ended" title,
+  // not the derived "after logging began" copy used for reduced late plans.
   $("#dg-intent-seg button[data-dg-intent='fast']").click();
   const fastAck = $("#dg-fast-ack");
   ok(!!fastAck, "fast acknowledgement control is present for a late Fast declare");
@@ -1766,8 +1767,8 @@ async function runEmpty() {
   const lateFastRec = (App.state.settings.dayGoals || {})[yesterdayKey];
   ok(lateFastRec && lateFastRec.intent === "fast" && lateFastRec.declaredAfterDay === true,
     "live Fast declare for yesterday stamps declaredAfterDay");
-  ok(/Fast · declared · late/i.test($("#btn-day-goals").textContent),
-    "Today's day-plan link shows · late for a declared-after-day Fast");
+  ok($("#btn-day-goals").textContent === "Fast" && /late/i.test($("#btn-day-goals").title),
+    "Today's day-plan chrome stays Fast; title discloses late for a declared-after-day Fast");
   ok(/after the day ended/i.test($("#btn-day-goals").title) &&
       !/after logging began/i.test($("#btn-day-goals").title),
     "late Fast title names the day-ended fact, not the first-add wording");

@@ -222,7 +222,7 @@ const UI = (() => {
     if (relation === "today") {
       suffix = "today";
     } else if (relation === "future") {
-      suffix = "tomorrow · tap for today";
+      suffix = "tomorrow";
     } else {
       // Past: prefer "yesterday" when adjacent.
       let yesterday = null;
@@ -233,12 +233,13 @@ const UI = (() => {
           ? Ledger.todayKey(y)
           : y.toISOString().slice(0, 10);
       }
-      suffix = dayKey === yesterday ? "yesterday · tap for today" : "past · tap for today";
+      suffix = dayKey === yesterday ? "yesterday" : "past";
     }
     btn.textContent = `${label} · ${suffix}`;
     btn.classList.toggle("is-today", relation === "today");
     btn.classList.toggle("is-past", relation === "past");
     btn.classList.toggle("is-future", relation === "future");
+    btn.title = relation === "today" ? "Today" : "Jump to today";
     // Default remains today-only; callers that allow §10 plan-ahead pass
     // disableNext when viewDay has reached tomorrow.
     const disableNext = opts && Object.prototype.hasOwnProperty.call(opts, "disableNext")

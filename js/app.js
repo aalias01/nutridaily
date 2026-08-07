@@ -249,11 +249,12 @@ const App = (() => {
         ? (reducedWin.reason || "")
         : (reducedWin.reason || fastWin.reason || "");
     const ov = dayGoalOverride(state.viewDay);
+    // Short chrome labels for the header action row; detail lives in title.
     let label = "Day plan";
-    if (isFast) label = "Fast · declared";
-    else if (hasPlan) label = `Planned calories · ${Math.round(resolved.kcal)} kcal`;
+    if (isFast) label = "Fast";
+    else if (hasPlan) label = "Planned";
     const incompleteMark = !!(ov && ov.incomplete === true);
-    if (incompleteMark) label = hasPlan || isFast ? `${label} · incomplete` : "Incomplete log";
+    if (incompleteMark && !(hasPlan || isFast)) label = "Incomplete";
     // Late disclosure parity with Insights (S3). Same classifier as the
     // observation audit — reported, not punished; no colour or warning icon.
     const late = !!(hasPlan && ov && typeof Analytics !== "undefined" &&
@@ -265,7 +266,7 @@ const App = (() => {
       }) === "declaredLate");
     btn.classList.toggle("has-override", hasPlan || incompleteMark);
     btn.classList.toggle("is-locked", locked);
-    btn.textContent = `${label}${late ? " · late" : ""}${locked && (hasPlan || isFast) ? " · locked" : ""}`;
+    btn.textContent = label;
     // Title must name the fact that made it late. Persisted declaredAfterDay
     // means after local midnight; derived declaredLate means after first add.
     // Same-day post-log fasts leave kcal unscored — do not claim they are
@@ -277,16 +278,18 @@ const App = (() => {
       : (isFast
         ? "Set after logging began — reported, not punished."
         : "Set after logging began — still scored against the adjusted target.");
-    const idleTitle = isFast
-      ? "Declared fast for this day"
-      : (hasPlan
-        ? "Edit or clear this day's calorie plan"
-        : (incompleteMark
-          ? "This day is marked incomplete — diary stays, averages skip it"
-          : "Plan a reduced-energy day or declare a fast"));
+    const detailBits = [];
+    if (isFast) detailBits.push("Declared fast for this day");
+    else if (hasPlan) detailBits.push(`Planned calories · ${Math.round(resolved.kcal)} kcal`);
+    else if (incompleteMark) detailBits.push("This day is marked incomplete — diary stays, averages skip it");
+    else detailBits.push("Plan a reduced-energy day or declare a fast");
+    if (incompleteMark && (hasPlan || isFast)) detailBits.push("incomplete");
+    if (late) detailBits.push("late");
+    if (locked && (hasPlan || isFast)) detailBits.push("locked");
+    const idleTitle = detailBits.join(" · ");
     const lockTitle = lockReason || reducedWin.reason || fastWin.reason || "This day plan cannot be changed right now.";
     btn.title = locked && (hasPlan || isFast)
-      ? (late ? `${lateTitle} ${lockTitle}` : lockTitle)
+      ? (late ? `${lateTitle} ${idleTitle}. ${lockTitle}` : `${idleTitle}. ${lockTitle}`)
       : (late ? `${lateTitle} ${idleTitle}` : idleTitle);
   }
 
@@ -2489,6 +2492,8 @@ const App = (() => {
     const onInsights = name === "insights";
     const hud = UI.$("#hud");
     if (hud) hud.hidden = !onToday;
+    const dayRow = UI.$("#day-row");
+    if (dayRow) dayRow.hidden = !onToday;
     const dayControls = UI.$("#day-controls");
     if (dayControls) dayControls.hidden = !onToday;
     const dock = UI.$("#insight-dock");
