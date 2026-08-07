@@ -2037,13 +2037,17 @@ const UI = (() => {
         ? `<span class="muted small score-exempt">not scored on ${n.exemptN} planned day${n.exemptN === 1 ? "" : "s"}</span>`
         : "";
       return `<div class="score-tile" data-score-key="${esc(n.key)}">
-        <span class="score-name">${esc(n.label)}</span>
-        <span class="score-hit">${hitPct == null ? "—" : `${hitPct}%`}</span>
-        <span class="muted small score-hit-label">${hitPct == null ? "no days" : esc(t.hit)}</span>
+        <div class="score-tile-top">
+          <span class="score-name">${esc(n.label)}</span>
+          <span class="muted small score-hit-label">${hitPct == null ? "no days" : esc(t.hit)}</span>
+        </div>
+        <div class="score-tile-mid">
+          <span class="score-hit">${hitPct == null ? "—" : `${hitPct}%`}</span>
+          <span class="muted small score-avg">avg ${esc(avg)}</span>
+        </div>
         <span class="score-bar" role="img" aria-label="${esc(counts)}">
           <i class="sb-under" style="width:${pct(n.under)}%"></i><i class="sb-hit" style="width:${pct(n.hit)}%"></i><i class="sb-over" style="width:${pct(n.over)}%"></i>
         </span>
-        <span class="muted small score-avg">avg ${esc(avg)}</span>
         ${exemptLine}
       </div>`;
     }).join("");
