@@ -101,8 +101,12 @@ header {
   display: flex; align-items: center; gap: 0; min-width: 0; flex: 0 1 auto;
 }
 .day-controls[hidden] { display: none !important; }
-.day-meta { min-width: 0; }
+.day-meta { position: relative; min-width: 0; }
 .day { color: var(--muted); font-size: 14px; }
+.day-picker {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; pointer-events: none; border: 0; padding: 0; margin: 0;
+}
 .day-btn {
   display: block; border: none; background: transparent; padding: 0; margin: 0;
   color: var(--ink); font-size: 14px; font-weight: 700; letter-spacing: -0.2px;
@@ -1467,34 +1471,34 @@ button.obs-jump:hover { background: color-mix(in srgb, var(--card) 92%, var(--in
 .rate-v { font-weight: 650; text-align: right; }
 .rate-row .small { grid-column: 1 / -1; }
 
-/* --- scorecard bars --------------------------------------- */
-.scorecard-card .scorecard-carousel { margin-top: 6px; }
-.scorecard-carousel-track {
-  display: flex; overflow-x: auto; scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+/* --- scorecard tiles -------------------------------------- */
+.score-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 4px;
 }
-.scorecard-carousel-track::-webkit-scrollbar { display: none; }
-.scorecard-page {
-  flex: 0 0 100%; min-width: 100%; max-width: 100%;
-  scroll-snap-align: start; scroll-snap-stop: always;
-  box-sizing: border-box;
+.score-tile {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); min-width: 0;
 }
-.scorecard-page-label {
-  display: block; margin: 0 0 8px;
-  font-size: 12px; font-weight: 700; color: var(--muted);
-  letter-spacing: 0.03em; text-transform: uppercase;
+.score-tile .score-name {
+  font-size: 12px; font-weight: 650; color: var(--muted);
+  letter-spacing: 0.01em;
 }
-.scorecard-carousel-dots {
-  display: flex; justify-content: center; align-items: center;
-  gap: 8px; margin: 10px 0 2px; min-height: 22px;
+.score-tile .score-hit {
+  font-size: 22px; font-weight: 750; letter-spacing: -0.4px; line-height: 1.1;
 }
-.score-list li { grid-template-columns: 5rem 1fr; grid-auto-rows: min-content; row-gap: 3px; }
-.score-list li .small { grid-column: 2; }
-.score-bar {
-  display: flex; height: 7px; border-radius: 4px; overflow: hidden;
-  background: var(--line); align-self: center;
+.score-tile .score-hit-label { margin-top: -1px; }
+.score-tile .score-bar {
+  display: flex; height: 6px; border-radius: 4px; overflow: hidden;
+  background: var(--line); margin-top: 2px;
 }
-.score-bar i { display: block; height: 100%; }
+.score-tile .score-bar i { display: block; height: 100%; }
+.score-tile .score-avg { margin-top: 1px; }
+.score-tile .score-exempt { display: block; line-height: 1.3; }
 .sb-under { background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .sb-hit { background: var(--accent); }
 .sb-over { background: var(--warn); }

@@ -545,9 +545,9 @@ async function run(label, days) {
     const el = $(sel);
     ok(el && el.innerHTML.trim().length > 0, `${name} rendered`, el ? "empty" : "missing element");
   }
-  ok(window.document.querySelectorAll("#insight-scorecard .scorecard-page").length === 3 &&
-      window.document.querySelectorAll("#insight-scorecard #scorecard-carousel-dots .carousel-dot").length === 3,
-    "Target scorecard uses a 3-page Energy / Macros / Minerals carousel");
+  ok(window.document.querySelectorAll("#insight-scorecard .score-tile").length === 7 &&
+      !!$("#insight-scorecard .score-tile-grid"),
+    "Target scorecard renders a 7-tile nutrient grid");
 
   const trendCanvas = $("#trend-canvas");
   const weightCanvas = $("#weight-canvas");
@@ -704,11 +704,14 @@ async function run(label, days) {
   ok(!/\bunder\b/.test($("#insight-heatmap .hm-key").textContent), "sodium heatmap key drops the impossible 'under' state");
   ok(/Limit/.test(text("#trend-legend")), "sodium chart labels the line a limit, not a target");
 
-  const naRow = [...window.document.querySelectorAll(".score-list li")]
+  const naRow = [...window.document.querySelectorAll("#insight-scorecard .score-tile")]
     .find((li) => /Sodium/.test(li.textContent));
-  ok(!!naRow, "scorecard has a sodium row");
-  ok(!/\bunder\b/.test(naRow.textContent), "sodium scorecard row never says 'under'");
-  ok(/within|headroom|over/.test(naRow.textContent), "sodium framed as within / headroom / over", naRow.textContent.trim());
+  ok(!!naRow, "scorecard has a sodium tile");
+  ok(!/\bunder\b/.test(naRow.textContent), "sodium scorecard tile never says 'under'");
+  const naBar = naRow && naRow.querySelector(".score-bar");
+  ok(/within|headroom|over/.test((naBar && naBar.getAttribute("aria-label")) || naRow.textContent),
+    "sodium framed as within / headroom / over",
+    (naBar && naBar.getAttribute("aria-label")) || naRow.textContent.trim());
 
   // Day contribution: tip + Open day, then verify Today contribution % match Analytics.
   const loggedNaCell = [...window.document.querySelectorAll(".hm-cell[data-day]")]
@@ -770,9 +773,9 @@ async function run(label, days) {
   ok(!/\bover\b/.test($("#insight-heatmap .hm-key").textContent), "protein heatmap key drops the impossible 'over' state");
   ok(/Minimum/.test(text("#trend-legend")), "protein chart labels the line a minimum");
 
-  const pRow = [...window.document.querySelectorAll(".score-list li")]
+  const pRow = [...window.document.querySelectorAll("#insight-scorecard .score-tile")]
     .find((li) => /Protein/.test(li.textContent));
-  ok(pRow && !/\bover\b/.test(pRow.textContent), "protein scorecard row never says 'over'");
+  ok(pRow && !/\bover\b/.test(pRow.textContent), "protein scorecard tile never says 'over'");
 
   ok(/floors/i.test(text("#insight-scorecard")) && /ceiling/i.test(text("#insight-scorecard")),
     "scorecard explains the three target shapes");
@@ -3375,7 +3378,7 @@ async function runImportSecurity() {
     const foodsBefore = App.state.personalFoods.length;
     const onceDay = "2019-06-15";
     App.state.viewDay = onceDay;
-    // Do not click #day-label here — it jumps to today (see jumpToToday).
+    // Do not click #day-label here — on a non-today day it jumps to today (see onDayLabelClick).
     $("#fab-add").click();
     ok(!!$("#btn-once-food") && /Log once/.test($("#btn-once-food").textContent || ""),
       "Add sheet exposes Log once entry");
@@ -4641,10 +4644,10 @@ async function runDayIntentReleaseGate() {
   // row silently — the label VI.2 step 4 specified, sourced from the same
   // exemptByPlan fact scoreDayTotals already stamps.
   // Run while all four honoured fasts remain (before the P1 mutation).
-  const pRow = [...window.document.querySelectorAll(".score-list li")]
+  const pRow = [...window.document.querySelectorAll("#insight-scorecard .score-tile")]
     .find((li) => /Protein/.test(li.textContent));
   ok(!!pRow && /not scored on 4 planned days/i.test(pRow.textContent),
-    "X.2b: the scorecard's protein row discloses 'not scored on 4 planned days'",
+    "X.2b: the scorecard's protein tile discloses 'not scored on 4 planned days'",
     pRow && pRow.textContent);
 
   // P1 regression: a declared fast that ate food must ENTER the sodium usable

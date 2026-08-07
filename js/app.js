@@ -2783,6 +2783,43 @@ const App = (() => {
     switchView("today");
   }
 
+  /** Jump to a calendar day (past through tomorrow — same horizon as shiftDay). */
+  function goToDay(dayKey) {
+    if (!dayKey || !/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey))) return;
+    const key = String(dayKey);
+    if (key > dayAfter(Ledger.todayKey())) return;
+    state.viewDay = key;
+    refreshDay();
+    switchView("today");
+  }
+
+  function openDayPicker() {
+    const input = UI.$("#day-picker");
+    if (!input) return;
+    const today = Ledger.todayKey();
+    input.max = dayAfter(today);
+    input.removeAttribute("min");
+    input.value = state.viewDay || today;
+    try {
+      if (typeof input.showPicker === "function") {
+        input.showPicker();
+        return;
+      }
+    } catch (_) { /* fall through */ }
+    // Older browsers: briefly enable the invisible input so a synthetic click can open it.
+    input.style.pointerEvents = "auto";
+    try { input.focus({ preventScroll: true }); } catch (__) { /* ignore */ }
+    try { input.click(); } catch (__) { /* ignore */ }
+    requestAnimationFrame(() => {
+      input.style.pointerEvents = "none";
+    });
+  }
+
+  function onDayLabelClick() {
+    if (isToday()) openDayPicker();
+    else jumpToToday();
+  }
+
   function shiftDay(delta) {
     const d = new Date(state.viewDay + "T12:00:00");
     d.setDate(d.getDate() + delta);
@@ -5726,7 +5763,10 @@ const App = (() => {
       window.visualViewport.addEventListener("resize", onMultiViewport);
       window.visualViewport.addEventListener("scroll", onMultiViewport);
     }
-    UI.$("#day-label").addEventListener("click", jumpToToday);
+    UI.$("#day-label").addEventListener("click", onDayLabelClick);
+    UI.$("#day-picker").addEventListener("change", () => {
+      goToDay(UI.$("#day-picker").value);
+    });
     const guardDayIntent = (intent) => {
       const win = Phases.dayIntentWindow(state.viewDay, {
         todayKey: Ledger.todayKey(),
@@ -6511,41 +6551,6 @@ const App = (() => {
           UI.setIntakeCarouselPage(page, { dotsOnly: true });
         }, 50);
       }, { passive: true });
-    }
-    const scorecardRoot = UI.$("#insight-scorecard");
-    if (scorecardRoot) {
-      scorecardRoot.addEventListener("click", (e) => {
-        const dot = e.target.closest("#scorecard-carousel-dots [data-score-page]");
-        if (!dot) return;
-        const track = UI.$("#scorecard-carousel-track");
-        const page = Number(dot.dataset.scorePage) || 0;
-        if (track) {
-          const w = track.clientWidth || 1;
-          const reduceMotion = !!(window.matchMedia &&
-            window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-          track.scrollTo({ left: page * w, behavior: reduceMotion ? "auto" : "smooth" });
-        }
-        scorecardRoot.querySelectorAll("#scorecard-carousel-dots .carousel-dot").forEach((d) => {
-          const on = Number(d.dataset.scorePage) === page;
-          d.classList.toggle("on", on);
-          d.setAttribute("aria-selected", String(on));
-        });
-      });
-      let scoreScrollT = null;
-      scorecardRoot.addEventListener("scroll", (e) => {
-        if (!e.target || e.target.id !== "scorecard-carousel-track") return;
-        const track = e.target;
-        clearTimeout(scoreScrollT);
-        scoreScrollT = setTimeout(() => {
-          const w = track.clientWidth || 1;
-          const page = Math.max(0, Math.min(2, Math.round(track.scrollLeft / w)));
-          scorecardRoot.querySelectorAll("#scorecard-carousel-dots .carousel-dot").forEach((d) => {
-            const on = Number(d.dataset.scorePage) === page;
-            d.classList.toggle("on", on);
-            d.setAttribute("aria-selected", String(on));
-          });
-        }, 50);
-      }, true);
     }
     const histList = UI.$("#phase-history-list");
     if (histList) {

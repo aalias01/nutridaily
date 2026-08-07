@@ -239,7 +239,10 @@ const UI = (() => {
     btn.classList.toggle("is-today", relation === "today");
     btn.classList.toggle("is-past", relation === "past");
     btn.classList.toggle("is-future", relation === "future");
-    btn.title = relation === "today" ? "Today" : "Jump to today";
+    btn.title = relation === "today" ? "Pick a date" : "Jump to today";
+    btn.setAttribute("aria-label", relation === "today"
+      ? `${label}, today. Pick a date`
+      : `${label}, ${suffix}. Jump to today`);
     // Default remains today-only; callers that allow §10 plan-ahead pass
     // disableNext when viewDay has reached tomorrow.
     const disableNext = opts && Object.prototype.hasOwnProperty.call(opts, "disableNext")
@@ -2019,18 +2022,11 @@ const UI = (() => {
       scoreRoot.innerHTML = `<b>Target scorecard</b><p class="muted small">Hit rates appear after a few logged days.</p>`;
       return;
     }
-    const groups = [
-      { id: "energy", label: "Energy", keys: ["kcal"] },
-      { id: "macros", label: "Macros", keys: ["protein", "carbs", "fat", "fiber"] },
-      { id: "minerals", label: "Minerals", keys: ["sodium", "potassium"] },
-    ];
-    const byKey = {};
-    for (const n of scorecard.nutrients || []) byKey[n.key] = n;
-    const rowHtml = (n) => {
-      if (!n) return "";
+    const tiles = (scorecard.nutrients || []).map((n) => {
       const t = bandText(n.key);
       const total = n.hit + n.under + n.over;
       const pct = (v) => (total ? (v / total) * 100 : 0);
+      const hitPct = total ? Math.round(pct(n.hit)) : null;
       const counts = [
         n.under ? `${n.under} ${t.under}` : null,
         n.hit ? `${n.hit} ${t.hit}` : null,
@@ -2040,31 +2036,20 @@ const UI = (() => {
       const exemptLine = n.exemptN
         ? `<span class="muted small score-exempt">not scored on ${n.exemptN} planned day${n.exemptN === 1 ? "" : "s"}</span>`
         : "";
-      return `<li>
+      return `<div class="score-tile" data-score-key="${esc(n.key)}">
         <span class="score-name">${esc(n.label)}</span>
+        <span class="score-hit">${hitPct == null ? "—" : `${hitPct}%`}</span>
+        <span class="muted small score-hit-label">${hitPct == null ? "no days" : esc(t.hit)}</span>
         <span class="score-bar" role="img" aria-label="${esc(counts)}">
           <i class="sb-under" style="width:${pct(n.under)}%"></i><i class="sb-hit" style="width:${pct(n.hit)}%"></i><i class="sb-over" style="width:${pct(n.over)}%"></i>
         </span>
-        <span class="muted small">${total ? `${Math.round(pct(n.hit))}% ${esc(t.hit)}` : "—"} · ${esc(counts)} · avg ${esc(avg)}</span>
+        <span class="muted small score-avg">avg ${esc(avg)}</span>
         ${exemptLine}
-      </li>`;
-    };
-    const pages = groups.map((g, i) => {
-      const rows = g.keys.map((k) => rowHtml(byKey[k])).filter(Boolean).join("");
-      return `<div class="scorecard-page" data-score-page="${i}">
-        <span class="scorecard-page-label">${esc(g.label)}</span>
-        <ul class="score-list">${rows || `<li><span class="muted small">No ${esc(g.label.toLowerCase())} rows yet.</span></li>`}</ul>
       </div>`;
     }).join("");
-    const dots = groups.map((g, i) =>
-      `<button type="button" role="tab" class="carousel-dot${i === 0 ? " on" : ""}" data-score-page="${i}" aria-label="Scorecard page ${i + 1} of ${groups.length}: ${esc(g.label)}" aria-selected="${i === 0 ? "true" : "false"}"></button>`
-    ).join("");
     scoreRoot.innerHTML = `<b>Target scorecard</b>
-      <p class="muted small">Across ${scorecard.logged} logged days. Swipe for Energy, Macros, and Minerals.</p>
-      <div class="scorecard-carousel" id="scorecard-carousel">
-        <div class="scorecard-carousel-track" id="scorecard-carousel-track">${pages}</div>
-        <div class="scorecard-carousel-dots" id="scorecard-carousel-dots" role="tablist" aria-label="Scorecard pages">${dots}</div>
-      </div>
+      <p class="muted small">Across ${scorecard.logged} logged days.</p>
+      <div class="score-tile-grid">${tiles}</div>
       ${bandLegend()}`;
   }
 
