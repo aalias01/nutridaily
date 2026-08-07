@@ -370,15 +370,16 @@ async function run(label, days) {
   const sectionIds = [...window.document.querySelectorAll("#view-insights .insight-section")].map((s) => s.id);
   ok(JSON.stringify(sectionIds) === JSON.stringify([
     "section-intake", "section-weight", "section-energy",
-    "section-adherence", "section-composition", "section-compare",
+    "section-composition", "section-adherence", "section-compare",
   ]), "Insights section order matches Phase 1 layout", sectionIds.join(", "));
   ok($("#section-compare").hidden === $("#phase-compare").hidden,
     "section-compare.hidden mirrors phase-compare.hidden");
-  ok($("#day-detail") && $("#section-intake").contains($("#day-detail")),
-    "day-detail lives inside section-intake");
-  ok($("#intake-page-trend") && $("#intake-page-trend").contains($("#day-detail")) &&
-      $("#intake-page-trend").contains($("#intake-stats")),
-    "trend carousel page owns chart stats + day-detail");
+  ok($("#intake-page-trend") && $("#intake-page-trend").contains($("#intake-stats")) &&
+      !$("#day-detail"),
+    "trend carousel page owns chart stats and no longer mounts a day-detail panel");
+  ok($("#intake-carousel-dots") &&
+      $("#intake-carousel").firstElementChild === $("#intake-carousel-dots"),
+    "Intake pagination dots sit above the carousel track");
   ok($("#intake-page-heatmap") && $("#intake-page-heatmap").contains($("#insight-heatmap")) &&
       $("#intake-page-dow") && $("#intake-page-dow").contains($("#dow-pattern")) &&
       $("#intake-page-topfoods") && $("#intake-page-topfoods").contains($("#top-foods-card")),
@@ -399,6 +400,10 @@ async function run(label, days) {
       !$("#section-energy").hidden && !$("#section-adherence").hidden &&
       !$("#section-composition").hidden && !$("#dow-pattern").hidden,
     "full-tier fixture boots with core sections + DOW visible");
+  ok($("#section-composition").compareDocumentPosition($("#section-adherence")) &
+      window.Node.DOCUMENT_POSITION_FOLLOWING,
+    "Patterns lists Composition before Adherence");
+  // Scorecard carousel is asserted after the full Insights render below.
   const dockPills = [...window.document.querySelectorAll("#insight-nutrient [data-nutrient]")];
   ok(dockPills.length === 7 && dockPills.every((b) => b.dataset.dockStatus),
     "every dock pill carries a data-dock-status mark");
@@ -540,6 +545,9 @@ async function run(label, days) {
     const el = $(sel);
     ok(el && el.innerHTML.trim().length > 0, `${name} rendered`, el ? "empty" : "missing element");
   }
+  ok(window.document.querySelectorAll("#insight-scorecard .scorecard-page").length === 3 &&
+      window.document.querySelectorAll("#insight-scorecard #scorecard-carousel-dots .carousel-dot").length === 3,
+    "Target scorecard uses a 3-page Energy / Macros / Minerals carousel");
 
   const trendCanvas = $("#trend-canvas");
   const weightCanvas = $("#weight-canvas");
@@ -557,26 +565,44 @@ async function run(label, days) {
   ok(weightData && weightData.querySelector("summary") && weightData.querySelector("table.chart-data-table") &&
       weightData.querySelectorAll("tbody tr").length === 14,
     "weight chart exposes weigh-ins and trend values in a compact semantic table");
-  const tableDay = trendData && trendData.querySelector("button.chart-day-link[data-action='insight-chart-day']");
-  ok(!!tableDay, "daily intake data exposes semantic day buttons for keyboard drilldown");
+  const tableDay = trendData && trendData.querySelector("button.chart-day-link[data-action='goto-day']");
+  ok(!!tableDay, "daily intake data exposes semantic day buttons that open Today");
   if (tableDay) {
+    const day = tableDay.dataset.day;
     trendData.open = true;
-    tableDay.focus();
     tableDay.click();
-    await new Promise((r) => setTimeout(r, 10));
-    ok($("#day-detail").innerHTML.trim().length > 0 && window.document.activeElement === $("#day-detail"),
-      "keyboard-equivalent intake day activation opens and focuses the same drilldown");
+    await new Promise((r) => setTimeout(r, 20));
+    const App = window.eval("App");
+    ok(App.state.viewDay === day &&
+        window.document.querySelector("#view-today") &&
+        window.document.querySelector("#view-today").classList.contains("active"),
+      "keyboard-equivalent intake day activation opens that day in Today");
   }
-  const weightDay = weightData && weightData.querySelector("button.chart-day-link[data-action='insight-chart-day']");
-  ok(!!weightDay, "weight data exposes semantic weigh-in day buttons for keyboard drilldown");
-  if (weightDay) {
-    weightData.open = true;
-    weightDay.focus();
-    weightDay.click();
-    await new Promise((r) => setTimeout(r, 10));
-    ok($("#day-detail").dataset.day === weightDay.dataset.day && window.document.activeElement === $("#day-detail"),
-      "keyboard-equivalent weight day activation opens and focuses the same drilldown");
+  // Restore calendar-today before other Insights assertions that assume it.
+  {
+    const App = window.eval("App");
+    const Ledger = window.eval("Ledger");
+    App.state.viewDay = Ledger.todayKey();
   }
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+  await new Promise((r) => setTimeout(r, 40));
+  const weightDayFresh = $("#weight-data .chart-data") &&
+    $("#weight-data .chart-data").querySelector("button.chart-day-link[data-action='goto-day']");
+  ok(!!weightDayFresh, "weight data exposes semantic weigh-in day buttons that open Today");
+  if (weightDayFresh) {
+    const day = weightDayFresh.dataset.day;
+    $("#weight-data .chart-data").open = true;
+    weightDayFresh.click();
+    await new Promise((r) => setTimeout(r, 20));
+    const App = window.eval("App");
+    ok(App.state.viewDay === day &&
+        window.document.querySelector("#view-today") &&
+        window.document.querySelector("#view-today").classList.contains("active"),
+      "keyboard-equivalent weight day activation opens that day in Today");
+    App.state.viewDay = window.eval("Ledger").todayKey();
+  }
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+  await new Promise((r) => setTimeout(r, 40));
 
   // Headline sanity.
   ok(/\/100/.test(text("#insight-headline")), "headline shows a score");
@@ -610,9 +636,10 @@ async function run(label, days) {
     || liveCells[Math.floor(liveCells.length / 2)];
   loggedCell.click();
   await new Promise((r) => setTimeout(r, 20));
-  ok($("#day-detail").innerHTML.trim().length > 0, "heatmap click opens day detail");
-  ok($("#day-detail .topfood-list") || /No entries/.test(text("#day-detail")),
-    "day detail shows contribution bars or an empty-day note");
+  ok($("#heatmap-tip") && !$("#heatmap-tip").hidden &&
+      $("#heatmap-tip [data-action='goto-day']") &&
+      $("#heatmap-tip [data-action='goto-day']").dataset.day === loggedCell.dataset.day,
+    "heatmap click opens a tip with Open day for that cell");
 
   // Nutrient pills re-render.
   const proteinPill = window.document.querySelector('#insight-nutrient [data-nutrient="protein"]');
@@ -635,7 +662,7 @@ async function run(label, days) {
   ok(!/tap a bar/i.test(text("#trend-summary")),
     "weekly caption does not promise a per-day tap that does nothing");
   ok(!/7-day avg/.test($("#trend-legend").textContent), "weekly view drops the 7-day line from the legend");
-  ok(!$("#trend-data [data-action='insight-chart-day']") && /weekly averages/i.test($("#trend-data table caption").textContent),
+  ok(!$("#trend-data [data-action='goto-day']") && /weekly averages/i.test($("#trend-data table caption").textContent),
     "weekly chart table exposes exact periods without inventing a single-day drilldown");
   window.document.querySelector('#rollup-seg [data-rollup="day"]').click();
   await new Promise((r) => setTimeout(r, 20));
@@ -683,28 +710,40 @@ async function run(label, days) {
   ok(!/\bunder\b/.test(naRow.textContent), "sodium scorecard row never says 'under'");
   ok(/within|headroom|over/.test(naRow.textContent), "sodium framed as within / headroom / over", naRow.textContent.trim());
 
-  // Day contribution: tap a logged sodium day and match Analytics.topFoods %.
+  // Day contribution: tip + Open day, then verify Today contribution % match Analytics.
   const loggedNaCell = [...window.document.querySelectorAll(".hm-cell[data-day]")]
     .find((c) => /hit|over|under|logged/i.test(c.className) && c.dataset.day);
   if (loggedNaCell) {
     loggedNaCell.click();
     await new Promise((r) => setTimeout(r, 20));
     const dayKey = loggedNaCell.dataset.day;
+    const tipGoto = $("#heatmap-tip [data-action='goto-day']");
+    ok($("#heatmap-tip") && !$("#heatmap-tip").hidden && tipGoto && tipGoto.dataset.day === dayKey,
+      "sodium heatmap tip offers Open day for the tapped cell");
     // Classic-script `const Analytics` is not on window; resolve via the realm.
     const Analytics = window.eval("Analytics");
     const Ledger = window.eval("Ledger");
+    const UI = window.eval("UI");
+    const App = window.eval("App");
+    const Phases = window.eval("Phases");
     const expected = Analytics.topFoods(
       [dayKey],
       (d) => Ledger.entriesFor(d),
       "sodium",
       6
     );
-    const detailNames = [...window.document.querySelectorAll("#day-detail .topfood-list .tf-name")]
+    UI.renderDayDetail(dayKey, {
+      metric: "sodium",
+      root: "#today-day-detail",
+      settings: App.state.settings,
+      goals: Phases.goalsForDay(dayKey, App.state.settings),
+    });
+    const detailNames = [...window.document.querySelectorAll("#today-day-detail .topfood-list .tf-name")]
       .map((n) => n.textContent.trim());
-    const detailPcts = [...window.document.querySelectorAll("#day-detail .topfood-list .tf-v .small")]
+    const detailPcts = [...window.document.querySelectorAll("#today-day-detail .topfood-list .tf-v .small")]
       .map((n) => Number(String(n.textContent).replace(/[^0-9.]/g, "")));
     ok(detailNames.length > 0, "sodium day detail lists contributing foods");
-    ok(/limit|headroom|over/i.test(text("#day-detail")), "day detail uses ceiling wording for sodium");
+    ok(/limit|headroom|over/i.test(text("#today-day-detail")), "day detail uses ceiling wording for sodium");
     ok(expected.length > 0, "Analytics.topFoods returns rows for the tapped day");
     if (expected.length) {
       ok(detailNames[0] === expected[0].name, "day detail top food matches Analytics.topFoods",
@@ -714,11 +753,10 @@ async function run(label, days) {
         `got ${detailPcts[0]} vs ${Math.round(expected[0].pct * 100)}`);
     }
 
-    // Switching the nutrient pill should re-score the open day, not wipe it.
+    // Nutrient pill re-renders Insights; Today contribution stays until closed.
     window.document.querySelector('#insight-nutrient [data-nutrient="protein"]').click();
     await new Promise((r) => setTimeout(r, 20));
-    ok($("#day-detail").innerHTML.trim().length > 0, "nutrient pill keeps the open day card");
-    ok(/Protein/i.test(text("#day-detail")), "open day card re-scores for the new nutrient");
+    ok($("#today-day-detail").innerHTML.trim().length > 0, "nutrient pill leaves Today contribution card intact");
     window.document.querySelector('#insight-nutrient [data-nutrient="sodium"]').click();
     await new Promise((r) => setTimeout(r, 20));
   } else {
@@ -966,8 +1004,12 @@ END`;
 
     // Once today's logging has begun, Reduced plans stay editable; Fast grace
     // remains open for same-day and next-day declarations (§10).
+    const LedgerK = window.eval("Ledger");
+    const AppK = window.eval("App");
+    AppK.state.viewDay = LedgerK.todayKey();
     const todayTabForK = [...window.document.querySelectorAll(".tab")].find((x) => x.dataset.view === "today");
     todayTabForK.click();
+    await new Promise((r) => setTimeout(r, 20));
     $("#btn-day-goals").click();
     ok(!$("#sheet-day-goals").hidden, "logged day can still open the plan sheet");
     $("#dg-intent-seg button[data-dg-intent='reduced']").click();
@@ -1206,6 +1248,11 @@ Projected: 1000000000 kcal | P 0 | C 0 | F 0 | Fiber 0 | Sodium 0 | Potassium 0
     const day = window.UI.onTrendTap(180);
     ok(day == null || /^\d{4}-\d{2}-\d{2}$/.test(day), "trend tap returns a day key or null");
     ok(!$("#trend-tip").hidden, "trend tap shows the tooltip");
+    if (day) {
+      ok($("#trend-tip [data-action='goto-day']") &&
+          $("#trend-tip [data-action='goto-day']").dataset.day === day,
+        "trend tip offers Open day instead of auto-opening a contribution panel");
+    }
     const wHit = window.UI.onWeightTap(180);
     ok(wHit == null || typeof wHit.value === "number", "weight tap returns a weigh-in or null");
   }
@@ -3547,18 +3594,18 @@ async function runImportSecurity() {
 
       UI.renderDayDetail(onceDay, {
         metric: "kcal",
-        root: "#day-detail",
+        root: "#today-day-detail",
         settings: App.state.settings,
         goals: Phases.goalsForDay(onceDay, App.state.settings),
       });
-      const detailBadge = [...window.document.querySelectorAll("#day-detail .tf-name .src-badge-once")]
+      const detailBadge = [...window.document.querySelectorAll("#today-day-detail .tf-name .src-badge-once")]
         .find((el) => /Pad thai/.test(el.parentElement.textContent));
-      ok(!!detailBadge, "Insights day-detail badges an aggregated one-off contributor");
-      const libraryDetail = [...window.document.querySelectorAll("#day-detail .tf-name")]
+      ok(!!detailBadge, "Today contribution badges an aggregated one-off contributor");
+      const libraryDetail = [...window.document.querySelectorAll("#today-day-detail .tf-name")]
         .find((el) => el.textContent.trim().startsWith("Library Lentils"));
-      ok(!!libraryDetail, "fixture: library contributor appears in day-detail");
+      ok(!!libraryDetail, "fixture: library contributor appears in Today contribution");
       ok(!!libraryDetail && !libraryDetail.querySelector(".src-badge"),
-        "day-detail library-only contributor has no source badge");
+        "Today contribution library-only contributor has no source badge");
 
       if (quickLegacy) {
         UI.renderDayLog(today, Ledger.entriesFor(today));
@@ -3851,20 +3898,20 @@ async function runImportSecurity() {
       "Phase 2: Today still shows calorie totals when macros are incomplete",
       kcalBig);
 
-    // Phase 3: disclosure note + day-detail culprits with Edit.
+    // Phase 3: disclosure note jumps to Today contribution with culprits + Edit.
     [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
     await new Promise((r) => setTimeout(r, 80));
     const macroObs = $('#insight-observations [data-obs-id="macro-incomplete"]');
     ok(!!macroObs && /without complete macros/.test(macroObs.textContent || "") &&
-        macroObs.dataset.jump === "#day-detail" && !!macroObs.dataset.jumpDay,
-      "Phase 3: Insights shows macro-incomplete honesty note that jumps to day detail",
+        macroObs.dataset.jump === "#today-day-detail" && !!macroObs.dataset.jumpDay,
+      "Phase 3: Insights shows macro-incomplete honesty note that opens Today contribution",
       macroObs && macroObs.textContent);
     if (macroObs) macroObs.click();
     await new Promise((r) => setTimeout(r, 40));
-    const detail = $("#day-detail");
+    const detail = $("#today-day-detail");
     ok(!!detail && /Incomplete macros/.test(detail.textContent || "") &&
         /Today quick snack/.test(detail.textContent || ""),
-      "Phase 3: day detail lists incomplete-macro culprits",
+      "Phase 3: Today contribution lists incomplete-macro culprits",
       detail && detail.textContent);
     const editBtn = detail && detail.querySelector("[data-action='edit-entry']");
     ok(!!editBtn && editBtn.dataset.day && editBtn.dataset.id,
@@ -4571,9 +4618,17 @@ async function runDayIntentReleaseGate() {
 
   // --- X.2a: renderDayDetail must agree with the day list and Today.
   if (fastBtn) {
-    fastBtn.click();
+    const UI = window.eval("UI");
+    const App = window.eval("App");
+    const Phases = window.eval("Phases");
+    UI.renderDayDetail(fastDays[0], {
+      metric: "protein",
+      root: "#today-day-detail",
+      settings: App.state.settings,
+      goals: Phases.goalsForDay(fastDays[0], App.state.settings),
+    });
     await new Promise((r) => setTimeout(r, 20));
-    const detailText = text("#day-detail");
+    const detailText = text("#today-day-detail");
     ok(!/\d+\s*g short/i.test(detailText),
       "X.2a: renderDayDetail does not print '150 g short' for the same exempted protein cell",
       detailText);

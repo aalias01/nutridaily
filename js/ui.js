@@ -1659,7 +1659,7 @@ const UI = (() => {
   }
 
   function chartDayButton(day, label) {
-    return `<button type="button" class="chart-day-link" data-action="insight-chart-day" data-day="${esc(day)}" aria-label="Open nutrition details for ${esc(accessibleDate(day))}">${esc(label)}</button>`;
+    return `<button type="button" class="chart-day-link" data-action="goto-day" data-day="${esc(day)}" aria-label="Open ${esc(accessibleDate(day))} in Today">${esc(label)}</button>`;
   }
 
   function renderTrendDataTable(ctx, series, roll, weekly) {
@@ -1871,7 +1871,7 @@ const UI = (() => {
     const period = ctx.rollup === "week" ? "week" : "day";
     const tip = period === "week"
       ? ""
-      : " · tap a bar for that day's foods";
+      : " · tap a bar for details";
     el.textContent = `${meta.label} per ${period} vs target band${tip}`;
   }
 
@@ -1885,12 +1885,12 @@ const UI = (() => {
     const u = meta.unit;
     const mom = Analytics.momentum(ctx.days, ctx.nutrient, 7);
     const cells = [
-      { k: "Average", v: `${fmt(stats.avg)}${u}` },
-      { k: "Median", v: `${fmt(stats.median)}${u}` },
-      { k: "Typical swing", v: stats.sd == null ? "—" : `±${fmt(stats.sd)}${u}` },
-      { k: "Range", v: `${fmt(stats.min)} – ${fmt(stats.max)}${u}` },
+      { k: "Avg", v: `${fmt(stats.avg)}${u}` },
+      { k: "Med", v: `${fmt(stats.median)}${u}` },
+      { k: "Swing", v: stats.sd == null ? "—" : `±${fmt(stats.sd)}${u}` },
+      { k: "Range", v: `${fmt(stats.min)}–${fmt(stats.max)}${u}` },
     ];
-    if (mom) cells.push({ k: "vs prior 7 d", v: `${Analytics.fmtSigned(mom.delta)}${u}` });
+    if (mom) cells.push({ k: "vs 7d", v: `${Analytics.fmtSigned(mom.delta)}${u}` });
     root.innerHTML = cells.map((c) =>
       `<div class="stat"><span class="stat-k">${esc(c.k)}</span><span class="stat-v">${esc(c.v)}</span></div>`
     ).join("");
@@ -2019,36 +2019,52 @@ const UI = (() => {
       scoreRoot.innerHTML = `<b>Target scorecard</b><p class="muted small">Hit rates appear after a few logged days.</p>`;
       return;
     }
+    const groups = [
+      { id: "energy", label: "Energy", keys: ["kcal"] },
+      { id: "macros", label: "Macros", keys: ["protein", "carbs", "fat", "fiber"] },
+      { id: "minerals", label: "Minerals", keys: ["sodium", "potassium"] },
+    ];
+    const byKey = {};
+    for (const n of scorecard.nutrients || []) byKey[n.key] = n;
+    const rowHtml = (n) => {
+      if (!n) return "";
+      const t = bandText(n.key);
+      const total = n.hit + n.under + n.over;
+      const pct = (v) => (total ? (v / total) * 100 : 0);
+      const counts = [
+        n.under ? `${n.under} ${t.under}` : null,
+        n.hit ? `${n.hit} ${t.hit}` : null,
+        n.over ? `${n.over} ${t.over}` : null,
+      ].filter(Boolean).join(" · ") || "—";
+      const avg = n.n ? formatBandDelta(n.key, n.avgDelta) : "—";
+      const exemptLine = n.exemptN
+        ? `<span class="muted small score-exempt">not scored on ${n.exemptN} planned day${n.exemptN === 1 ? "" : "s"}</span>`
+        : "";
+      return `<li>
+        <span class="score-name">${esc(n.label)}</span>
+        <span class="score-bar" role="img" aria-label="${esc(counts)}">
+          <i class="sb-under" style="width:${pct(n.under)}%"></i><i class="sb-hit" style="width:${pct(n.hit)}%"></i><i class="sb-over" style="width:${pct(n.over)}%"></i>
+        </span>
+        <span class="muted small">${total ? `${Math.round(pct(n.hit))}% ${esc(t.hit)}` : "—"} · ${esc(counts)} · avg ${esc(avg)}</span>
+        ${exemptLine}
+      </li>`;
+    };
+    const pages = groups.map((g, i) => {
+      const rows = g.keys.map((k) => rowHtml(byKey[k])).filter(Boolean).join("");
+      return `<div class="scorecard-page" data-score-page="${i}">
+        <span class="scorecard-page-label">${esc(g.label)}</span>
+        <ul class="score-list">${rows || `<li><span class="muted small">No ${esc(g.label.toLowerCase())} rows yet.</span></li>`}</ul>
+      </div>`;
+    }).join("");
+    const dots = groups.map((g, i) =>
+      `<button type="button" role="tab" class="carousel-dot${i === 0 ? " on" : ""}" data-score-page="${i}" aria-label="Scorecard page ${i + 1} of ${groups.length}: ${esc(g.label)}" aria-selected="${i === 0 ? "true" : "false"}"></button>`
+    ).join("");
     scoreRoot.innerHTML = `<b>Target scorecard</b>
-      <p class="muted small">Across ${scorecard.logged} logged days.</p>
-      <ul class="score-list">${scorecard.nutrients.map((n) => {
-        const t = bandText(n.key);
-        const total = n.hit + n.under + n.over;
-        const pct = (v) => (total ? (v / total) * 100 : 0);
-        // A floor can never be "over" and a ceiling can never be "under", so
-        // those counts are structurally zero — showing them is noise.
-        const counts = [
-          n.under ? `${n.under} ${t.under}` : null,
-          n.hit ? `${n.hit} ${t.hit}` : null,
-          n.over ? `${n.over} ${t.over}` : null,
-        ].filter(Boolean).join(" · ") || "—";
-        const avg = n.n ? formatBandDelta(n.key, n.avgDelta) : "—";
-        // A target the plan exempted must say so here too, not just drop
-        // silently out of the row's own counts — the same disclosure
-        // nutritionScore.nutrients already carries, sourced from the same
-        // exemptByPlan fact so the two cannot disagree.
-        const exemptLine = n.exemptN
-          ? `<span class="muted small score-exempt">not scored on ${n.exemptN} planned day${n.exemptN === 1 ? "" : "s"}</span>`
-          : "";
-        return `<li>
-          <span class="score-name">${esc(n.label)}</span>
-          <span class="score-bar" role="img" aria-label="${esc(counts)}">
-            <i class="sb-under" style="width:${pct(n.under)}%"></i><i class="sb-hit" style="width:${pct(n.hit)}%"></i><i class="sb-over" style="width:${pct(n.over)}%"></i>
-          </span>
-          <span class="muted small">${total ? `${Math.round(pct(n.hit))}% ${esc(t.hit)}` : "—"} · ${esc(counts)} · avg ${esc(avg)}</span>
-          ${exemptLine}
-        </li>`;
-      }).join("")}</ul>
+      <p class="muted small">Across ${scorecard.logged} logged days. Swipe for Energy, Macros, and Minerals.</p>
+      <div class="scorecard-carousel" id="scorecard-carousel">
+        <div class="scorecard-carousel-track" id="scorecard-carousel-track">${pages}</div>
+        <div class="scorecard-carousel-dots" id="scorecard-carousel-dots" role="tablist" aria-label="Scorecard pages">${dots}</div>
+      </div>
       ${bandLegend()}`;
   }
 
@@ -2146,15 +2162,44 @@ const UI = (() => {
           </div>
         </div>
       </div>
+      <div id="heatmap-tip" class="hm-tip" hidden></div>
       <p class="muted small hm-key">${keySwatches}</p>
       <div class="stat-grid">
         <div class="stat"><span class="stat-k">Logged</span><span class="stat-v">${eatingDays}</span></div>
         <div class="stat"><span class="stat-k">Fasted</span><span class="stat-v">${cons.fastedDays || 0}</span></div>
         <div class="stat"><span class="stat-k">Missed</span><span class="stat-v">${missedN}</span></div>
-        <div class="stat"><span class="stat-k">Current streak</span><span class="stat-v">${cons.currentStreak} d</span></div>
-        <div class="stat"><span class="stat-k">Best streak</span><span class="stat-v">${cons.longestStreak} d</span></div>
-        <div class="stat"><span class="stat-k">Weekday / weekend</span><span class="stat-v">${pct(cons.weekdayRate)} / ${pct(cons.weekendRate)}</span></div>
+        <div class="stat"><span class="stat-k">Streak</span><span class="stat-v">${cons.currentStreak} d</span></div>
+        <div class="stat"><span class="stat-k">Best</span><span class="stat-v">${cons.longestStreak} d</span></div>
+        <div class="stat"><span class="stat-k">Wk / We</span><span class="stat-v">${pct(cons.weekdayRate)} / ${pct(cons.weekendRate)}</span></div>
       </div>`;
+  }
+
+  /** Compact tip under the logging calendar for a tapped day. */
+  function showHeatmapTip(dayKey, opts) {
+    const tip = $("#heatmap-tip");
+    if (!tip) return;
+    if (!dayKey) {
+      tip.hidden = true;
+      tip.innerHTML = "";
+      return;
+    }
+    const o = opts || {};
+    const meta = nutMeta(o.nutrient || (_insight && _insight.nutrient) || "kcal");
+    const d = new Date(dayKey + "T12:00:00");
+    const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    const value = o.value;
+    const goal = o.goal;
+    const status = o.status || "";
+    const valueHtml = Number.isFinite(value)
+      ? `<b>${fmt(value)}${esc(meta.unit)}</b>`
+      : `<b class="muted">not logged</b>`;
+    const goalHtml = Number.isFinite(goal) && goal
+      ? `<span class="muted small">target ${fmt(goal)}${esc(meta.unit)}</span>`
+      : "";
+    const statusHtml = status ? `<span class="muted small">${esc(status)}</span>` : "";
+    tip.innerHTML = `<span class="tip-day">${esc(label)}</span>${valueHtml}${goalHtml}${statusHtml}
+      <button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(dayKey)}">Open day</button>`;
+    tip.hidden = false;
   }
 
   // ------------------------------------------------------------ breakdown
@@ -2745,8 +2790,8 @@ const UI = (() => {
     "#top-foods": { cat: "intake", page: 3 },
     "#top-foods-card": { cat: "intake", page: 3 },
     "#intake-stats": { cat: "intake", page: 0 },
-    "#day-detail": { cat: "intake", page: 0 },
     "#section-intake": { cat: "intake", page: 0 },
+    "#today-day-detail": { cat: "overview" },
     "#insight-scorecard": { cat: "patterns" },
     "#macro-split": { cat: "patterns" },
     "#meal-split": { cat: "patterns" },
@@ -2998,20 +3043,7 @@ const UI = (() => {
     applyInsightMaturity(ctx);
     hideTip("#trend-tip");
     hideTip("#weight-tip");
-    // Keep an open day card and re-score it for the newly selected nutrient.
-    const detail = $("#day-detail");
-    const keepDay = detail && detail.dataset.day;
-    if (keepDay) {
-      renderDayDetail(keepDay, {
-        metric: ctx.nutrient,
-        settings: ctx.settings,
-        goals: typeof Phases !== "undefined"
-          ? Phases.goalsForDay(keepDay, ctx.settings)
-          : null,
-      });
-    } else {
-      renderDayDetail(null);
-    }
+    showHeatmapTip(null);
   }
 
   // Back-compat: app.js historically called these two separately.
@@ -3049,8 +3081,8 @@ const UI = (() => {
   }
 
   /**
-   * Tap on the intake chart: show a tooltip and, in daily mode, return the day
-   * so the caller can open the day detail.
+   * Tap on the intake chart: show a tooltip. In daily mode the tip includes
+   * Open day; callers should not auto-scroll a contribution panel.
    * @returns {string|null} day key
    */
   function onTrendTap(clientX) {
@@ -3064,8 +3096,11 @@ const UI = (() => {
       ? `<b>${fmt(p.value)}${esc(meta.unit)}</b>`
       : `<b class="muted">not logged</b>`;
     const goal = p.goal ? `<span class="muted small">target ${fmt(p.goal)}${esc(meta.unit)}</span>` : "";
+    const open = (!hit.weekly && p.key)
+      ? `<button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(p.key)}">Open day</button>`
+      : "";
     showTip("#trend-tip", "#section-intake .canvas-wrap", x,
-      `<span class="tip-day">${esc(p.sub || p.key)}</span>${value}${goal}`);
+      `<span class="tip-day">${esc(p.sub || p.key)}</span>${value}${goal}${open}`);
     // Weekly bars span 7 days, so there is no single day to open.
     return hit.weekly ? null : p.key;
   }
@@ -3126,13 +3161,13 @@ const UI = (() => {
    * @param {string|null} dayKey
    * @param {object} [opts]
    * @param {string} [opts.metric]  nutrient key; defaults to the Insights chart nutrient
-   * @param {string} [opts.root]    DOM id selector (default "#day-detail")
+   * @param {string} [opts.root]    DOM id selector (default "#today-day-detail")
    * @param {object} [opts.goals]   goals for the day (kcal/protein/…); looked up if omitted
    * @param {object} [opts.settings] settings pass-through for goals lookup
    */
   function renderDayDetail(dayKey, opts) {
     const o = opts || {};
-    const root = $(o.root || "#day-detail");
+    const root = $(o.root || "#today-day-detail");
     if (!root) return;
     if (!dayKey) {
       root.innerHTML = "";
@@ -3208,10 +3243,7 @@ const UI = (() => {
       headLine = `${fmt(value)}${esc(unitSuffix)} of a ${fmt(goal)}${esc(unitSuffix)} ${esc(goalWord)} · ${esc(delta)}`;
     }
 
-    const onTodayRoot = (o.root || "#day-detail") === "#today-day-detail";
-    const actions = onTodayRoot
-      ? `<button type="button" class="btn ghost full" data-action="close-day-contrib">Close</button>`
-      : `<button type="button" class="btn ghost full" data-action="goto-day" data-day="${esc(dayKey)}">Open this day</button>`;
+    const actions = `<button type="button" class="btn ghost full" data-action="close-day-contrib">Close</button>`;
 
     if (!entries.length) {
       root.innerHTML = `<div class="card-block day-contrib">
@@ -3996,7 +4028,7 @@ const UI = (() => {
     setOnceErrors, selectedOnceUnit, selectedOnceCat, selectedOnceConfidence, syncOnceMacroNudge,
     renderInsights, renderTrends, renderWeightTrend,
     applyInsightCategory, setIntakeCarouselPage, insightJumpTarget,
-    onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX,
+    onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip,
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
     titleCaseName, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,

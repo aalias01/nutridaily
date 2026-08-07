@@ -1222,8 +1222,8 @@ console.log("\n[26b] Macro coverage (Design Phase 2)");
 
   const macroNote = Analytics.observations(mkRows(0.3), {}).find((o) => o.id === "macro-incomplete");
   ok(!!macroNote && /without complete macros/.test(macroNote.text) && macroNote.priority === 0 &&
-      macroNote.panel === "#day-detail" && macroNote.jumpDay === dayKey,
-    "observations emit macro-incomplete honesty note that jumps to day detail",
+      macroNote.panel === "#today-day-detail" && macroNote.jumpDay === dayKey,
+    "observations emit macro-incomplete honesty note that opens Today contribution",
     macroNote && JSON.stringify(macroNote));
   ok(!Analytics.observations(mkRows(1), {}).some((o) => o.id === "macro-incomplete"),
     "fully covered macros emit no macro-incomplete note");

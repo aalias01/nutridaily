@@ -1358,7 +1358,7 @@ const Analytics = (() => {
         id: "macro-incomplete",
         tone: "info",
         priority: 0,
-        panel: "#day-detail",
+        panel: "#today-day-detail",
         jumpDay: incompleteMacro[0].day,
         text: `${n} day${n === 1 ? " has" : "s have"} calories without complete macros; those macros are not scored.`,
       });

@@ -144,6 +144,12 @@
         <section class="insight-section" id="section-intake">
           <h3 class="section-head" id="intake-head" aria-live="polite">Calories</h3>
           <div class="insight-carousel" id="intake-carousel">
+            <div class="insight-carousel-dots" id="intake-carousel-dots" role="tablist" aria-label="Intake pages">
+              <button type="button" role="tab" class="carousel-dot on" data-intake-page="0" aria-label="Page 1 of 4: Trend" aria-selected="true"></button>
+              <button type="button" role="tab" class="carousel-dot" data-intake-page="1" aria-label="Page 2 of 4: Log calendar" aria-selected="false"></button>
+              <button type="button" role="tab" class="carousel-dot" data-intake-page="2" aria-label="Page 3 of 4: By weekday" aria-selected="false"></button>
+              <button type="button" role="tab" class="carousel-dot" data-intake-page="3" aria-label="Page 4 of 4: Top foods" aria-selected="false"></button>
+            </div>
             <div class="insight-carousel-track" id="intake-carousel-track">
               <div class="insight-carousel-page" data-intake-page="0" id="intake-page-trend">
                 <div class="chart-toolbar">
@@ -160,7 +166,6 @@
                 <div id="trend-data" class="chart-data-region"></div>
                 <p id="trend-summary" class="muted"></p>
                 <div id="intake-stats" class="stat-grid"></div>
-                <div id="day-detail" aria-live="polite"></div>
               </div>
               <div class="insight-carousel-page" data-intake-page="1" id="intake-page-heatmap">
                 <div id="insight-heatmap" class="card-block heatmap-card"></div>
@@ -177,12 +182,6 @@
                   <div id="top-foods"></div>
                 </div>
               </div>
-            </div>
-            <div class="insight-carousel-dots" id="intake-carousel-dots" role="tablist" aria-label="Intake pages">
-              <button type="button" role="tab" class="carousel-dot on" data-intake-page="0" aria-label="Page 1 of 4: Trend" aria-selected="true"></button>
-              <button type="button" role="tab" class="carousel-dot" data-intake-page="1" aria-label="Page 2 of 4: Log calendar" aria-selected="false"></button>
-              <button type="button" role="tab" class="carousel-dot" data-intake-page="2" aria-label="Page 3 of 4: By weekday" aria-selected="false"></button>
-              <button type="button" role="tab" class="carousel-dot" data-intake-page="3" aria-label="Page 4 of 4: Top foods" aria-selected="false"></button>
             </div>
           </div>
         </section>
@@ -211,16 +210,16 @@
       </div>
 
       <div id="insight-panel-patterns" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-patterns" data-insight-panel="patterns" hidden>
-        <section class="insight-section" id="section-adherence">
-          <h3 class="section-head">Adherence</h3>
-          <div id="insight-scorecard" class="card-block"></div>
-        </section>
-
         <section class="insight-section" id="section-composition">
           <h3 class="section-head">Composition</h3>
           <div id="macro-split" class="card-block"></div>
           <div id="meal-split" class="card-block"></div>
           <div id="nak-card" class="card-block nak-card" hidden></div>
+        </section>
+
+        <section class="insight-section" id="section-adherence">
+          <h3 class="section-head">Adherence</h3>
+          <div id="insight-scorecard" class="card-block scorecard-card"></div>
         </section>
 
         <section class="insight-section" id="section-compare" hidden>

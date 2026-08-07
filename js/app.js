@@ -6512,6 +6512,41 @@ const App = (() => {
         }, 50);
       }, { passive: true });
     }
+    const scorecardRoot = UI.$("#insight-scorecard");
+    if (scorecardRoot) {
+      scorecardRoot.addEventListener("click", (e) => {
+        const dot = e.target.closest("#scorecard-carousel-dots [data-score-page]");
+        if (!dot) return;
+        const track = UI.$("#scorecard-carousel-track");
+        const page = Number(dot.dataset.scorePage) || 0;
+        if (track) {
+          const w = track.clientWidth || 1;
+          const reduceMotion = !!(window.matchMedia &&
+            window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+          track.scrollTo({ left: page * w, behavior: reduceMotion ? "auto" : "smooth" });
+        }
+        scorecardRoot.querySelectorAll("#scorecard-carousel-dots .carousel-dot").forEach((d) => {
+          const on = Number(d.dataset.scorePage) === page;
+          d.classList.toggle("on", on);
+          d.setAttribute("aria-selected", String(on));
+        });
+      });
+      let scoreScrollT = null;
+      scorecardRoot.addEventListener("scroll", (e) => {
+        if (!e.target || e.target.id !== "scorecard-carousel-track") return;
+        const track = e.target;
+        clearTimeout(scoreScrollT);
+        scoreScrollT = setTimeout(() => {
+          const w = track.clientWidth || 1;
+          const page = Math.max(0, Math.min(2, Math.round(track.scrollLeft / w)));
+          scorecardRoot.querySelectorAll("#scorecard-carousel-dots .carousel-dot").forEach((d) => {
+            const on = Number(d.dataset.scorePage) === page;
+            d.classList.toggle("on", on);
+            d.setAttribute("aria-selected", String(on));
+          });
+        }, 50);
+      }, true);
+    }
     const histList = UI.$("#phase-history-list");
     if (histList) {
       histList.addEventListener("click", (e) => {
@@ -6617,38 +6652,39 @@ const App = (() => {
           : `Loaded ${next.kcal} kcal into Change targets`);
       });
     }
-    for (const selector of ["#insight-heatmap", "#trend-data", "#weight-data"]) {
-      const dayAccess = UI.$(selector);
-      if (dayAccess) {
-        dayAccess.addEventListener("click", (e) => {
-          const cell = e.target.closest("[data-action='heatmap-day'], [data-action='insight-chart-day']");
-          if (!cell) return;
-          openDayContrib(state.insightNutrient || "kcal", {
-            day: cell.dataset.day,
-            root: "#day-detail",
-            focus: cell.dataset.action === "insight-chart-day",
-          });
+    const heatmap = UI.$("#insight-heatmap");
+    if (heatmap) {
+      heatmap.addEventListener("click", (e) => {
+        const cell = e.target.closest("[data-action='heatmap-day']");
+        if (!cell || !cell.dataset.day) return;
+        const day = cell.dataset.day;
+        const title = cell.getAttribute("title") || "";
+        const statusMatch = /·\s*([^·]+?)(?:\s*·\s*planned|$)/.exec(title);
+        const nut = state.insightNutrient || "kcal";
+        const totals = Ledger.totalsFor(day);
+        const field = { kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na", potassium: "k" }[nut] || "kcal";
+        const value = totals && totals[field] ? totals[field].mean : null;
+        const goals = Phases.goalsForDay(day, state.settings) || {};
+        UI.showHeatmapTip(day, {
+          nutrient: nut,
+          value,
+          goal: Number(goals[nut]) || null,
+          status: statusMatch ? statusMatch[1].trim() : "",
         });
-      }
+      });
     }
     const canvas = UI.$("#trend-canvas");
     if (canvas) {
       canvas.style.cursor = "pointer";
       canvas.addEventListener("click", (e) => {
-        const day = UI.onTrendTap(e.clientX);
-        if (day) {
-          openDayContrib(state.insightNutrient || "kcal", { day, root: "#day-detail" });
-        }
+        UI.onTrendTap(e.clientX);
       });
     }
     const wCanvas = UI.$("#weight-canvas");
     if (wCanvas) {
       wCanvas.style.cursor = "pointer";
       wCanvas.addEventListener("click", (e) => {
-        const hit = UI.onWeightTap(e.clientX);
-        if (hit) {
-          openDayContrib(state.insightNutrient || "kcal", { day: hit.day, root: "#day-detail" });
-        }
+        UI.onWeightTap(e.clientX);
       });
     }
     const hud = UI.$("#hud");
@@ -6680,11 +6716,15 @@ const App = (() => {
       if (jump && jump.closest("#insight-observations")) {
         const jumpDay = jump.dataset.jumpDay;
         if (jumpDay) {
-          UI.renderDayDetail(jumpDay, {
-            goals: Phases.goalsForDay(jumpDay, state.settings),
-            settings: state.settings,
-            metric: state.insightNutrient || "kcal",
+          state.viewDay = jumpDay;
+          switchView("today");
+          refreshDay();
+          openDayContrib(state.insightNutrient || "kcal", {
+            day: jumpDay,
+            root: "#today-day-detail",
+            focus: true,
           });
+          return;
         }
         const sel = jump.dataset.jump;
         const route = UI.insightJumpTarget(sel);
