@@ -819,6 +819,17 @@ console.log("\n[20] Bump audit");
   ok(Analytics.dayPlanProvenance({ dayPlan: { intent: "fast", declaredAfterDay: true, plannedAt: 1 },
     firstAddAt: null,
   }) === "declaredLate", "persisted declaredAfterDay is authoritative declaredLate");
+  ok(Analytics.dayPlanProvenance({
+    dayPlan: {
+      intent: "fast", declaredAfterDay: true,
+      plannedAt: endOf(keys[0]) - 3600e3,
+    },
+    firstAddAt: null, intent: "fast", day: keys[0],
+  }) === "planned", "false declaredAfterDay stamp is ignored when plannedAt is still on-day");
+  ok(Analytics.dayPlanProvenance({
+    dayPlan: { intent: "fast", plannedAt: endOf(keys[0]) - 3600e3 },
+    firstAddAt: 0, intent: "fast",
+  }) === "planned", "firstAddAt: 0 is absent, not Unix epoch late");
   // F2: dayPlanForDay placeholder plannedAt: 0 must not classify as epoch time.
   ok(Analytics.dayPlanProvenance({ dayPlan: { kcal: -200, plannedAt: 0, intent: "reduced" },
     firstAddAt: endOf(keys[0]) - 3600e3,
@@ -2081,7 +2092,9 @@ console.log("\n[43] Day-intent: dayPlanAudit separates fasts from energy adjustm
   };
   settings.dayGoals[lateFastDay] = {
     targetKcal: 0, baseKcal: 2000, intent: "fast", fastAcknowledged: true,
-    plannedAt: 1, updatedAt: 1, declaredAfterDay: true,
+    plannedAt: Phases.endOfLocalDayMs(lateFastDay) + 1,
+    updatedAt: Phases.endOfLocalDayMs(lateFastDay) + 1,
+    declaredAfterDay: true,
   };
   const totalsForDay = (day) => {
     if (day === fastDay || day === lateFastDay) return { count: 0 };

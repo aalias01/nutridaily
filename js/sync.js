@@ -491,8 +491,21 @@ const Sync = (() => {
   function normalizeDayGoals(map) {
     const out = Object.create(null);
     for (const [day, ov] of Object.entries(map || {})) {
-      const normalized = normalizeDayGoal(ov);
-      if (normalized) out[day] = normalized;
+      let normalized = normalizeDayGoal(ov);
+      if (!normalized) continue;
+      // Drop false late stamps: plannedAt still inside the target day means
+      // an advance/same-day declare was marked · late incorrectly.
+      if (normalized.declaredAfterDay === true
+          && typeof Phases !== "undefined"
+          && typeof Phases.isDeclaredAfterDay === "function") {
+        const plannedAt = Number(normalized.plannedAt);
+        if (Number.isFinite(plannedAt) && plannedAt > 0
+            && !Phases.isDeclaredAfterDay(day, plannedAt)) {
+          normalized = { ...normalized };
+          delete normalized.declaredAfterDay;
+        }
+      }
+      out[day] = normalized;
     }
     return out;
   }

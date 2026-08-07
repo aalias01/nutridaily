@@ -99,6 +99,7 @@ const Phases = (() => {
    * Reduced: from the previous calendar day through the target day, closing
    * on the first food add. Fast: previous day through the following day;
    * declarations after the target day ends get declaredAfterDay stamped.
+   * Advance declarations (todayKey ≤ targetDay) are never "late".
    */
   function dayIntentWindow(targetDay, opts) {
     const o = opts || {};
@@ -133,10 +134,16 @@ const Phases = (() => {
           : "Day plans can only be set for this day before it ends.";
       }
     }
+    const plannedAt = o.plannedAt != null ? o.plannedAt : Date.now();
+    // Late only after the target calendar day has ended — never for same-day
+    // or ahead-of-time (e.g. declare tomorrow's fast today).
+    const declaredAfterDay = intent === "fast"
+      && todayKey > targetDay
+      && isDeclaredAfterDay(targetDay, plannedAt);
     return {
       ok,
       reason,
-      declaredAfterDay: intent === "fast" && isDeclaredAfterDay(targetDay, o.plannedAt != null ? o.plannedAt : Date.now()),
+      declaredAfterDay,
       prevDay: prev,
       nextDay: next,
     };

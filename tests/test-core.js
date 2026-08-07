@@ -3779,6 +3779,31 @@ END`;
       todayKey: "2026-08-03", intent: "fast", plannedAt: endMs + 1,
     }).declaredAfterDay === true,
       "dayIntentWindow stamps declaredAfterDay for a late fast save");
+    ok(Phases15.dayIntentWindow("2026-08-02", {
+      todayKey: "2026-08-01", intent: "fast", plannedAt: endMs + 1,
+    }).declaredAfterDay === false,
+      "advance declare never stamps declaredAfterDay even with a post-midnight clock");
+    ok(Phases15.dayIntentWindow("2026-08-02", {
+      todayKey: "2026-08-02", intent: "fast", plannedAt: endMs - 1,
+    }).declaredAfterDay === false,
+      "same-day declare before midnight is not declaredAfterDay");
+    // Heal strips a false late stamp when plannedAt still sits inside the day.
+    const healedMap = Sync15.normalizeDayGoals({
+      "2026-08-02": {
+        targetKcal: 0, baseKcal: 2000, updatedAt: endMs - 1000, plannedAt: endMs - 1000,
+        intent: "fast", fastAcknowledged: true, declaredAfterDay: true,
+      },
+    });
+    ok(healedMap["2026-08-02"] && healedMap["2026-08-02"].declaredAfterDay !== true,
+      "normalizeDayGoals clears declaredAfterDay when plannedAt is still on-day");
+    const keepLate = Sync15.normalizeDayGoals({
+      "2026-08-02": {
+        targetKcal: 0, baseKcal: 2000, updatedAt: endMs + 1, plannedAt: endMs + 1,
+        intent: "fast", fastAcknowledged: true, declaredAfterDay: true,
+      },
+    });
+    ok(keepLate["2026-08-02"] && keepLate["2026-08-02"].declaredAfterDay === true,
+      "normalizeDayGoals keeps declaredAfterDay when plannedAt is after the day");
 
     // Slice 6 §12 — dayPlanPresets LWW by id with deleted tombstones, max 5 active.
     const pA = Sync15.normalizeDayPlanPreset({

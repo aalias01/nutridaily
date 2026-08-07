@@ -1500,7 +1500,9 @@ const Analytics = (() => {
    * Single definition of day-plan provenance for reduced plans and fasts.
    *
    * Precedence:
-   *   1. persisted declaredAfterDay === true → "declaredLate" (fast testimony)
+   *   1. persisted declaredAfterDay === true → "declaredLate" (fast testimony),
+   *      unless optional `day` + usable plannedAt prove the stamp is false
+   *      (advance declare mis-stamps — fall through to derive)
    *   2. plannedAt vs firstAddAt → "planned" | "declaredLate"
    *      (plannedAt <= firstAddAt counts as planned; equality is not late)
    *   3. plannedAt present, no firstAddAt:
@@ -1513,9 +1515,9 @@ const Analytics = (() => {
    * and must not decide lateness. Non-positive timestamps are absent
    * (Phases.dayPlanForDay writes plannedAt: 0 when the stored record has none);
    * callers must not pass goals._dayPlan expecting that placeholder to classify
-   * as a real plan time.
+   * as a real plan time. firstAddAt: 0 is treated the same way (absent).
    *
-   * Accepts only `{ dayPlan, firstAddAt?, intent? }`. `dayPlan` must be present
+   * Accepts `{ dayPlan, firstAddAt?, intent?, day? }`. `dayPlan` must be present
    * as an own property (may be null → `"legacy"`). No duck-typing of wrapper
    * vs record, and no legacy plan-opt aliases on `buildDays`.
    * `declaredAfterDay` is read only from the plan record, not from the wrapper.
@@ -1527,14 +1529,23 @@ const Analytics = (() => {
     if (!Object.prototype.hasOwnProperty.call(r, "dayPlan")) return "legacy";
     const bump = r.dayPlan;
     if (!bump || typeof bump !== "object") return "legacy";
-    if (bump.declaredAfterDay === true) return "declaredLate";
     // Derive from plannedAt only. updatedAt is intentionally ignored (heal
     // can set it equal to firstAddAt and would falsify "late").
     const candidate = numOrNull(bump.plannedAt);
     // plannedAt: 0 is the dayPlanForDay placeholder for "missing", not epoch.
     const plannedAt = Number.isFinite(candidate) && candidate > 0 ? candidate : null;
-    const firstAdd = numOrNull(r.firstAddAt);
-    if (plannedAt != null && Number.isFinite(firstAdd)) {
+    if (bump.declaredAfterDay === true) {
+      const day = typeof r.day === "string" ? r.day : null;
+      const stampDisproved = !!(day && plannedAt != null
+        && typeof Phases !== "undefined"
+        && typeof Phases.isDeclaredAfterDay === "function"
+        && !Phases.isDeclaredAfterDay(day, plannedAt));
+      if (!stampDisproved) return "declaredLate";
+    }
+    const firstAddRaw = numOrNull(r.firstAddAt);
+    // Same placeholder rule as plannedAt: 0 is absent, not Unix epoch.
+    const firstAdd = Number.isFinite(firstAddRaw) && firstAddRaw > 0 ? firstAddRaw : null;
+    if (plannedAt != null && firstAdd != null) {
       return plannedAt <= firstAdd ? "planned" : "declaredLate";
     }
     if (plannedAt != null) {
@@ -1584,7 +1595,9 @@ const Analytics = (() => {
       const intent = d.goals && d.goals._dayPlan && d.goals._dayPlan.intent === "fast" ? "fast" : "reduced";
       if (intent === "fast") {
         const declaredAfterDay = b.declaredAfterDay === true;
-        const provenance = dayPlanProvenance({ dayPlan: b, firstAddAt: d.firstAddAt, intent: "fast" });
+        const provenance = dayPlanProvenance({
+          dayPlan: b, firstAddAt: d.firstAddAt, intent: "fast", day: d.day,
+        });
         if (declaredAfterDay) fastsDeclaredAfterDay += 1;
         fastRows.push({ day: d.day, provenance, declaredAfterDay, logged: d.logged });
         continue;
@@ -1596,7 +1609,9 @@ const Analytics = (() => {
       const rawKcal = b.bumps && b.bumps.kcal;
       const kcal = Number(resolvedKcal != null ? resolvedKcal : rawKcal);
       if (!Number.isFinite(kcal) || kcal === 0) continue;
-      const provenance = dayPlanProvenance({ dayPlan: b, firstAddAt: d.firstAddAt, intent: "reduced" });
+      const provenance = dayPlanProvenance({
+        dayPlan: b, firstAddAt: d.firstAddAt, intent: "reduced", day: d.day,
+      });
       if (provenance === "declaredLate") declaredLate += 1;
       else if (provenance === "planned") planned += 1;
       else if (provenance === "unlogged") unlogged += 1;
