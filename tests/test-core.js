@@ -1473,12 +1473,24 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
     "Mark incomplete on a logged day survives healLoggedDayGoals / mergeDocs");
   ok(Sync.fingerprint(incompleteForward) === Sync.fingerprint(incompleteReverse),
     "incomplete mark on a logged day converges under reversed shard order");
-  const staleClear = lockDoc({ dayGoals: { "2026-08-20": { cleared: true, updatedAt: 1000 } } });
+  // A clear whose updatedAt is after the first add is a deliberate post-log
+  // Normal / Clear — keep it. A clear older than the lock loses at LWW and
+  // must not reopen the healed snapshot.
+  const postLogClear = lockDoc({ dayGoals: { "2026-08-20": { cleared: true, updatedAt: 1000 } } });
+  const afterPostLogClear = Sync.mergeDocs(lockSource, postLogClear).doc;
+  ok(afterPostLogClear.dayGoals["2026-08-20"].cleared === true &&
+      afterPostLogClear.dayGoals["2026-08-20"].updatedAt === 1000 &&
+      afterPostLogClear.dayGoals["2026-08-20"].targetKcal == null,
+    "a newer post-log clear tombstone survives healLoggedDayGoals on merge");
+  const afterPostLogClearRev = Sync.mergeDocs(postLogClear, lockSource).doc;
+  ok(Sync.fingerprint(afterPostLogClear) === Sync.fingerprint(afterPostLogClearRev),
+    "post-log clear on a logged day converges under reversed shard order");
+  const staleClear = lockDoc({ dayGoals: { "2026-08-20": { cleared: true, updatedAt: 50 } } });
   const lockedRoundTrip = JSON.parse(JSON.stringify(lockedForward));
   const afterStaleClear = Sync.mergeDocs(lockedRoundTrip, staleClear).doc;
   ok(afterStaleClear.dayGoals["2026-08-20"].targetKcal === 2500 &&
       afterStaleClear.dayGoals["2026-08-20"].lockedByEventId === "locked-root",
-    "a JSON export/import round-trip and later clear tombstone cannot alter a logged-day heal snapshot");
+    "a clear older than the first-add lock cannot alter a logged-day heal snapshot");
 
   // Part VIII.1: a declared fast that recorded food must carry intent and
   // fastAcknowledged through a merge exactly the way targetKcal/baseKcal do —
@@ -1655,12 +1667,21 @@ console.log("\n[8] Cloud sync merge (conflict-free by construction)");
   const legacyPlan = lockDoc({
     events: [legacyRoot], dayGoals: { "2026-08-22": { kcal: 2500, plannedAt: 90, updatedAt: 90 } },
   });
-  const legacyLateClear = lockDoc({ dayGoals: { "2026-08-22": { cleared: true, updatedAt: 200 } } });
-  const legacyLocked = Sync.mergeDocs(legacyPlan, legacyLateClear).doc;
+  // An older clear loses LWW to the pre-log plan; heal then freezes that plan.
+  const legacyOlderClear = lockDoc({ dayGoals: { "2026-08-22": { cleared: true, updatedAt: 50 } } });
+  const legacyLocked = Sync.mergeDocs(legacyPlan, legacyOlderClear).doc;
   ok(legacyLocked.dayGoals["2026-08-22"].targetKcal === 2500 &&
       legacyLocked.dayGoals["2026-08-22"].baseKcal === 2200 &&
       legacyLocked.dayGoals["2026-08-22"].locked,
-    "a valid pre-log legacy absolute target freezes before a stale post-log clear is considered");
+    "a valid pre-log legacy absolute target freezes when an older clear loses LWW");
+  // A clear after the first add is a deliberate post-log Normal — keep it even
+  // on legacy days (no dayGoalLock), matching the modern lock-day rule.
+  const legacyPostLogClear = Sync.mergeDocs(legacyPlan, lockDoc({
+    dayGoals: { "2026-08-22": { cleared: true, updatedAt: 200 } },
+  })).doc;
+  ok(legacyPostLogClear.dayGoals["2026-08-22"].cleared === true &&
+      legacyPostLogClear.dayGoals["2026-08-22"].updatedAt === 200,
+    "a newer post-log clear on a legacy logged day survives heal");
   const changedBase = Sync.mergeDocs(legacyLocked, lockDoc({
     goals: { ...lockGoals, kcal: 2800 }, goalsUpdatedAt: 500,
   })).doc;
@@ -2811,6 +2832,65 @@ END`;
   ok(aggregate.ok && Ledger.allEvents().map((e) => e.id).sort().join(",") === "local,remote",
     "aggregate merge recovers both events after concurrent stale reads");
   ok(lockCalls === 3, "every sync cycle uses the writer lock");
+
+  // Mid-sync local day-plan edit: user saves after fullSync's first localDoc
+  // snapshot. Fresh local must be folded in before applyDoc.
+  {
+    const midDay = "2026-08-30";
+    const midRoot = {
+      id: "mid-sync-root", ts: 100, day: midDay, type: "add", resetEpoch: 0,
+      causal: { entryId: "mid-sync-entry", seq: 0, parentEventId: null },
+      dayGoalLock: { targetKcal: 2500, baseKcal: 2200, plannedAt: 90 },
+      entry: { id: "mid-sync-entry", name: "mid sync meal" },
+    };
+    const staleDayGoal = {
+      targetKcal: 2500, baseKcal: 2200, plannedAt: 90, updatedAt: 90,
+      locked: true, lockedByEventId: "mid-sync-root", resetEpoch: 0,
+    };
+    const clearDayGoal = { cleared: true, updatedAt: 5000, resetEpoch: 0 };
+    let dayGoalReads = 0;
+    let midApplied = null;
+    Sync.init({
+      getPersonal: () => [],
+      setPersonal: () => {},
+      getGoals: () => ({ ...Phases.DEFAULT_GOALS, kcal: 2200 }),
+      getGoalsUpdatedAt: () => 1,
+      setGoals: () => {},
+      getDayGoals: () => {
+        dayGoalReads += 1;
+        // First localDoc() in the cycle still sees the pre-edit plan; every
+        // later read (freshLocal before apply) sees the user's clear.
+        return { [midDay]: dayGoalReads === 1 ? staleDayGoal : clearDayGoal };
+      },
+      setDayGoals: (x) => { midApplied = JSON.parse(JSON.stringify(x)); },
+      getDayPlans: () => ({}), setDayPlans: () => {},
+      getPhases: () => [], setPhases: () => {},
+      getWeights: () => ({}), setWeights: () => {},
+      getProfile: () => ({ resetEpoch: 0 }), setProfile: () => {},
+    });
+    Ledger.replaceAll([midRoot]);
+    shardDocs.clear();
+    shardDocs.set("writer-a", {
+      version: 4, resetAt: 0, events: [midRoot], personalFoods: [],
+      dayGoals: { [midDay]: { ...staleDayGoal } },
+      dayPlans: {}, phases: [], weights: {}, profile: {},
+      goals: { ...Phases.DEFAULT_GOALS, kcal: 2200 }, goalsUpdatedAt: 1,
+    });
+    currentWriter = "writer-a";
+    const midSync = await Sync.fullSync(false);
+    const detail = {
+      ok: !!(midSync && midSync.ok),
+      busy: !!(midSync && midSync.busy),
+      err: midSync && midSync.error && String(midSync.error.message || midSync.error),
+      midApplied,
+      dayGoalReads,
+      enabled: !!(Sync.state && Sync.state().enabled),
+    };
+    ok(midSync && midSync.ok && midApplied && midApplied[midDay] && midApplied[midDay].cleared === true &&
+        midApplied[midDay].updatedAt === 5000,
+      "fullSync folds a mid-cycle day-plan clear into apply instead of reverting it",
+      JSON.stringify(detail));
+  }
 
   const clearedPlan = { cleared: true, updatedAt: 20 };
   const stalePlan = { items: [{ id: "old" }], updatedAt: 10 };

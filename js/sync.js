@@ -1025,15 +1025,18 @@ const Sync = (() => {
         : null;
       const rootTs = Number(root.ts) || 0;
       // LWW-merged dayGoals for this day (before heal overwrite). A newer
-      // post-log edit — Mark incomplete, or an intentional plan change —
-      // must survive sync. Heal previously rebuilt every logged day from the
-      // first-add snapshot and wiped those fields (same class of bug as
-      // dropping flags after Drive merge completes).
+      // post-log edit — Mark incomplete, revise Fast/Reduced kcal, or Clear /
+      // Normal (`cleared`) — must survive sync. Heal previously rebuilt every
+      // logged day from the first-add snapshot and wiped those fields (same
+      // class of bug as dropping flags after Drive merge completes).
       const prior = out[day];
       const priorAt = Number(prior && prior.updatedAt) || 0;
-      if (prior && !prior.cleared && priorAt > rootTs) {
+      if (prior && priorAt > rootTs) {
         const kept = normalizeDayGoal(prior);
-        if (kept && !kept.cleared) {
+        // Keep the post-log intent even when it is a clear tombstone. A stale
+        // clear (updatedAt ≤ root.ts) never reaches here — LWW already lost,
+        // or priorAt is not newer than the first add.
+        if (kept) {
           out[day] = kept;
           continue;
         }
@@ -1484,7 +1487,19 @@ const Sync = (() => {
         if (typeof Ledger !== "undefined" && typeof Ledger.validateEvents === "function") {
           Ledger.validateEvents(merged.events || []);
         }
-        if (fingerprint(merged) !== localSourceFingerprint) applyDoc(merged);
+        // Local may have changed while we held the writer lock (day-plan edit,
+        // food log, etc.). Fold the latest snapshot in before apply so we do
+        // not invent a "sync complete" revert of in-flight work.
+        const freshLocalRaw = localDoc();
+        if (fingerprint(freshLocalRaw) !== localSourceFingerprint) {
+          merged = mergeDocs(canonicalizeDoc(freshLocalRaw), merged).doc;
+          merged = canonicalizeDoc(merged);
+          if (typeof Ledger !== "undefined" && typeof Ledger.validateEvents === "function") {
+            Ledger.validateEvents(merged.events || []);
+          }
+        }
+        const applyBaseFingerprint = fingerprint(freshLocalRaw);
+        if (fingerprint(merged) !== applyBaseFingerprint) applyDoc(merged);
 
         const own = remoteDocs.find((item) => item.fileId === snapshot.ownFileId || item.id === snapshot.ownFileId);
         if (!own || own.sourceFingerprint !== fingerprint(merged)) {
