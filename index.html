@@ -110,12 +110,20 @@
 
     <section id="view-insights" class="view">
       <div class="view-head">
-        <h2>Insights</h2>
-        <div class="range-pills" id="insight-range">
-          <button type="button" data-days="phase">Phase</button>
-          <button type="button" data-days="14" class="active">14 d</button>
-          <button type="button" data-days="30">30 d</button>
-          <button type="button" data-days="90">90 d</button>
+        <div class="insight-head-top">
+          <h2>Insights</h2>
+          <div class="range-pills" id="insight-range">
+            <button type="button" data-days="phase">Phase</button>
+            <button type="button" data-days="14" class="active">14 d</button>
+            <button type="button" data-days="30">30 d</button>
+            <button type="button" data-days="90">90 d</button>
+          </div>
+        </div>
+        <div class="insight-cats seg" id="insight-cats" role="tablist" aria-label="Insights categories">
+          <button type="button" role="tab" id="insight-cat-overview" data-insight-cat="overview" aria-controls="insight-panel-overview" aria-selected="true" class="on">Overview</button>
+          <button type="button" role="tab" id="insight-cat-intake" data-insight-cat="intake" aria-controls="insight-panel-intake" aria-selected="false">Intake</button>
+          <button type="button" role="tab" id="insight-cat-body" data-insight-cat="body" aria-controls="insight-panel-body" aria-selected="false">Body</button>
+          <button type="button" role="tab" id="insight-cat-patterns" data-insight-cat="patterns" aria-controls="insight-panel-patterns" aria-selected="false">Patterns</button>
         </div>
       </div>
       <p id="phase-context" class="muted small phase-context"></p>
@@ -124,74 +132,100 @@
         <summary id="phase-history-summary">Phase history</summary>
         <div id="phase-history-list"></div>
       </details>
-      <!-- Headline: the answer before the charts. -->
-      <div id="insight-headline" class="headline-card"></div>
-      <div id="insight-observations" class="obs-list"></div>
 
-      <section class="insight-section" id="section-intake">
-        <h3 class="section-head" id="intake-head" aria-live="polite">Calories</h3>
-        <div class="chart-toolbar">
-          <span class="seg" id="rollup-seg" role="group" aria-label="Chart grouping">
-            <button type="button" data-rollup="day" class="on">Daily</button>
-            <button type="button" data-rollup="week">Weekly</button>
-          </span>
-          <span class="chart-legend" id="trend-legend"></span>
-        </div>
-        <div class="canvas-wrap">
-          <canvas id="trend-canvas" role="img" aria-label="Intake chart. Exact values and keyboard-accessible days are available below."></canvas>
-          <div id="trend-tip" class="chart-tip" hidden></div>
-        </div>
-        <div id="trend-data" class="chart-data-region"></div>
-        <p id="trend-summary" class="muted"></p>
-        <div id="intake-stats" class="stat-grid"></div>
-        <div id="day-detail" aria-live="polite"></div>
-        <div id="insight-heatmap" class="card-block heatmap-card"></div>
-        <div id="dow-pattern" class="card-block"></div>
-        <div class="card-block" id="top-foods-card">
-          <div class="card-head-row">
-            <b>Top foods</b>
-            <span class="muted small" id="topfoods-scope"></span>
+      <div id="insight-panel-overview" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-overview" data-insight-panel="overview">
+        <div id="insight-headline" class="headline-card"></div>
+        <div id="insight-observations" class="obs-list"></div>
+      </div>
+
+      <div id="insight-panel-intake" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-intake" data-insight-panel="intake" hidden>
+        <section class="insight-section" id="section-intake">
+          <h3 class="section-head" id="intake-head" aria-live="polite">Calories</h3>
+          <div class="insight-carousel" id="intake-carousel">
+            <div class="insight-carousel-track" id="intake-carousel-track">
+              <div class="insight-carousel-page" data-intake-page="0" id="intake-page-trend">
+                <div class="chart-toolbar">
+                  <span class="seg" id="rollup-seg" role="group" aria-label="Chart grouping">
+                    <button type="button" data-rollup="day" class="on">Daily</button>
+                    <button type="button" data-rollup="week">Weekly</button>
+                  </span>
+                  <span class="chart-legend" id="trend-legend"></span>
+                </div>
+                <div class="canvas-wrap">
+                  <canvas id="trend-canvas" role="img" aria-label="Intake chart. Exact values and keyboard-accessible days are available below."></canvas>
+                  <div id="trend-tip" class="chart-tip" hidden></div>
+                </div>
+                <div id="trend-data" class="chart-data-region"></div>
+                <p id="trend-summary" class="muted"></p>
+                <div id="intake-stats" class="stat-grid"></div>
+                <div id="day-detail" aria-live="polite"></div>
+              </div>
+              <div class="insight-carousel-page" data-intake-page="1" id="intake-page-heatmap">
+                <div id="insight-heatmap" class="card-block heatmap-card"></div>
+              </div>
+              <div class="insight-carousel-page" data-intake-page="2" id="intake-page-dow">
+                <div id="dow-pattern" class="card-block"></div>
+              </div>
+              <div class="insight-carousel-page" data-intake-page="3" id="intake-page-topfoods">
+                <div class="card-block" id="top-foods-card">
+                  <div class="card-head-row">
+                    <b>Top foods</b>
+                    <span class="muted small" id="topfoods-scope"></span>
+                  </div>
+                  <div id="top-foods"></div>
+                </div>
+              </div>
+            </div>
+            <div class="insight-carousel-dots" id="intake-carousel-dots" role="tablist" aria-label="Intake pages">
+              <button type="button" role="tab" class="carousel-dot on" data-intake-page="0" aria-label="Page 1 of 4: Trend" aria-selected="true"></button>
+              <button type="button" role="tab" class="carousel-dot" data-intake-page="1" aria-label="Page 2 of 4: Log calendar" aria-selected="false"></button>
+              <button type="button" role="tab" class="carousel-dot" data-intake-page="2" aria-label="Page 3 of 4: By weekday" aria-selected="false"></button>
+              <button type="button" role="tab" class="carousel-dot" data-intake-page="3" aria-label="Page 4 of 4: Top foods" aria-selected="false"></button>
+            </div>
           </div>
-          <div id="top-foods"></div>
-        </div>
-      </section>
+        </section>
+      </div>
 
-      <section class="insight-section" id="section-weight">
-        <h3 class="section-head">Weight</h3>
-        <div class="chart-toolbar">
-          <span class="chart-legend" id="weight-legend"></span>
-        </div>
-        <div class="canvas-wrap">
-          <canvas id="weight-canvas" role="img" aria-label="Weight chart. Exact values and keyboard-accessible weigh-in days are available below."></canvas>
-          <div id="weight-tip" class="chart-tip" hidden></div>
-        </div>
-        <div id="weight-data" class="chart-data-region"></div>
-        <p id="weight-summary" class="muted"></p>
-        <div id="weight-stats" class="stat-grid"></div>
-      </section>
+      <div id="insight-panel-body" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-body" data-insight-panel="body" hidden>
+        <section class="insight-section" id="section-weight">
+          <h3 class="section-head">Weight</h3>
+          <div class="chart-toolbar">
+            <span class="chart-legend" id="weight-legend"></span>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="weight-canvas" role="img" aria-label="Weight chart. Exact values and keyboard-accessible weigh-in days are available below."></canvas>
+            <div id="weight-tip" class="chart-tip" hidden></div>
+          </div>
+          <div id="weight-data" class="chart-data-region"></div>
+          <p id="weight-summary" class="muted"></p>
+          <div id="weight-stats" class="stat-grid"></div>
+        </section>
 
-      <section class="insight-section" id="section-energy">
-        <h3 class="section-head">Energy balance</h3>
-        <div id="tdee-card" class="card-block tdee-card"></div>
-        <div id="insight-callouts"></div>
-      </section>
+        <section class="insight-section" id="section-energy">
+          <h3 class="section-head">Energy balance</h3>
+          <div id="tdee-card" class="card-block tdee-card"></div>
+          <div id="insight-callouts"></div>
+        </section>
+      </div>
 
-      <section class="insight-section" id="section-adherence">
-        <h3 class="section-head">Adherence</h3>
-        <div id="insight-scorecard" class="card-block"></div>
-      </section>
+      <div id="insight-panel-patterns" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-patterns" data-insight-panel="patterns" hidden>
+        <section class="insight-section" id="section-adherence">
+          <h3 class="section-head">Adherence</h3>
+          <div id="insight-scorecard" class="card-block"></div>
+        </section>
 
-      <section class="insight-section" id="section-composition">
-        <h3 class="section-head">Composition</h3>
-        <div id="macro-split" class="card-block"></div>
-        <div id="meal-split" class="card-block"></div>
-        <div id="nak-card" class="card-block nak-card" hidden></div>
-      </section>
+        <section class="insight-section" id="section-composition">
+          <h3 class="section-head">Composition</h3>
+          <div id="macro-split" class="card-block"></div>
+          <div id="meal-split" class="card-block"></div>
+          <div id="nak-card" class="card-block nak-card" hidden></div>
+        </section>
 
-      <section class="insight-section" id="section-compare" hidden>
-        <h3 class="section-head">Phase comparison</h3>
-        <div id="phase-compare" class="card-block" hidden></div>
-      </section>
+        <section class="insight-section" id="section-compare" hidden>
+          <h3 class="section-head">Phase comparison</h3>
+          <div id="phase-compare" class="card-block" hidden></div>
+        </section>
+      </div>
     </section>
 
     <section id="view-settings" class="view">

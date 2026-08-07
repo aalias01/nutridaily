@@ -2731,25 +2731,155 @@ const UI = (() => {
    * First-run maturity: hide panels that only refuse until enough days exist.
    * Does not change any panel's own refusal copy — only visibility.
    * `#section-compare` stays owned by renderPhaseCompare on `full`.
+   * Dock visibility is owned by applyInsightCategory (Intake only).
    */
+  let _insightMaturity = "empty";
+  let _insightCategory = "overview";
+  let _insightIntakePage = 0;
+
+  const INSIGHT_CATS = ["overview", "intake", "body", "patterns"];
+  const JUMP_TO_CAT = Object.freeze({
+    "#insight-heatmap": { cat: "intake", page: 1 },
+    "#dow-pattern": { cat: "intake", page: 2 },
+    "#top-foods": { cat: "intake", page: 3 },
+    "#top-foods-card": { cat: "intake", page: 3 },
+    "#intake-stats": { cat: "intake", page: 0 },
+    "#day-detail": { cat: "intake", page: 0 },
+    "#section-intake": { cat: "intake", page: 0 },
+    "#insight-scorecard": { cat: "patterns" },
+    "#macro-split": { cat: "patterns" },
+    "#meal-split": { cat: "patterns" },
+    "#nak-card": { cat: "patterns" },
+    "#phase-compare": { cat: "patterns" },
+    "#section-adherence": { cat: "patterns" },
+    "#section-composition": { cat: "patterns" },
+    "#section-compare": { cat: "patterns" },
+    "#section-weight": { cat: "body" },
+    "#section-energy": { cat: "body" },
+    "#tdee-card": { cat: "body" },
+    "#insight-callouts": { cat: "body" },
+    "#insight-headline": { cat: "overview" },
+    "#insight-observations": { cat: "overview" },
+  });
+
+  function syncInsightDock() {
+    const insightsView = typeof document !== "undefined"
+      ? document.getElementById("view-insights") : null;
+    const onInsights = !!(insightsView && insightsView.classList.contains("active"));
+    const show = onInsights && _insightMaturity !== "empty" && _insightCategory === "intake";
+    const dock = $("#insight-dock");
+    if (dock) {
+      dock.hidden = !show;
+      dock.classList.remove("is-inactive");
+    }
+    if (typeof document !== "undefined" && document.body) {
+      document.body.classList.toggle("has-insight-dock", show);
+    }
+  }
+
+  /** Resolve which category (and Intake page) owns a jump target selector. */
+  function insightJumpTarget(sel) {
+    if (!sel) return null;
+    if (JUMP_TO_CAT[sel]) return { ...JUMP_TO_CAT[sel] };
+    const target = $(sel);
+    if (!target) return null;
+    const pageEl = target.closest("[data-intake-page]");
+    if (target.closest("#insight-panel-intake") || target.id === "section-intake") {
+      return {
+        cat: "intake",
+        page: pageEl ? Number(pageEl.dataset.intakePage) || 0 : 0,
+      };
+    }
+    if (target.closest("#insight-panel-body")) return { cat: "body" };
+    if (target.closest("#insight-panel-patterns")) return { cat: "patterns" };
+    if (target.closest("#insight-panel-overview")) return { cat: "overview" };
+    return null;
+  }
+
+  function syncIntakeCarouselDots(page) {
+    const dots = $$("#intake-carousel-dots .carousel-dot");
+    dots.forEach((d) => {
+      const on = Number(d.dataset.intakePage) === page;
+      d.classList.toggle("on", on);
+      d.setAttribute("aria-selected", String(on));
+    });
+  }
+
+  /**
+   * Scroll the Intake carousel to a page index (0–3) and sync pagination dots.
+   * Pass `{ dotsOnly: true }` when reflecting an existing scroll position.
+   */
+  function setIntakeCarouselPage(page, opts) {
+    const next = Math.max(0, Math.min(3, Number(page) || 0));
+    _insightIntakePage = next;
+    syncIntakeCarouselDots(next);
+    if (opts && opts.dotsOnly) return next;
+    const track = $("#intake-carousel-track");
+    const pages = track
+      ? [...track.querySelectorAll(".insight-carousel-page")]
+      : [];
+    const target = pages[next];
+    if (track && target) {
+      const reduce = typeof window !== "undefined" && window.matchMedia
+        && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const smooth = !!(opts && opts.smooth) && !reduce;
+      if (typeof track.scrollTo === "function") {
+        track.scrollTo({ left: target.offsetLeft, behavior: smooth ? "smooth" : "auto" });
+      } else {
+        track.scrollLeft = target.offsetLeft;
+      }
+    }
+    return next;
+  }
+
+  /**
+   * Category gate for Insights: Overview / Intake / Body / Patterns.
+   * Empty maturity forces Overview; dock only on Intake.
+   * @returns {string} applied category id
+   */
+  function applyInsightCategory(cat) {
+    let next = INSIGHT_CATS.includes(cat) ? cat : "overview";
+    if (_insightMaturity === "empty" && next !== "overview") next = "overview";
+    _insightCategory = next;
+
+    $$("[data-insight-panel]").forEach((panel) => {
+      const on = panel.dataset.insightPanel === next;
+      panel.hidden = !on;
+    });
+
+    $$("#insight-cats [data-insight-cat]").forEach((btn) => {
+      const on = btn.dataset.insightCat === next;
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-selected", String(on));
+      if (_insightMaturity === "empty") {
+        btn.disabled = btn.dataset.insightCat !== "overview";
+      } else {
+        btn.disabled = false;
+      }
+    });
+
+    syncInsightDock();
+    if (next === "intake") {
+      // Ensure scroll position matches the remembered page after the panel shows.
+      setIntakeCarouselPage(_insightIntakePage, { smooth: false });
+    }
+    return next;
+  }
+
   function applyInsightMaturity(ctx) {
     const sectionIds = [
       "section-intake", "section-weight", "section-energy",
       "section-adherence", "section-composition", "section-compare",
     ];
     const dow = $("#dow-pattern");
+    _insightMaturity = ctx.maturity || "empty";
     if (ctx.maturity === "empty") {
       for (const id of sectionIds) {
         const el = $("#" + id);
         if (el) el.hidden = true;
       }
       if (dow) dow.hidden = true;
-      // Day-one: no floating dock over an empty view (P5-N4 / P6-N9).
-      const dock = $("#insight-dock");
-      if (dock) dock.hidden = true;
-      if (typeof document !== "undefined" && document.body) {
-        document.body.classList.remove("has-insight-dock");
-      }
+      applyInsightCategory("overview");
       return;
     }
     for (const id of sectionIds) {
@@ -2758,14 +2888,6 @@ const UI = (() => {
       if (el) el.hidden = false;
     }
     if (dow) dow.hidden = false;
-    // Restore dock after empty→thin/full in the same Insights visit.
-    const insightsView = typeof document !== "undefined"
-      ? document.getElementById("view-insights") : null;
-    if (insightsView && insightsView.classList.contains("active")) {
-      const dock = $("#insight-dock");
-      if (dock) dock.hidden = false;
-      document.body.classList.add("has-insight-dock");
-    }
     if (ctx.maturity === "thin") {
       for (const id of ["section-energy", "section-composition", "section-compare"]) {
         const el = $("#" + id);
@@ -2773,6 +2895,7 @@ const UI = (() => {
       }
       if (dow) dow.hidden = true;
     }
+    applyInsightCategory(_insightCategory);
   }
 
   /**
@@ -2836,6 +2959,10 @@ const UI = (() => {
   /** Single render pass for the whole Insights tab. */
   function renderInsights(opts) {
     if (typeof Analytics === "undefined") return;
+    if (opts && opts.category) _insightCategory = opts.category;
+    if (opts && opts.intakePage != null) {
+      _insightIntakePage = Math.max(0, Math.min(3, Number(opts.intakePage) || 0));
+    }
     const ctx = buildInsightContext(opts);
 
     const intakeHead = $("#intake-head");
@@ -3867,6 +3994,7 @@ const UI = (() => {
     fillOnceSheet, readOnceDraft, readOnceDraftLenient, formatOnceEstimateSeed, fillOnceSheetFromPending,
     setOnceErrors, selectedOnceUnit, selectedOnceCat, selectedOnceConfidence, syncOnceMacroNudge,
     renderInsights, renderTrends, renderWeightTrend,
+    applyInsightCategory, setIntakeCarouselPage, insightJumpTarget,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX,
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,

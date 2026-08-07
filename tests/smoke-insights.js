@@ -205,6 +205,11 @@ async function run(label, days) {
     ok(/\.insight-section\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText) &&
         /#dow-pattern\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
       "insight-section and #dow-pattern [hidden] use display:none !important");
+    ok(/\.insight-panel\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
+      "insight-panel [hidden] uses display:none !important");
+    ok(/\.insight-carousel-track[^}]*scroll-snap-type:\s*x\s+mandatory/s.test(cssText) &&
+        /\.carousel-dot\.on\s*\{/s.test(cssText),
+      "Intake carousel uses mandatory scroll-snap and shaded pagination dots");
     ok(/#view-insights\s+\.view-head[^}]*position:\s*sticky/s.test(cssText) &&
         /#view-insights\s+\.view-head[^}]*z-index:\s*5/s.test(cssText),
       "Insights view-head is sticky above chart table headers");
@@ -333,11 +338,29 @@ async function run(label, days) {
 
   ok($("#view-insights").classList.contains("active"), "insights view is active");
 
-  // §3 dock + section-order guards (Phases 1–2 contract).
+  // §3 dock + section-order guards (Phases 1–2 contract) + category IA.
+  const cats = $("#insight-cats");
+  ok(!!cats, "insight category tablist exists");
+  ok(cats.getAttribute("role") === "tablist", "insight-cats is a tablist");
+  const catBtns = [...cats.querySelectorAll("[data-insight-cat]")];
+  ok(JSON.stringify(catBtns.map((b) => b.dataset.insightCat)) ===
+      JSON.stringify(["overview", "intake", "body", "patterns"]),
+    "Insights categories are Overview · Intake · Body · Patterns");
+  ok(!$("#insight-panel-overview").hidden &&
+      $("#insight-panel-intake").hidden &&
+      $("#insight-panel-body").hidden &&
+      $("#insight-panel-patterns").hidden,
+    "default category is Overview (only overview panel visible)");
   const dock = $("#insight-dock");
   ok(!!dock, "insight-dock exists");
-  ok(!dock.hidden, "insight-dock visible on Insights");
-  ok(window.document.body.classList.contains("has-insight-dock"), "body.has-insight-dock set on Insights");
+  ok(dock.hidden && !window.document.body.classList.contains("has-insight-dock"),
+    "nutrient dock hidden on Overview (Intake-only lane)");
+  cats.querySelector('[data-insight-cat="intake"]').click();
+  await new Promise((r) => setTimeout(r, 40));
+  ok(!$("#insight-panel-intake").hidden && $("#insight-panel-overview").hidden,
+    "Intake category shows the intake panel");
+  ok(!dock.hidden, "insight-dock visible on Intake");
+  ok(window.document.body.classList.contains("has-insight-dock"), "body.has-insight-dock set on Intake");
   ok($("#insight-nutrient") && dock.contains($("#insight-nutrient")),
     "insight-nutrient is a descendant of insight-dock");
   ok(window.document.querySelectorAll(".nutrient-pills").length === 1 &&
@@ -353,6 +376,25 @@ async function run(label, days) {
     "section-compare.hidden mirrors phase-compare.hidden");
   ok($("#day-detail") && $("#section-intake").contains($("#day-detail")),
     "day-detail lives inside section-intake");
+  ok($("#intake-page-trend") && $("#intake-page-trend").contains($("#day-detail")) &&
+      $("#intake-page-trend").contains($("#intake-stats")),
+    "trend carousel page owns chart stats + day-detail");
+  ok($("#intake-page-heatmap") && $("#intake-page-heatmap").contains($("#insight-heatmap")) &&
+      $("#intake-page-dow") && $("#intake-page-dow").contains($("#dow-pattern")) &&
+      $("#intake-page-topfoods") && $("#intake-page-topfoods").contains($("#top-foods-card")),
+    "heatmap / DOW / top foods each own a carousel page");
+  const carDots = [...window.document.querySelectorAll("#intake-carousel-dots .carousel-dot")];
+  ok(carDots.length === 4 &&
+      carDots.every((d, i) => Number(d.dataset.intakePage) === i),
+    "Intake carousel has 4 pagination dots");
+  ok(carDots[0].classList.contains("on") && carDots[0].getAttribute("aria-selected") === "true",
+    "carousel starts on page 0 (Trend)");
+  carDots[2].click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(carDots[2].classList.contains("on") && !carDots[0].classList.contains("on"),
+    "dot click advances active page shading");
+  carDots[0].click();
+  await new Promise((r) => setTimeout(r, 20));
   ok(!$("#section-intake").hidden && !$("#section-weight").hidden &&
       !$("#section-energy").hidden && !$("#section-adherence").hidden &&
       !$("#section-composition").hidden && !$("#dow-pattern").hidden,
@@ -395,14 +437,17 @@ async function run(label, days) {
       dockPills.filter((b) => b.tabIndex === 0).length === 1 &&
       dockPills.every((b) => b === activeDock || b.tabIndex === -1),
     "dock uses a single roving tabindex on the active pill");
-  const liveIO = window.__ndIO.filter((o) => !o.dead && o.el && o.el.id === "section-intake");
-  ok(liveIO.length >= 1, "IntersectionObserver watches #section-intake for dock dimming");
-  liveIO[liveIO.length - 1].cb([{ target: liveIO[liveIO.length - 1].el, isIntersecting: false }]);
-  ok($("#insight-dock").classList.contains("is-inactive"),
-    "dock gains is-inactive when intake leaves the viewport");
-  liveIO[liveIO.length - 1].cb([{ target: liveIO[liveIO.length - 1].el, isIntersecting: true }]);
-  ok(!$("#insight-dock").classList.contains("is-inactive"),
-    "dock clears is-inactive when intake returns");
+  // Category gate owns dock (retired scroll-dim observer).
+  ok(!window.__ndIO.some((o) => !o.dead && o.el && o.el.id === "section-intake"),
+    "no IntersectionObserver on #section-intake for dock dimming");
+  cats.querySelector('[data-insight-cat="overview"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#insight-dock").hidden && !window.document.body.classList.contains("has-insight-dock"),
+    "leaving Intake for Overview hides the nutrient dock");
+  cats.querySelector('[data-insight-cat="intake"]').click();
+  await new Promise((r) => setTimeout(r, 40));
+  ok(!$("#insight-dock").hidden && window.document.body.classList.contains("has-insight-dock"),
+    "returning to Intake restores the nutrient dock");
   activeDock.focus();
   activeDock.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
   const afterArrow = window.document.activeElement;
@@ -1455,9 +1500,17 @@ async function runSparse() {
   ok($("#section-energy").hidden && $("#section-composition").hidden && $("#section-compare").hidden,
     "thin maturity hides energy, composition, and compare");
   ok($("#dow-pattern").hidden, "thin maturity hides day-of-week pattern");
+  // Dock is Intake-only; open that category before asserting the lane.
+  const thinCats = $("#insight-cats");
+  thinCats.querySelector('[data-insight-cat="intake"]').click();
+  await new Promise((r) => setTimeout(r, 40));
   ok(!$("#insight-dock").hidden && window.document.body.classList.contains("has-insight-dock"),
-    "thin maturity keeps the nutrient dock visible");
-
+    "thin maturity keeps the nutrient dock visible on Intake");
+  thinCats.querySelector('[data-insight-cat="overview"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#insight-dock").hidden, "thin maturity still hides dock on Overview");
+  thinCats.querySelector('[data-insight-cat="intake"]').click();
+  await new Promise((r) => setTimeout(r, 20));
   // P5-N1/N2: recovery path must unhide after crossing the <3 boundary mid-session.
   // Logging a 3rd day and re-entering Insights is the only way the full state is
   // reached through applyInsightMaturity's unhide loop (HTML defaults stay full).
@@ -1549,6 +1602,11 @@ async function runEmpty() {
   ok($("#insight-dock").hidden, "empty maturity hides the nutrient dock");
   ok(!window.document.body.classList.contains("has-insight-dock"),
     "empty maturity clears has-insight-dock lane reservation");
+  const emptyCats = [...window.document.querySelectorAll("#insight-cats [data-insight-cat]")];
+  ok(emptyCats.length === 4 &&
+      emptyCats.every((b) => b.dataset.insightCat === "overview" ? !b.disabled : b.disabled),
+    "empty maturity disables Intake / Body / Patterns category tabs");
+  ok(!$("#insight-panel-overview").hidden, "empty maturity keeps Overview panel");
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
 
@@ -2445,11 +2503,16 @@ async function runImportSecurity() {
     return { exactRollback, pendingPreserved, surfaced };
   };
 
-  // A new GAP log spans the event ledger, food promotion/use metadata, plan,
-  // and consumed draft. Fail each forward write and require exact rollback.
+  // A new GAP log via the qty sheet spans the event ledger, food promotion/use
+  // metadata, plan, and consumed draft. Open qty with Edit (one-tap Log commits
+  // immediately and is covered separately below), then fail each forward write.
   installPendingGap("gap-new-atomic");
   $("#btn-gap-plan").click();
-  $("#gap-plan-list [data-action='log-gap-item']").click();
+  // Edit lives in the expanded row actions (one-tap + is always on the row).
+  $("#gap-plan-list [data-action='toggle-gap-item']").click();
+  $("#gap-plan-list [data-action='edit-gap-item']").click();
+  ok(!$("#sheet-qty").hidden && App.state.gapPendingItemId === "gap-new-atomic",
+    "Edit on a pending GAP item opens qty with gapPendingItemId armed");
   let gapSyncCalls = 0;
   Sync.schedulePush = () => { gapSyncCalls += 1; };
   const failedGapAdd = exerciseGapWriteFailures();
@@ -2459,6 +2522,44 @@ async function runImportSecurity() {
     "failed GAP add reports no success and schedules no sync");
   $("#qty-cancel").click();
   await new Promise((r) => setTimeout(r, 220));
+
+  // One-tap Log on a pending item uses the same commitGapEntryChange transaction
+  // without opening qty — fail each durable write and require exact rollback.
+  installPendingGap("gap-log-now-atomic");
+  $("#btn-gap-plan").click();
+  {
+    let exactRollback = true;
+    let pendingPreserved = true;
+    let surfaced = true;
+    for (let failAt = 1; failAt <= 3; failAt++) {
+      const beforeStorage = JSON.stringify(storageSnapshot());
+      const beforeMemory = memorySnapshot();
+      let write = 0;
+      let injected = false;
+      storageProto.setItem = function (key, value) {
+        write += 1;
+        if (!injected && write === failAt) {
+          injected = true;
+          throw new window.DOMException("quota", "QuotaExceededError");
+        }
+        return originalSetItem.call(this, key, value);
+      };
+      try { $("#gap-plan-list [data-action='log-gap-item']").click(); }
+      finally { storageProto.setItem = originalSetItem; }
+      const plan = App.state.settings.dayPlans[today];
+      const pending = plan && plan.items && plan.items[0];
+      exactRollback = exactRollback && injected &&
+        JSON.stringify(storageSnapshot()) === beforeStorage && memorySnapshot() === beforeMemory;
+      pendingPreserved = pendingPreserved && pending && pending.status === "pending" &&
+        App.state.settings.gapDrafts[today];
+      surfaced = surfaced && /plan item.*nothing changed|GAP item.*nothing changed/i.test($("#toast").textContent) &&
+        !/^Logged$/.test($("#toast").textContent.trim());
+    }
+    ok(exactRollback && pendingPreserved,
+      "failed one-tap GAP log rolls ledger, foods, plan, and draft back at every write");
+    ok(surfaced && gapSyncCalls === 0,
+      "failed one-tap GAP log reports no success and schedules no sync");
+  }
 
   // The same transaction is used if an existing diary line is amended while
   // satisfying a pending GAP item.

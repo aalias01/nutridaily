@@ -49,6 +49,8 @@ const App = (() => {
     insightPhaseId: null, // null = active phase when daysBack is "phase"
     insightRollup: "day", // day | week — weekly smooths out single-day noise
     insightTopFoodMetric: "kcal", // kcal | protein | sodium | fiber
+    insightCategory: "overview", // overview | intake | body | patterns
+    insightIntakePage: 0, // 0 trend · 1 heatmap · 2 DOW · 3 top foods
     dayContribMetric: null, // when set, Today shows contribution breakdown for viewDay
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
     yesterdayKey: null,
@@ -259,6 +261,7 @@ const App = (() => {
       Analytics.dayPlanProvenance({ dayPlan: ov,
         firstAddAt: Ledger.firstAddAt(state.viewDay),
         intent: isFast ? "fast" : "reduced",
+        day: state.viewDay,
       }) === "declaredLate");
     btn.classList.toggle("has-override", hasPlan || incompleteMark);
     btn.classList.toggle("is-locked", locked);
@@ -267,7 +270,8 @@ const App = (() => {
     // means after local midnight; derived declaredLate means after first add.
     // Same-day post-log fasts leave kcal unscored — do not claim they are
     // "scored against the adjusted target" (R2-a).
-    const afterDay = !!(ov && ov.declaredAfterDay === true);
+    const afterDay = !!(ov && ov.declaredAfterDay === true
+      && Phases.isDeclaredAfterDay(state.viewDay, ov.plannedAt));
     const lateTitle = afterDay
       ? "Declared after the day ended — reported, not punished."
       : (isFast
@@ -332,6 +336,10 @@ const App = (() => {
       state.settings.weightUnit = "lb";
     }
     if (!state.settings.dayGoals || typeof state.settings.dayGoals !== "object") state.settings.dayGoals = {};
+    // Heal false · late stamps (advance declare marked after-day incorrectly).
+    const beforeHeal = JSON.stringify(state.settings.dayGoals);
+    state.settings.dayGoals = Sync.normalizeDayGoals(state.settings.dayGoals);
+    const healedLateFlags = JSON.stringify(state.settings.dayGoals) !== beforeHeal;
     if (!state.settings.dayPlans || typeof state.settings.dayPlans !== "object") state.settings.dayPlans = {};
     if (!state.settings.gapDrafts || typeof state.settings.gapDrafts !== "object") state.settings.gapDrafts = {};
     if (!Array.isArray(state.settings.dayPlanPresets)) state.settings.dayPlanPresets = [];
@@ -359,7 +367,7 @@ const App = (() => {
       Phases.earliestDayFromEvents(Ledger.allEvents()),
       state.viewDay
     );
-    if (JSON.stringify(state.settings) !== beforeTargetMigration) {
+    if (healedLateFlags || JSON.stringify(state.settings) !== beforeTargetMigration) {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
     }
     if (!localStorage.getItem(FIRST_SEEN_KEY)) localStorage.setItem(FIRST_SEEN_KEY, String(Date.now()));
@@ -749,8 +757,14 @@ const App = (() => {
       // One-release alias: prefer nutrient; accept insightTopFoodMetric if a
       // caller still passes it through buildInsightContext.
       topFoodMetric: state.insightNutrient || state.insightTopFoodMetric,
+      category: state.insightCategory || "overview",
+      intakePage: state.insightIntakePage || 0,
     };
     UI.renderInsights(opts);
+    const panel = document.querySelector("#view-insights [data-insight-panel]:not([hidden])");
+    if (panel && panel.dataset.insightPanel) {
+      state.insightCategory = panel.dataset.insightPanel;
+    }
   }
 
   const LB_PER_KG = 1 / 0.45359237;
@@ -2478,9 +2492,14 @@ const App = (() => {
     const dayControls = UI.$("#day-controls");
     if (dayControls) dayControls.hidden = !onToday;
     const dock = UI.$("#insight-dock");
-    if (dock) dock.hidden = !onInsights;
-    document.body.classList.toggle("has-insight-dock", onInsights);
-    wireDockIntakeObserver(onInsights);
+    if (!onInsights) {
+      if (dock) {
+        dock.hidden = true;
+        dock.classList.remove("is-inactive");
+      }
+      document.body.classList.remove("has-insight-dock");
+    }
+    // Dock lane on Insights is owned by UI.applyInsightCategory (Intake only).
     if (name === "foods") refreshFoods();
     if (name === "insights") refreshInsights();
     if (name === "today") refreshDay();
@@ -2493,23 +2512,30 @@ const App = (() => {
     }
   }
 
-  /** Dim the dock while #section-intake is offscreen (P6-T3). Opacity only. */
-  let _dockIntakeObserver = null;
-  function wireDockIntakeObserver(on) {
-    const dock = UI.$("#insight-dock");
-    const intake = UI.$("#section-intake");
-    if (_dockIntakeObserver) {
-      _dockIntakeObserver.disconnect();
-      _dockIntakeObserver = null;
+  /**
+   * Switch Insights category. Persists in session state; redraws charts when
+   * Intake/Body become visible (canvas may have been sized while hidden).
+   */
+  function setInsightCategory(cat, opts) {
+    const prev = state.insightCategory || "overview";
+    const applied = UI.applyInsightCategory(cat);
+    state.insightCategory = applied;
+    if (opts && opts.intakePage != null) {
+      state.insightIntakePage = UI.setIntakeCarouselPage(opts.intakePage, {
+        smooth: !!(opts && opts.smooth),
+      });
     }
-    if (dock) dock.classList.remove("is-inactive");
-    if (!on || !dock || !intake || typeof IntersectionObserver !== "function") return;
-    _dockIntakeObserver = new IntersectionObserver((entries) => {
-      const entry = entries[0];
-      if (!entry || !dock) return;
-      dock.classList.toggle("is-inactive", !entry.isIntersecting);
-    }, { threshold: 0 });
-    _dockIntakeObserver.observe(intake);
+    const needsRedraw = (applied === "intake" || applied === "body") &&
+      (prev !== applied || (opts && opts.forceRefresh));
+    if (needsRedraw && document.querySelector("#view-insights.active")) {
+      refreshInsights();
+    }
+    return applied;
+  }
+
+  /** Dim the dock while #section-intake is offscreen — retired; category tabs own dock. */
+  function wireDockIntakeObserver() {
+    /* no-op: dock shows only on Intake category */
   }
 
   function isSettingsView() {
@@ -6451,6 +6477,36 @@ const App = (() => {
       });
       refreshInsights();
     });
+    const insightCats = UI.$("#insight-cats");
+    if (insightCats) {
+      insightCats.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-insight-cat]");
+        if (!btn || btn.disabled) return;
+        setInsightCategory(btn.dataset.insightCat);
+      });
+    }
+    const intakeDots = UI.$("#intake-carousel-dots");
+    if (intakeDots) {
+      intakeDots.addEventListener("click", (e) => {
+        const dot = e.target.closest("[data-intake-page]");
+        if (!dot) return;
+        const page = Number(dot.dataset.intakePage);
+        state.insightIntakePage = UI.setIntakeCarouselPage(page, { smooth: true });
+      });
+    }
+    const intakeTrack = UI.$("#intake-carousel-track");
+    if (intakeTrack) {
+      let scrollT = null;
+      intakeTrack.addEventListener("scroll", () => {
+        clearTimeout(scrollT);
+        scrollT = setTimeout(() => {
+          const w = intakeTrack.clientWidth || 1;
+          const page = Math.max(0, Math.min(3, Math.round(intakeTrack.scrollLeft / w)));
+          state.insightIntakePage = page;
+          UI.setIntakeCarouselPage(page, { dotsOnly: true });
+        }, 50);
+      }, { passive: true });
+    }
     const histList = UI.$("#phase-history-list");
     if (histList) {
       histList.addEventListener("click", (e) => {
@@ -6626,19 +6682,30 @@ const App = (() => {
           });
         }
         const sel = jump.dataset.jump;
+        const route = UI.insightJumpTarget(sel);
+        if (route) {
+          if (route.page != null) state.insightIntakePage = route.page;
+          setInsightCategory(route.cat, {
+            intakePage: route.page,
+            forceRefresh: true,
+          });
+        }
         const target = sel && UI.$(sel);
         if (target) {
           const reduceMotion = !!(window.matchMedia &&
             window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-          target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
-          const heading = target.querySelector(".card-head-row b, h3, b")
-            || (target.closest(".insight-section") &&
-                target.closest(".insight-section").querySelector(".section-head"))
-            || target;
-          if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
-          try { heading.focus({ preventScroll: true }); } catch (err) {
-            try { heading.focus(); } catch (_e) {}
-          }
+          // After category/carousel paint, scroll to the owning panel.
+          requestAnimationFrame(() => {
+            target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
+            const heading = target.querySelector(".card-head-row b, h3, b")
+              || (target.closest(".insight-section") &&
+                  target.closest(".insight-section").querySelector(".section-head"))
+              || target;
+            if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+            try { heading.focus({ preventScroll: true }); } catch (err) {
+              try { heading.focus(); } catch (_e) {}
+            }
+          });
         }
         return;
       }

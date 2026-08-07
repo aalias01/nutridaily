@@ -205,11 +205,22 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .view.active { display: flex; }
 .view-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
 .view-head h2, h2, h3 { font-size: 16px; margin: 0; }
-/* Sticky range chrome on Insights; keep above in-table sticky theads (P6-T2). */
+/* Sticky range + category chrome on Insights; keep above in-table sticky theads (P6-T2). */
 #view-insights .view-head {
   position: sticky; top: 0; z-index: 5;
-  background: var(--bg); padding-block: 6px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  background: var(--bg); padding-block: 6px; margin-bottom: 8px;
 }
+#view-insights .insight-head-top {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+}
+#view-insights .insight-cats {
+  width: 100%; display: flex; justify-content: stretch;
+}
+#view-insights .insight-cats button {
+  flex: 1 1 0; min-width: 0; padding: 7px 6px; font-size: 12px;
+}
+.insight-panel[hidden] { display: none !important; }
 #foods-search, #pick-search {
   width: 100%; padding: 12px 14px; margin-bottom: 10px;
   border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 16px;
@@ -1267,12 +1278,45 @@ body.has-info-banner.has-insight-dock #toast {
    ============================================================ */
 
 .insight-section { margin: 18px 0 0; }
+.insight-panel > .insight-section:first-child { margin-top: 10px; }
 /* Author rules must not defeat [hidden] (maturity + compare gates). */
 .insight-section[hidden],
 #dow-pattern[hidden] { display: none !important; }
 .section-head {
   margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--muted);
+}
+
+/* --- Intake carousel (chart / heatmap / DOW / top foods) --- */
+.insight-carousel { margin-top: 4px; }
+.insight-carousel-track {
+  display: flex; overflow-x: auto; scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  gap: 0;
+}
+.insight-carousel-track::-webkit-scrollbar { display: none; }
+.insight-carousel-page {
+  flex: 0 0 100%; min-width: 100%; max-width: 100%;
+  scroll-snap-align: start; scroll-snap-stop: always;
+  box-sizing: border-box;
+}
+.insight-carousel-dots {
+  display: flex; justify-content: center; align-items: center;
+  gap: 8px; margin: 12px 0 4px; min-height: 28px;
+}
+.carousel-dot {
+  width: 8px; height: 8px; padding: 0; border-radius: 50%;
+  border: 1.5px solid var(--muted); background: transparent;
+  cursor: pointer; appearance: none; -webkit-appearance: none;
+}
+.carousel-dot.on {
+  background: var(--ink); border-color: var(--ink);
+}
+.carousel-dot:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .insight-carousel-track { scroll-behavior: auto; }
 }
 
 /* --- headline card --------------------------------------- */
