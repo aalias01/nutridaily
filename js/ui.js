@@ -519,6 +519,38 @@ const UI = (() => {
     return `<div class="unit-chips meal-chips meal-pills-row" role="group" aria-label="Meal">${pills}</div>`;
   }
 
+  /**
+   * Inline amount for expanded diary/Planner rows.
+   * Prefer logged wire unit (piece / oz / g); fall back to grams if count is missing.
+   * null when there is nothing honest to edit (kcal-only / zero grams).
+   */
+  function inlineAmountFields({ qty, unit, grams }) {
+    const u0 = unit || "g";
+    const u = u0 === "grams" ? "g" : u0;
+    if (u === "kcal") return null;
+    const g = Number(grams);
+    if (!(g > 0)) return null;
+    if (u === "g") {
+      return { value: Math.round(g), unitLabel: "g", unit: "g" };
+    }
+    const q = Number(qty);
+    if (Number.isFinite(q) && q > 0) {
+      return { value: q, unitLabel: u, unit: u };
+    }
+    return { value: Math.round(g), unitLabel: "g", unit: "g" };
+  }
+
+  function mealAmtEditHtml(meal, id, actionPrefix, amount, inputClass) {
+    if (!amount) return mealPillsHtml(meal, id, actionPrefix);
+    return `<div class="gap-plan-edit-row">
+      ${mealPillsHtml(meal, id, actionPrefix)}
+      <span class="gap-plan-amt-row">
+        <input type="number" inputmode="decimal" min="0" step="any" class="gap-plan-qty${inputClass ? ` ${esc(inputClass)}` : ""}" data-id="${esc(id)}" data-unit="${esc(amount.unit)}" value="${esc(amount.value)}" aria-label="Amount in ${esc(amount.unitLabel)}">
+        <span class="muted small">${esc(amount.unitLabel)}</span>
+      </span>
+    </div>`;
+  }
+
   function entryTime(e) {
     if (!e.addedTs) return "";
     return new Date(e.addedTs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -637,17 +669,8 @@ const UI = (() => {
         const isExp = e.id === expandedEntryId;
         const editNote = isExp ? fmtEditNote(e.history) : "";
         const chrome = entrySourceChrome(e);
-        const canInlineQty = Number(e.grams) > 0 && e.unit !== "kcal";
-        const qtyVal = canInlineQty ? Math.round(Number(e.grams)) : "";
-        const mealAmtRow = canInlineQty
-          ? `<div class="gap-plan-edit-row">
-                ${mealPillsHtml(e.meal || meal, e.id, "entry")}
-                <span class="gap-plan-amt-row">
-                  <input type="number" inputmode="decimal" min="0" step="any" class="gap-plan-qty entry-inline-qty" data-id="${esc(e.id)}" value="${esc(qtyVal)}" aria-label="Logged amount in grams">
-                  <span class="muted small">g</span>
-                </span>
-              </div>`
-          : mealPillsHtml(e.meal || meal, e.id, "entry");
+        const amount = inlineAmountFields({ qty: e.qty, unit: e.unit, grams: e.grams });
+        const mealAmtRow = mealAmtEditHtml(e.meal || meal, e.id, "entry", amount, "entry-inline-qty");
         const expanded = isExp
           ? `<div class="r-expanded">
               <div class="r-expanded-main">
@@ -3926,19 +3949,12 @@ const UI = (() => {
       const m = it.macrosObj;
       const kcal = m && Number.isFinite(Number(m.kcal)) ? fmt(m.kcal) : "?";
       const protein = m && Number.isFinite(Number(m.p)) ? Number(m.p) : "?";
-      const unitLabel = it.unit && it.unit !== "g" && it.unit !== "grams" ? it.unit : "g";
-      const qtyVal = it.qty != null && Number.isFinite(Number(it.qty)) ? it.qty : "";
+      const amount = inlineAmountFields({ qty: it.qty, unit: it.unit, grams: it.grams });
       const expanded = isExp
         ? `<div class="r-expanded">
             <div class="r-expanded-main">
               <div class="r-contrib">${m ? esc(fmtMacros(m)) : "Macros unavailable"}</div>
-              ${logged ? "" : `<div class="gap-plan-edit-row">
-                ${mealPillsHtml(meal, it.id, "gap")}
-                <span class="gap-plan-amt-row">
-                  <input type="number" inputmode="decimal" min="0" step="any" class="gap-plan-qty" data-id="${esc(it.id)}" value="${esc(qtyVal)}" aria-label="Planned amount">
-                  <span class="muted small">${esc(unitLabel)}</span>
-                </span>
-              </div>`}
+              ${logged ? "" : mealAmtEditHtml(meal, it.id, "gap", amount, "")}
             </div>
             <div class="r-expanded-actions">
               ${logged
@@ -4050,6 +4066,7 @@ const UI = (() => {
     applyInsightCategory, setIntakeCarouselPage, insightJumpTarget,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip,
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
+    inlineAmountFields,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
     titleCaseName, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
   };

@@ -2035,6 +2035,7 @@ const App = (() => {
         qtyLabel,
         qty,
         unit,
+        grams: g,
         macrosObj: macros,
         status: it.status,
       };
@@ -2435,10 +2436,11 @@ const App = (() => {
   }
 
   /**
-   * Inline diary grams edit (expanded card). Library / per100 → recompute;
-   * weighed once/quick → scale absolute macros. Hidden when grams is 0.
+   * Inline diary amount edit (expanded card). Uses the entry’s logged unit
+   * (piece / oz / g). Library / per100 → entryFromQty; weighed once/quick →
+   * scale absolute macros by grams ratio. Hidden when grams is 0 / kcal-only.
    */
-  function updateDiaryEntryGrams(entryId, rawValue) {
+  function updateDiaryEntryQty(entryId, rawValue) {
     const day = state.viewDay;
     const entry = Ledger.entriesFor(day).find((e) => e.id === entryId);
     if (!entry) return;
@@ -2452,16 +2454,40 @@ const App = (() => {
       refreshDay();
       return;
     }
-    const grams = Math.round(n);
-    if (grams === Math.round(prevG)) return;
+
+    const amount = UI.inlineAmountFields({ qty: entry.qty, unit: entry.unit, grams: entry.grams });
+    const unit = (amount && amount.unit) || (entry.unit === "grams" ? "g" : (entry.unit || "g"));
+    const prevQty = unit === "g"
+      ? prevG
+      : (Number(entry.qty) > 0 ? Number(entry.qty) : prevG);
+    if (unit === "g" ? Math.round(n) === Math.round(prevG) : n === prevQty) return;
 
     let patch;
     if (entry.source === "once" || entry.source === "quick") {
+      let grams;
+      let qty = n;
+      let outUnit = unit;
+      if (unit === "oz") {
+        grams = Math.round(n * 28.35);
+        outUnit = "oz";
+      } else if (unit === "g") {
+        grams = Math.round(n);
+        qty = grams;
+        outUnit = "g";
+      } else {
+        // Count / other: scale from previous grams by qty ratio.
+        grams = Math.max(1, Math.round(prevG * (n / prevQty)));
+      }
+      const displayQty = outUnit === "g"
+        ? `${grams} g`
+        : outUnit === "oz"
+          ? `${n} oz`
+          : `${n} ${outUnit}`;
       patch = {
         grams,
-        qty: grams,
-        unit: "g",
-        displayQty: `${grams} g`,
+        qty,
+        unit: outUnit,
+        displayQty,
         macros: scaleEntryMacros(entry.macros, prevG, grams),
         meal: entry.meal || "snack",
       };
@@ -2485,7 +2511,11 @@ const App = (() => {
         UI.toast("Open Edit to change this amount");
         return;
       }
-      const next = Foods.entryFromQty(food, grams, "g", entry.meal || "snack");
+      if (unit === "piece" && !FoodMatch.pieceGrams(food)) {
+        UI.toast("Open Edit to change units");
+        return;
+      }
+      const next = Foods.entryFromQty(food, n, unit, entry.meal || "snack");
       if (food._orphan) next.foodId = food._keptFoodId || null;
       else if (!next.foodId && entry.foodId) next.foodId = entry.foodId;
       next.meal = entry.meal || next.meal;
@@ -7123,7 +7153,7 @@ const App = (() => {
     UI.$("#day-log").addEventListener("change", (e) => {
       const input = e.target.closest(".entry-inline-qty");
       if (!input) return;
-      updateDiaryEntryGrams(input.dataset.id, input.value);
+      updateDiaryEntryQty(input.dataset.id, input.value);
     });
     UI.$("#day-log").addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
