@@ -2374,7 +2374,7 @@ const App = (() => {
     return true;
   }
 
-  /** Set a logged diary entry’s meal (expanded BF/L/D/S pills). */
+  /** Set a logged diary entry’s meal (expanded B/L/D/S pills). */
   function setDiaryEntryMeal(entryId, meal) {
     const day = state.viewDay;
     if (!UI.MEALS.includes(meal)) return;
@@ -2392,7 +2392,7 @@ const App = (() => {
     refreshDay();
   }
 
-  /** Set a pending plan item’s meal (expanded BF/L/D/S pills). */
+  /** Set a pending plan item’s meal (expanded B/L/D/S pills). */
   function setGapPlanItemMeal(itemId, meal) {
     const day = state.viewDay;
     if (!UI.MEALS.includes(meal)) return;

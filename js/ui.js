@@ -508,9 +508,9 @@ const UI = (() => {
   }
 
   const MEALS = ["breakfast", "lunch", "dinner", "snack"];
-  const MEAL_SHORT = { breakfast: "BF", lunch: "L", dinner: "D", snack: "S" };
+  const MEAL_SHORT = { breakfast: "B", lunch: "L", dinner: "D", snack: "S" };
 
-  /** Expand-only meal picker. actionPrefix: "entry" | "gap". Short pills: BF L D S. */
+  /** Expand-only meal picker. actionPrefix: "entry" | "gap". Short pills: B L D S. */
   function mealPillsHtml(meal, id, actionPrefix) {
     const cur = MEALS.includes(meal) ? meal : "snack";
     const pills = MEALS.map((m) =>
