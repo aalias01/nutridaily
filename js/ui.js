@@ -637,11 +637,22 @@ const UI = (() => {
         const isExp = e.id === expandedEntryId;
         const editNote = isExp ? fmtEditNote(e.history) : "";
         const chrome = entrySourceChrome(e);
+        const canInlineQty = Number(e.grams) > 0 && e.unit !== "kcal";
+        const qtyVal = canInlineQty ? Math.round(Number(e.grams)) : "";
+        const mealAmtRow = canInlineQty
+          ? `<div class="gap-plan-edit-row">
+                ${mealPillsHtml(e.meal || meal, e.id, "entry")}
+                <span class="gap-plan-amt-row">
+                  <input type="number" inputmode="decimal" min="0" step="any" class="gap-plan-qty entry-inline-qty" data-id="${esc(e.id)}" value="${esc(qtyVal)}" aria-label="Logged amount in grams">
+                  <span class="muted small">g</span>
+                </span>
+              </div>`
+          : mealPillsHtml(e.meal || meal, e.id, "entry");
         const expanded = isExp
           ? `<div class="r-expanded">
               <div class="r-expanded-main">
                 <div class="r-contrib">${esc(fmtMacros(e.macros))}</div>
-                ${mealPillsHtml(e.meal || meal, e.id, "entry")}
+                ${mealAmtRow}
                 ${chrome.detailLine || ""}
                 ${editNote ? `<div class="r-edits">${esc(editNote)}</div>` : ""}
               </div>

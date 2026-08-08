@@ -2413,6 +2413,100 @@ const App = (() => {
     renderGapPlanStep();
   }
 
+  /** Scale absolute macros by grams ratio (weighed one-offs / no per100 path). */
+  function scaleEntryMacros(macros, fromGrams, toGrams) {
+    const factor = toGrams / fromGrams;
+    const r1 = (x) => Math.round(x * 10) / 10;
+    const m = macros || {};
+    const scaleNullable = (v) => {
+      if (v == null || v === "") return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.round(n * factor) : null;
+    };
+    return {
+      kcal: Math.round((Number(m.kcal) || 0) * factor),
+      p: r1((Number(m.p) || 0) * factor),
+      c: r1((Number(m.c) || 0) * factor),
+      f: r1((Number(m.f) || 0) * factor),
+      fb: r1((Number(m.fb) || 0) * factor),
+      na: scaleNullable(m.na),
+      k: scaleNullable(m.k),
+    };
+  }
+
+  /**
+   * Inline diary grams edit (expanded card). Library / per100 → recompute;
+   * weighed once/quick → scale absolute macros. Hidden when grams is 0.
+   */
+  function updateDiaryEntryGrams(entryId, rawValue) {
+    const day = state.viewDay;
+    const entry = Ledger.entriesFor(day).find((e) => e.id === entryId);
+    if (!entry) return;
+    const prevG = Number(entry.grams);
+    if (!(prevG > 0) || entry.unit === "kcal") return;
+
+    const n = Number(String(rawValue == null ? "" : rawValue).replace(/,/g, "").trim());
+    if (!Number.isFinite(n) || n <= 0) {
+      UI.toast("Enter a valid amount");
+      UI.setExpandedEntryId(entryId);
+      refreshDay();
+      return;
+    }
+    const grams = Math.round(n);
+    if (grams === Math.round(prevG)) return;
+
+    let patch;
+    if (entry.source === "once" || entry.source === "quick") {
+      patch = {
+        grams,
+        qty: grams,
+        unit: "g",
+        displayQty: `${grams} g`,
+        macros: scaleEntryMacros(entry.macros, prevG, grams),
+        meal: entry.meal || "snack",
+      };
+    } else {
+      let food = entry.foodId ? findFood(entry.foodId) : null;
+      if (!food && entry.per100) {
+        food = {
+          id: null,
+          name: entry.name,
+          per100: entry.per100,
+          units: {},
+          batch: null,
+          sd: entry.sd,
+          version: entry.foodVersion || 1,
+          cat: entry.cat || "dish",
+          _orphan: true,
+          _keptFoodId: entry.foodId || null,
+        };
+      }
+      if (!food || !food.per100) {
+        UI.toast("Open Edit to change this amount");
+        return;
+      }
+      const next = Foods.entryFromQty(food, grams, "g", entry.meal || "snack");
+      if (food._orphan) next.foodId = food._keptFoodId || null;
+      else if (!next.foodId && entry.foodId) next.foodId = entry.foodId;
+      next.meal = entry.meal || next.meal;
+      if (entry.sd != null && next.sd == null) next.sd = entry.sd;
+      patch = gapEntryPatch(next);
+    }
+
+    const producerError = validateProducerEntry({ ...entry, ...patch });
+    if (producerError) { UI.toast(producerError); return; }
+
+    try {
+      Ledger.amendEntry(day, entryId, patch, "quantity edited");
+    } catch (error) {
+      UI.toast("Couldn’t update amount — nothing changed");
+      return;
+    }
+    Sync.schedulePush();
+    UI.setExpandedEntryId(entryId);
+    refreshDay();
+  }
+
   function removeGapPlanItem(itemId) {
     const day = state.viewDay;
     const plan = dayPlan(day);
@@ -7013,16 +7107,31 @@ const App = (() => {
     // swipe day log to change days
     let touchX = 0, touchY = 0;
     UI.$("#day-log").addEventListener("touchstart", (e) => {
+      if (e.target.closest(".entry-inline-qty")) return;
       const t = e.changedTouches[0];
       touchX = t.clientX; touchY = t.clientY;
     }, { passive: true });
     UI.$("#day-log").addEventListener("touchend", (e) => {
+      if (e.target.closest(".entry-inline-qty")) return;
       const t = e.changedTouches[0];
       const dx = t.clientX - touchX, dy = t.clientY - touchY;
       if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
       if (dx > 0) shiftDay(-1);
       else shiftDay(1);
     }, { passive: true });
+
+    UI.$("#day-log").addEventListener("change", (e) => {
+      const input = e.target.closest(".entry-inline-qty");
+      if (!input) return;
+      updateDiaryEntryGrams(input.dataset.id, input.value);
+    });
+    UI.$("#day-log").addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const input = e.target.closest(".entry-inline-qty");
+      if (!input) return;
+      e.preventDefault();
+      input.blur();
+    });
 
     UI.$("#day-log").addEventListener("contextmenu", (e) => {
       const row = e.target.closest("[data-action='toggle-entry']");
