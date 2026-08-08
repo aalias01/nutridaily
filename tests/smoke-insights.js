@@ -344,8 +344,8 @@ async function run(label, days) {
   ok(cats.getAttribute("role") === "tablist", "insight-cats is a tablist");
   const catBtns = [...cats.querySelectorAll("[data-insight-cat]")];
   ok(JSON.stringify(catBtns.map((b) => b.dataset.insightCat)) ===
-      JSON.stringify(["overview", "intake", "body", "patterns"]),
-    "Insights categories are Overview · Intake · Body · Patterns");
+      JSON.stringify(["overview", "patterns", "body", "intake"]),
+    "Insights categories are Overview · Patterns · Body · Intake");
   ok(!$("#insight-panel-overview").hidden &&
       $("#insight-panel-intake").hidden &&
       $("#insight-panel-body").hidden &&
@@ -355,6 +355,7 @@ async function run(label, days) {
   ok(!!dock, "insight-dock exists");
   ok(dock.hidden && !window.document.body.classList.contains("has-insight-dock"),
     "nutrient dock hidden on Overview (Intake-only lane)");
+  ok(!!$("#insight-teasers"), "Overview mounts Patterns/Body teaser row");
   cats.querySelector('[data-insight-cat="intake"]').click();
   await new Promise((r) => setTimeout(r, 40));
   ok(!$("#insight-panel-intake").hidden && $("#insight-panel-overview").hidden,
@@ -369,9 +370,9 @@ async function run(label, days) {
   ok(!$("#topfood-metric"), "topfood-metric removed; Top foods follows the dock");
   const sectionIds = [...window.document.querySelectorAll("#view-insights .insight-section")].map((s) => s.id);
   ok(JSON.stringify(sectionIds) === JSON.stringify([
-    "section-intake", "section-weight", "section-energy",
     "section-composition", "section-adherence", "section-compare",
-  ]), "Insights section order matches Phase 1 layout", sectionIds.join(", "));
+    "section-weight", "section-energy", "section-intake",
+  ]), "Insights section order matches Overview→Patterns→Body→Intake layout", sectionIds.join(", "));
   ok($("#section-compare").hidden === $("#phase-compare").hidden,
     "section-compare.hidden mirrors phase-compare.hidden");
   ok($("#intake-page-trend") && $("#intake-page-trend").contains($("#intake-stats")) &&

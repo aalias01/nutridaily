@@ -49,7 +49,7 @@ const App = (() => {
     insightPhaseId: null, // null = active phase when daysBack is "phase"
     insightRollup: "day", // day | week — weekly smooths out single-day noise
     insightTopFoodMetric: "kcal", // kcal | protein | sodium | fiber
-    insightCategory: "overview", // overview | intake | body | patterns
+    insightCategory: "overview", // overview | patterns | body | intake
     insightIntakePage: 0, // 0 trend · 1 heatmap · 2 DOW · 3 top foods
     dayContribMetric: null, // when set, Today shows contribution breakdown for viewDay
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
@@ -2690,9 +2690,14 @@ const App = (() => {
    */
   function setInsightCategory(cat, opts) {
     const prev = state.insightCategory || "overview";
+    // Seed Intake page before the panel is shown so applyInsightCategory
+    // scrolls to the landing page (first vs last) for cross-category swipes.
+    if (opts && opts.intakePage != null) {
+      state.insightIntakePage = UI.setIntakeCarouselPage(opts.intakePage, { dotsOnly: true });
+    }
     const applied = UI.applyInsightCategory(cat);
     state.insightCategory = applied;
-    if (opts && opts.intakePage != null) {
+    if (opts && opts.intakePage != null && applied === "intake") {
       state.insightIntakePage = UI.setIntakeCarouselPage(opts.intakePage, {
         smooth: !!(opts && opts.smooth),
       });
@@ -2703,6 +2708,62 @@ const App = (() => {
       refreshInsights();
     }
     return applied;
+  }
+
+  /**
+   * Nested horizontal swipe across Insights categories (Overview → Patterns →
+   * Body → Intake). Intake keeps its own page pager; category handoff only at
+   * the first/last Intake page (edge cue from Ideas §4).
+   */
+  function wireInsightCategorySwipe() {
+    const view = document.getElementById("view-insights");
+    if (!view || view.dataset.swipeWired === "1") return;
+    view.dataset.swipeWired = "1";
+
+    const THRESH_PX = 56;
+    const AXIS_RATIO = 1.25;
+    let start = null;
+
+    function point(e) {
+      if (e.changedTouches && e.changedTouches[0]) return e.changedTouches[0];
+      if (e.touches && e.touches[0]) return e.touches[0];
+      return e;
+    }
+
+    view.addEventListener("touchstart", (e) => {
+      if (!view.classList.contains("active")) return;
+      if (UI.insightMaturity() === "empty") return;
+      // Ignore swipes that begin on chrome (range / category tabs).
+      if (e.target.closest(".view-head, #insight-dock, .insight-carousel-dots")) return;
+      const p = point(e);
+      start = { x: p.clientX, y: p.clientY };
+    }, { passive: true });
+
+    view.addEventListener("touchend", (e) => {
+      if (!start) return;
+      const origin = start;
+      start = null;
+      if (!view.classList.contains("active")) return;
+      if (UI.insightMaturity() === "empty") return;
+      const p = point(e);
+      const dx = p.clientX - origin.x;
+      const dy = p.clientY - origin.y;
+      if (Math.abs(dx) < THRESH_PX) return;
+      if (Math.abs(dx) < Math.abs(dy) * AXIS_RATIO) return;
+
+      const dir = dx < 0 ? 1 : -1; // left → next, right → previous
+      const cat = UI.currentInsightCategory() || state.insightCategory || "overview";
+      if (cat === "intake" && !UI.intakeAtCategoryEdge(dir)) return;
+
+      const next = UI.insightAdjacentCategory(cat, dir);
+      if (!next) return;
+      setInsightCategory(next.cat, {
+        intakePage: next.intakePage,
+        forceRefresh: true,
+      });
+    }, { passive: true });
+
+    view.addEventListener("touchcancel", () => { start = null; }, { passive: true });
   }
 
   /** Dim the dock while #section-intake is offscreen — retired; category tabs own dock. */
@@ -6719,6 +6780,7 @@ const App = (() => {
         setInsightCategory(btn.dataset.insightCat);
       });
     }
+    wireInsightCategorySwipe();
     const intakeDots = UI.$("#intake-carousel-dots");
     if (intakeDots) {
       intakeDots.addEventListener("click", (e) => {
@@ -6907,7 +6969,7 @@ const App = (() => {
 
     document.body.addEventListener("click", (e) => {
       const jump = e.target.closest("[data-jump]");
-      if (jump && jump.closest("#insight-observations")) {
+      if (jump && jump.closest("#insight-observations, #insight-teasers")) {
         const jumpDay = jump.dataset.jumpDay;
         if (jumpDay) {
           state.viewDay = jumpDay;

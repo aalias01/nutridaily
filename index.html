@@ -124,9 +124,9 @@
         </div>
         <div class="insight-cats seg" id="insight-cats" role="tablist" aria-label="Insights categories">
           <button type="button" role="tab" id="insight-cat-overview" data-insight-cat="overview" aria-controls="insight-panel-overview" aria-selected="true" class="on">Overview</button>
-          <button type="button" role="tab" id="insight-cat-intake" data-insight-cat="intake" aria-controls="insight-panel-intake" aria-selected="false">Intake</button>
-          <button type="button" role="tab" id="insight-cat-body" data-insight-cat="body" aria-controls="insight-panel-body" aria-selected="false">Body</button>
           <button type="button" role="tab" id="insight-cat-patterns" data-insight-cat="patterns" aria-controls="insight-panel-patterns" aria-selected="false">Patterns</button>
+          <button type="button" role="tab" id="insight-cat-body" data-insight-cat="body" aria-controls="insight-panel-body" aria-selected="false">Body</button>
+          <button type="button" role="tab" id="insight-cat-intake" data-insight-cat="intake" aria-controls="insight-panel-intake" aria-selected="false">Intake</button>
         </div>
       </div>
       <p id="phase-context" class="muted small phase-context"></p>
@@ -138,7 +138,49 @@
 
       <div id="insight-panel-overview" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-overview" data-insight-panel="overview">
         <div id="insight-headline" class="headline-card"></div>
+        <div id="insight-teasers" class="insight-teasers" aria-label="Insights shortcuts"></div>
         <div id="insight-observations" class="obs-list"></div>
+      </div>
+
+      <div id="insight-panel-patterns" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-patterns" data-insight-panel="patterns" hidden>
+        <section class="insight-section" id="section-composition">
+          <h3 class="section-head">Composition</h3>
+          <div id="macro-split" class="card-block"></div>
+          <div id="meal-split" class="card-block"></div>
+          <div id="nak-card" class="card-block nak-card" hidden></div>
+        </section>
+
+        <section class="insight-section" id="section-adherence">
+          <h3 class="section-head">Adherence</h3>
+          <div id="insight-scorecard" class="card-block scorecard-card"></div>
+        </section>
+
+        <section class="insight-section" id="section-compare" hidden>
+          <h3 class="section-head">Phase comparison</h3>
+          <div id="phase-compare" class="card-block" hidden></div>
+        </section>
+      </div>
+
+      <div id="insight-panel-body" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-body" data-insight-panel="body" hidden>
+        <section class="insight-section" id="section-weight">
+          <h3 class="section-head">Weight</h3>
+          <div class="chart-toolbar">
+            <span class="chart-legend" id="weight-legend"></span>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="weight-canvas" role="img" aria-label="Weight chart. Exact values and keyboard-accessible weigh-in days are available below."></canvas>
+            <div id="weight-tip" class="chart-tip" hidden></div>
+          </div>
+          <div id="weight-data" class="chart-data-region"></div>
+          <p id="weight-summary" class="muted"></p>
+          <div id="weight-stats" class="stat-grid"></div>
+        </section>
+
+        <section class="insight-section" id="section-energy">
+          <h3 class="section-head">Energy balance</h3>
+          <div id="tdee-card" class="card-block tdee-card"></div>
+          <div id="insight-callouts"></div>
+        </section>
       </div>
 
       <div id="insight-panel-intake" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-intake" data-insight-panel="intake" hidden>
@@ -185,47 +227,6 @@
               </div>
             </div>
           </div>
-        </section>
-      </div>
-
-      <div id="insight-panel-body" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-body" data-insight-panel="body" hidden>
-        <section class="insight-section" id="section-weight">
-          <h3 class="section-head">Weight</h3>
-          <div class="chart-toolbar">
-            <span class="chart-legend" id="weight-legend"></span>
-          </div>
-          <div class="canvas-wrap">
-            <canvas id="weight-canvas" role="img" aria-label="Weight chart. Exact values and keyboard-accessible weigh-in days are available below."></canvas>
-            <div id="weight-tip" class="chart-tip" hidden></div>
-          </div>
-          <div id="weight-data" class="chart-data-region"></div>
-          <p id="weight-summary" class="muted"></p>
-          <div id="weight-stats" class="stat-grid"></div>
-        </section>
-
-        <section class="insight-section" id="section-energy">
-          <h3 class="section-head">Energy balance</h3>
-          <div id="tdee-card" class="card-block tdee-card"></div>
-          <div id="insight-callouts"></div>
-        </section>
-      </div>
-
-      <div id="insight-panel-patterns" class="insight-panel" role="tabpanel" aria-labelledby="insight-cat-patterns" data-insight-panel="patterns" hidden>
-        <section class="insight-section" id="section-composition">
-          <h3 class="section-head">Composition</h3>
-          <div id="macro-split" class="card-block"></div>
-          <div id="meal-split" class="card-block"></div>
-          <div id="nak-card" class="card-block nak-card" hidden></div>
-        </section>
-
-        <section class="insight-section" id="section-adherence">
-          <h3 class="section-head">Adherence</h3>
-          <div id="insight-scorecard" class="card-block scorecard-card"></div>
-        </section>
-
-        <section class="insight-section" id="section-compare" hidden>
-          <h3 class="section-head">Phase comparison</h3>
-          <div id="phase-compare" class="card-block" hidden></div>
         </section>
       </div>
     </section>

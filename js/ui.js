@@ -1705,6 +1705,58 @@ const UI = (() => {
     root.innerHTML = html;
   }
 
+  /**
+   * Compact Overview shortcuts into Patterns / Body so the snapshot points
+   * at the next tabs without becoming a second scorecard.
+   */
+  function renderOverviewTeasers(ctx) {
+    const root = $("#insight-teasers");
+    if (!root) return;
+    if (!ctx || ctx.maturity === "empty") {
+      root.innerHTML = "";
+      return;
+    }
+
+    const chips = [];
+
+    // Patterns: prefer a concrete adherence / protein cue when available.
+    const s = ctx.score;
+    const ppk = Analytics.proteinPerKg(ctx.days);
+    let patternsDetail = "Macros, meals, adherence";
+    if (ppk) {
+      patternsDetail = `${ppk.gPerKg.toFixed(1)} g protein / kg`;
+    } else if (s && s.score != null) {
+      patternsDetail = `Adherence ${s.score}/100`;
+    }
+    const patternsJump = ctx.maturity === "thin"
+      ? "#insight-scorecard"
+      : "#section-composition";
+    chips.push(
+      `<button type="button" class="insight-teaser" data-jump="${esc(patternsJump)}">` +
+      `<span class="insight-teaser-cat">Patterns</span>` +
+      `<span class="insight-teaser-detail">${esc(patternsDetail)}</span></button>`
+    );
+
+    // Body: weight rate when present, else TDEE when the energy section is live.
+    const rate = Analytics.weightRate(ctx.trend);
+    let bodyDetail = "Weight and energy";
+    let bodyJump = "#section-weight";
+    if (rate) {
+      const perWeek = Analytics.kgToDisplay(rate.kgPerWeek, ctx.weightUnit);
+      bodyDetail = `${Analytics.fmtSigned(perWeek, 2)} ${ctx.weightUnit}/wk`;
+    } else if (ctx.maturity !== "thin" && ctx.tdee && ctx.tdee.tdee != null) {
+      bodyDetail = `TDEE ~${fmt(ctx.tdee.tdee)} kcal`;
+      bodyJump = "#tdee-card";
+    }
+    chips.push(
+      `<button type="button" class="insight-teaser" data-jump="${esc(bodyJump)}">` +
+      `<span class="insight-teaser-cat">Body</span>` +
+      `<span class="insight-teaser-detail">${esc(bodyDetail)}</span></button>`
+    );
+
+    root.innerHTML = chips.join("");
+  }
+
   // ---------------------------------------------------------- intake chart
 
   function accessibleDate(day) {
@@ -2825,7 +2877,8 @@ const UI = (() => {
   let _insightCategory = "overview";
   let _insightIntakePage = 0;
 
-  const INSIGHT_CATS = ["overview", "intake", "body", "patterns"];
+  const INSIGHT_CATS = ["overview", "patterns", "body", "intake"];
+  const INTAKE_PAGE_COUNT = 4;
   const JUMP_TO_CAT = Object.freeze({
     "#insight-heatmap": { cat: "intake", page: 1 },
     "#dow-pattern": { cat: "intake", page: 2 },
@@ -2884,6 +2937,44 @@ const UI = (() => {
     return null;
   }
 
+  /**
+   * Adjacent Insights category for nested horizontal swipe.
+   * @param {string} cat current category
+   * @param {number} dir +1 = next (swipe left), -1 = previous (swipe right)
+   * @returns {{ cat: string, intakePage?: number }|null}
+   */
+  function insightAdjacentCategory(cat, dir) {
+    const step = dir < 0 ? -1 : 1;
+    const i = INSIGHT_CATS.indexOf(cat);
+    if (i < 0) return null;
+    const next = INSIGHT_CATS[i + step];
+    if (!next) return null;
+    // Forward → first page of Intake; back into Intake → last page.
+    if (next === "intake") {
+      return { cat: next, intakePage: step > 0 ? 0 : INTAKE_PAGE_COUNT - 1 };
+    }
+    return { cat: next };
+  }
+
+  /** True when Intake carousel is at an edge that can hand off to the next/prev category. */
+  function intakeAtCategoryEdge(dir) {
+    const track = $("#intake-carousel-track");
+    const page = track
+      ? Math.max(0, Math.min(INTAKE_PAGE_COUNT - 1,
+          Math.round(track.scrollLeft / (track.clientWidth || 1))))
+      : _insightIntakePage;
+    if (dir < 0) return page <= 0;
+    return page >= INTAKE_PAGE_COUNT - 1;
+  }
+
+  function currentInsightCategory() {
+    return _insightCategory;
+  }
+
+  function insightMaturity() {
+    return _insightMaturity;
+  }
+
   function syncIntakeCarouselDots(page) {
     const dots = $$("#intake-carousel-dots .carousel-dot");
     dots.forEach((d) => {
@@ -2898,7 +2989,7 @@ const UI = (() => {
    * Pass `{ dotsOnly: true }` when reflecting an existing scroll position.
    */
   function setIntakeCarouselPage(page, opts) {
-    const next = Math.max(0, Math.min(3, Number(page) || 0));
+    const next = Math.max(0, Math.min(INTAKE_PAGE_COUNT - 1, Number(page) || 0));
     _insightIntakePage = next;
     syncIntakeCarouselDots(next);
     if (opts && opts.dotsOnly) return next;
@@ -2921,7 +3012,7 @@ const UI = (() => {
   }
 
   /**
-   * Category gate for Insights: Overview / Intake / Body / Patterns.
+   * Category gate for Insights: Overview / Patterns / Body / Intake.
    * Empty maturity forces Overview; dock only on Intake.
    * @returns {string} applied category id
    */
@@ -3049,7 +3140,7 @@ const UI = (() => {
     if (typeof Analytics === "undefined") return;
     if (opts && opts.category) _insightCategory = opts.category;
     if (opts && opts.intakePage != null) {
-      _insightIntakePage = Math.max(0, Math.min(3, Number(opts.intakePage) || 0));
+      _insightIntakePage = Math.max(0, Math.min(INTAKE_PAGE_COUNT - 1, Number(opts.intakePage) || 0));
     }
     const ctx = buildInsightContext(opts);
 
@@ -3066,6 +3157,7 @@ const UI = (() => {
 
     renderPhaseChrome(ctx);
     renderHeadline(ctx);
+    renderOverviewTeasers(ctx);
     renderObservations(ctx);
     renderTrendChart(ctx);
     renderTrendSummary(ctx);
@@ -4064,6 +4156,7 @@ const UI = (() => {
     setOnceErrors, selectedOnceUnit, selectedOnceCat, selectedOnceConfidence, syncOnceMacroNudge,
     renderInsights, renderTrends, renderWeightTrend,
     applyInsightCategory, setIntakeCarouselPage, insightJumpTarget,
+    insightAdjacentCategory, intakeAtCategoryEdge, currentInsightCategory, insightMaturity,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip,
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
     inlineAmountFields,
