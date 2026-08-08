@@ -1062,6 +1062,31 @@ body.sheet-open .insight-dock { display: none; }
   border: 1px solid var(--line); border-radius: 10px;
   background: var(--bg); color: inherit; font: inherit; font-weight: 600;
 }
+.meal-step {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; flex-wrap: wrap;
+}
+.meal-step-caption {
+  font-size: 12px; font-weight: 600; color: var(--muted); margin-right: 2px;
+}
+.meal-step-label {
+  min-width: 4.5em; text-align: center;
+  font-size: 13px; font-weight: 650; text-transform: lowercase;
+}
+.meal-step-btn {
+  width: 32px; height: 32px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: inherit; font: inherit; font-size: 14px;
+  font-weight: 700; line-height: 1; cursor: pointer;
+}
+.meal-step-btn:hover:not(:disabled),
+.meal-step-btn:focus-visible:not(:disabled) {
+  border-color: var(--accent); color: var(--accent-ink);
+}
+.meal-step-btn:disabled {
+  opacity: 0.35; cursor: default;
+}
 #gap-paste { width: 100%; margin: 10px 0; }
 #gap-food-search { width: 100%; margin: 6px 0 4px; }
 .phase-meta-grid {

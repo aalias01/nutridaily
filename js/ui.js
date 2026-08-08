@@ -509,6 +509,27 @@ const UI = (() => {
 
   const MEALS = ["breakfast", "lunch", "dinner", "snack"];
 
+  /** Adjacent meal on the breakfast→snack ladder; null at an end (no wrap). */
+  function adjacentMeal(meal, delta) {
+    const cur = MEALS.includes(meal) ? meal : "snack";
+    const i = MEALS.indexOf(cur) + (delta < 0 ? -1 : delta > 0 ? 1 : 0);
+    if (i < 0 || i >= MEALS.length) return null;
+    return MEALS[i];
+  }
+
+  /** Expand-only meal promote/demote controls. actionPrefix: "entry" | "gap". */
+  function mealStepHtml(meal, id, actionPrefix) {
+    const cur = MEALS.includes(meal) ? meal : "snack";
+    const canUp = adjacentMeal(cur, -1) != null;
+    const canDown = adjacentMeal(cur, 1) != null;
+    return `<div class="meal-step" role="group" aria-label="Meal">
+      <span class="meal-step-caption">Meal</span>
+      <button type="button" class="meal-step-btn" data-action="${esc(actionPrefix)}-meal-up" data-id="${esc(id)}" aria-label="Earlier meal"${canUp ? "" : " disabled"}>↑</button>
+      <span class="meal-step-label">${esc(cur)}</span>
+      <button type="button" class="meal-step-btn" data-action="${esc(actionPrefix)}-meal-down" data-id="${esc(id)}" aria-label="Later meal"${canDown ? "" : " disabled"}>↓</button>
+    </div>`;
+  }
+
   function entryTime(e) {
     if (!e.addedTs) return "";
     return new Date(e.addedTs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -589,8 +610,16 @@ const UI = (() => {
     expandedEntryId = expandedEntryId === id ? null : id;
   }
 
+  function setExpandedEntryId(id) {
+    expandedEntryId = id || null;
+  }
+
   function toggleGapItemExpand(id) {
     expandedGapItemId = expandedGapItemId === id ? null : id;
+  }
+
+  function setExpandedGapItemId(id) {
+    expandedGapItemId = id || null;
   }
 
   function renderDayLog(dayKey, entries) {
@@ -623,6 +652,7 @@ const UI = (() => {
           ? `<div class="r-expanded">
               <div class="r-expanded-main">
                 <div class="r-contrib">${esc(fmtMacros(e.macros))}</div>
+                ${mealStepHtml(e.meal || meal, e.id, "entry")}
                 ${chrome.detailLine || ""}
                 ${editNote ? `<div class="r-edits">${esc(editNote)}</div>` : ""}
               </div>
@@ -3902,6 +3932,7 @@ const UI = (() => {
         ? `<div class="r-expanded">
             <div class="r-expanded-main">
               <div class="r-contrib">${m ? esc(fmtMacros(m)) : "Macros unavailable"}</div>
+              ${logged ? "" : mealStepHtml(meal, it.id, "gap")}
               ${logged ? "" : `<label class="gap-plan-amt">Amount
                 <span class="gap-plan-amt-row">
                   <input type="number" inputmode="decimal" min="0" step="any" class="gap-plan-qty" data-id="${esc(it.id)}" value="${esc(qtyVal)}" aria-label="Planned amount">
@@ -4009,7 +4040,7 @@ const UI = (() => {
 
   return {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
-    renderDayLog, toggleEntryExpand, toggleGapItemExpand, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
+    renderDayLog, toggleEntryExpand, setExpandedEntryId, toggleGapItemExpand, setExpandedGapItemId, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     weightPrefillFromHistory, renderMultiQtyList, readMultiQtyRow, updateMultiRowPreview,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft, parseNutrientNumber,
     syncReviewLogAsUI, renderFoodDetail,
@@ -4018,7 +4049,7 @@ const UI = (() => {
     renderInsights, renderTrends, renderWeightTrend,
     applyInsightCategory, setIntakeCarouselPage, insightJumpTarget,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip,
-    renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
+    renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS, adjacentMeal,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
     titleCaseName, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
   };

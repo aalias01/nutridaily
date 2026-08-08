@@ -2321,22 +2321,25 @@ const App = (() => {
     UI.toast("Logged");
   }
 
-  /** Update planned qty/grams from the inline expand field (blur / Enter). */
-  function updateGapPlanItemQty(itemId, rawValue) {
+  /** Update planned qty/grams from the inline expand field (blur / Enter / pre-log commit).
+   *  opts.skipRender — persist without re-render (so + can log in the same gesture).
+   *  Returns true when the plan is left in a loggable amount state. */
+  function updateGapPlanItemQty(itemId, rawValue, opts) {
+    const skipRender = !!(opts && opts.skipRender);
     const day = state.viewDay;
     const plan = dayPlan(day);
-    if (!plan || !itemId) return;
+    if (!plan || !itemId) return false;
     const items = Array.isArray(plan.items) ? plan.items : [];
     const idx = items.findIndex((it) => it && it.id === itemId);
-    if (idx < 0) return;
+    if (idx < 0) return false;
     const item = items[idx];
-    if (!item || item.status === "logged") return;
+    if (!item || item.status === "logged") return false;
 
     const n = Number(String(rawValue == null ? "" : rawValue).replace(/,/g, "").trim());
     if (!Number.isFinite(n) || n <= 0) {
       UI.toast("Enter a valid amount");
-      renderGapPlanStep();
-      return;
+      if (!skipRender) renderGapPlanStep();
+      return false;
     }
 
     const unit = item.unit || "g";
@@ -2348,13 +2351,13 @@ const App = (() => {
       grams = Math.round(n);
     } else {
       UI.toast("Food not in library — tap Edit to change units");
-      renderGapPlanStep();
-      return;
+      if (!skipRender) renderGapPlanStep();
+      return false;
     }
 
     const prevQty = Number(item.qty);
     const prevG = item.grams != null ? Number(item.grams) : Number(item.suggestedGrams);
-    if (prevQty === n && prevG === grams) return;
+    if (prevQty === n && prevG === grams) return true;
 
     const next = cloneLocalData(plan);
     next.items[idx] = {
@@ -2366,7 +2369,47 @@ const App = (() => {
     next.projected = projectPlanFromItems(day, next.items, state.personalFoods);
     next.updatedAt = Date.now();
     try { saveDayPlan(day, next); }
-    catch (error) { UI.toast("Couldn’t update amount — nothing changed"); return; }
+    catch (error) { UI.toast("Couldn’t update amount — nothing changed"); return false; }
+    if (!skipRender) renderGapPlanStep();
+    return true;
+  }
+
+  /** Promote / demote a logged diary entry’s meal. */
+  function stepDiaryEntryMeal(entryId, delta) {
+    const day = state.viewDay;
+    const entry = Ledger.entriesFor(day).find((e) => e.id === entryId);
+    if (!entry) return;
+    const nextMeal = UI.adjacentMeal(entry.meal || "snack", delta);
+    if (!nextMeal || nextMeal === entry.meal) return;
+    try {
+      Ledger.amendEntry(day, entryId, { meal: nextMeal }, "meal changed");
+    } catch (error) {
+      UI.toast("Couldn’t change meal — nothing changed");
+      return;
+    }
+    Sync.schedulePush();
+    UI.setExpandedEntryId(entryId);
+    refreshDay();
+  }
+
+  /** Promote / demote a pending plan item’s meal (breakfast↔…↔snack). */
+  function stepGapPlanItemMeal(itemId, delta) {
+    const day = state.viewDay;
+    const plan = dayPlan(day);
+    if (!plan || !itemId) return;
+    const items = Array.isArray(plan.items) ? plan.items : [];
+    const idx = items.findIndex((it) => it && it.id === itemId);
+    if (idx < 0) return;
+    const item = items[idx];
+    if (!item || item.status === "logged") return;
+    const nextMeal = UI.adjacentMeal(item.meal || "snack", delta);
+    if (!nextMeal || nextMeal === (item.meal || "snack")) return;
+    const next = cloneLocalData(plan);
+    next.items[idx] = { ...next.items[idx], meal: nextMeal };
+    next.updatedAt = Date.now();
+    try { saveDayPlan(day, next); }
+    catch (error) { UI.toast("Couldn’t change meal — nothing changed"); return; }
+    UI.setExpandedGapItemId(itemId);
     renderGapPlanStep();
   }
 
@@ -5269,6 +5312,16 @@ const App = (() => {
       });
     }
     if (UI.$("#gap-plan-list")) {
+      // Commit inline amount before blur can re-render and swallow the + click.
+      UI.$("#gap-plan-list").addEventListener("pointerdown", (e) => {
+        const logBtn = e.target.closest("[data-action='log-gap-item']");
+        if (!logBtn) return;
+        const stack = logBtn.closest(".log-row-stack");
+        const input = stack && stack.querySelector(".gap-plan-qty");
+        if (!input || document.activeElement !== input) return;
+        e.preventDefault();
+        updateGapPlanItemQty(logBtn.dataset.id, input.value, { skipRender: true });
+      });
       UI.$("#gap-plan-list").addEventListener("click", (e) => {
         const removeBtn = e.target.closest("[data-action='remove-gap-item']");
         if (removeBtn) {
@@ -5281,7 +5334,26 @@ const App = (() => {
         if (logBtn) {
           e.preventDefault();
           e.stopPropagation();
+          const stack = logBtn.closest(".log-row-stack");
+          const input = stack && stack.querySelector(".gap-plan-qty");
+          if (input && !updateGapPlanItemQty(logBtn.dataset.id, input.value, { skipRender: true })) {
+            return;
+          }
           logGapItemNow(logBtn.dataset.id);
+          return;
+        }
+        const mealUp = e.target.closest("[data-action='gap-meal-up']");
+        if (mealUp) {
+          e.preventDefault();
+          e.stopPropagation();
+          stepGapPlanItemMeal(mealUp.dataset.id, -1);
+          return;
+        }
+        const mealDown = e.target.closest("[data-action='gap-meal-down']");
+        if (mealDown) {
+          e.preventDefault();
+          e.stopPropagation();
+          stepGapPlanItemMeal(mealDown.dataset.id, 1);
           return;
         }
         const editBtn = e.target.closest("[data-action='edit-gap-item']");
@@ -6828,6 +6900,10 @@ const App = (() => {
       } else if (action === "toggle-entry") {
         UI.toggleEntryExpand(id);
         UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
+      } else if (action === "entry-meal-up") {
+        stepDiaryEntryMeal(id, -1);
+      } else if (action === "entry-meal-down") {
+        stepDiaryEntryMeal(id, 1);
       } else if (action === "edit-entry") {
         const day = actionEl.dataset.day || state.viewDay;
         const entry = Ledger.entriesFor(day).find((x) => x.id === id);
