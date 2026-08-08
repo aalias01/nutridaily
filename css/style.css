@@ -1056,36 +1056,23 @@ body.sheet-open .insight-dock { display: none; }
   display: flex; flex-direction: column; gap: 4px;
   margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--muted);
 }
-.gap-plan-amt-row { display: flex; align-items: center; gap: 8px; }
+.gap-plan-amt-row { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .gap-plan-qty {
-  width: 96px; max-width: 40vw; padding: 8px 10px;
+  width: 72px; max-width: 28vw; padding: 6px 8px;
   border: 1px solid var(--line); border-radius: 10px;
   background: var(--bg); color: inherit; font: inherit; font-weight: 600;
 }
-.meal-step {
-  display: flex; align-items: center; gap: 6px;
-  margin-top: 8px; flex-wrap: wrap;
+.gap-plan-edit-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 8px; flex-wrap: wrap;
 }
-.meal-step-caption {
-  font-size: 12px; font-weight: 600; color: var(--muted); margin-right: 2px;
+.meal-pills-row {
+  margin: 8px 0 0; justify-content: flex-start; gap: 4px;
 }
-.meal-step-label {
-  min-width: 4.5em; text-align: center;
-  font-size: 13px; font-weight: 650; text-transform: lowercase;
-}
-.meal-step-btn {
-  width: 32px; height: 32px; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--line); border-radius: 8px;
-  background: var(--bg); color: inherit; font: inherit; font-size: 14px;
-  font-weight: 700; line-height: 1; cursor: pointer;
-}
-.meal-step-btn:hover:not(:disabled),
-.meal-step-btn:focus-visible:not(:disabled) {
-  border-color: var(--accent); color: var(--accent-ink);
-}
-.meal-step-btn:disabled {
-  opacity: 0.35; cursor: default;
+.gap-plan-edit-row .meal-pills-row { margin: 0; flex: 1; min-width: 0; }
+.meal-pill {
+  padding: 4px 8px; min-height: 28px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.02em;
 }
 #gap-paste { width: 100%; margin: 10px 0; }
 #gap-food-search { width: 100%; margin: 6px 0 4px; }

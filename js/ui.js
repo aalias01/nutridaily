@@ -508,26 +508,15 @@ const UI = (() => {
   }
 
   const MEALS = ["breakfast", "lunch", "dinner", "snack"];
+  const MEAL_SHORT = { breakfast: "BF", lunch: "L", dinner: "D", snack: "S" };
 
-  /** Adjacent meal on the breakfast→snack ladder; null at an end (no wrap). */
-  function adjacentMeal(meal, delta) {
+  /** Expand-only meal picker. actionPrefix: "entry" | "gap". Short pills: BF L D S. */
+  function mealPillsHtml(meal, id, actionPrefix) {
     const cur = MEALS.includes(meal) ? meal : "snack";
-    const i = MEALS.indexOf(cur) + (delta < 0 ? -1 : delta > 0 ? 1 : 0);
-    if (i < 0 || i >= MEALS.length) return null;
-    return MEALS[i];
-  }
-
-  /** Expand-only meal promote/demote controls. actionPrefix: "entry" | "gap". */
-  function mealStepHtml(meal, id, actionPrefix) {
-    const cur = MEALS.includes(meal) ? meal : "snack";
-    const canUp = adjacentMeal(cur, -1) != null;
-    const canDown = adjacentMeal(cur, 1) != null;
-    return `<div class="meal-step" role="group" aria-label="Meal">
-      <span class="meal-step-caption">Meal</span>
-      <button type="button" class="meal-step-btn" data-action="${esc(actionPrefix)}-meal-up" data-id="${esc(id)}" aria-label="Earlier meal"${canUp ? "" : " disabled"}>↑</button>
-      <span class="meal-step-label">${esc(cur)}</span>
-      <button type="button" class="meal-step-btn" data-action="${esc(actionPrefix)}-meal-down" data-id="${esc(id)}" aria-label="Later meal"${canDown ? "" : " disabled"}>↓</button>
-    </div>`;
+    const pills = MEALS.map((m) =>
+      `<button type="button" class="uchip meal-pill${m === cur ? " active" : ""}" data-action="${esc(actionPrefix)}-set-meal" data-id="${esc(id)}" data-meal="${esc(m)}" aria-label="${esc(m)}" aria-pressed="${m === cur}">${esc(MEAL_SHORT[m])}</button>`
+    ).join("");
+    return `<div class="unit-chips meal-chips meal-pills-row" role="group" aria-label="Meal">${pills}</div>`;
   }
 
   function entryTime(e) {
@@ -652,7 +641,7 @@ const UI = (() => {
           ? `<div class="r-expanded">
               <div class="r-expanded-main">
                 <div class="r-contrib">${esc(fmtMacros(e.macros))}</div>
-                ${mealStepHtml(e.meal || meal, e.id, "entry")}
+                ${mealPillsHtml(e.meal || meal, e.id, "entry")}
                 ${chrome.detailLine || ""}
                 ${editNote ? `<div class="r-edits">${esc(editNote)}</div>` : ""}
               </div>
@@ -3932,13 +3921,13 @@ const UI = (() => {
         ? `<div class="r-expanded">
             <div class="r-expanded-main">
               <div class="r-contrib">${m ? esc(fmtMacros(m)) : "Macros unavailable"}</div>
-              ${logged ? "" : mealStepHtml(meal, it.id, "gap")}
-              ${logged ? "" : `<label class="gap-plan-amt">Amount
+              ${logged ? "" : `<div class="gap-plan-edit-row">
+                ${mealPillsHtml(meal, it.id, "gap")}
                 <span class="gap-plan-amt-row">
                   <input type="number" inputmode="decimal" min="0" step="any" class="gap-plan-qty" data-id="${esc(it.id)}" value="${esc(qtyVal)}" aria-label="Planned amount">
                   <span class="muted small">${esc(unitLabel)}</span>
                 </span>
-              </label>`}
+              </div>`}
             </div>
             <div class="r-expanded-actions">
               ${logged
@@ -4049,7 +4038,7 @@ const UI = (() => {
     renderInsights, renderTrends, renderWeightTrend,
     applyInsightCategory, setIntakeCarouselPage, insightJumpTarget,
     onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip,
-    renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS, adjacentMeal,
+    renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
     titleCaseName, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
   };

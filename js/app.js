@@ -2374,15 +2374,15 @@ const App = (() => {
     return true;
   }
 
-  /** Promote / demote a logged diary entry’s meal. */
-  function stepDiaryEntryMeal(entryId, delta) {
+  /** Set a logged diary entry’s meal (expanded BF/L/D/S pills). */
+  function setDiaryEntryMeal(entryId, meal) {
     const day = state.viewDay;
+    if (!UI.MEALS.includes(meal)) return;
     const entry = Ledger.entriesFor(day).find((e) => e.id === entryId);
     if (!entry) return;
-    const nextMeal = UI.adjacentMeal(entry.meal || "snack", delta);
-    if (!nextMeal || nextMeal === entry.meal) return;
+    if ((entry.meal || "snack") === meal) return;
     try {
-      Ledger.amendEntry(day, entryId, { meal: nextMeal }, "meal changed");
+      Ledger.amendEntry(day, entryId, { meal }, "meal changed");
     } catch (error) {
       UI.toast("Couldn’t change meal — nothing changed");
       return;
@@ -2392,9 +2392,10 @@ const App = (() => {
     refreshDay();
   }
 
-  /** Promote / demote a pending plan item’s meal (breakfast↔…↔snack). */
-  function stepGapPlanItemMeal(itemId, delta) {
+  /** Set a pending plan item’s meal (expanded BF/L/D/S pills). */
+  function setGapPlanItemMeal(itemId, meal) {
     const day = state.viewDay;
+    if (!UI.MEALS.includes(meal)) return;
     const plan = dayPlan(day);
     if (!plan || !itemId) return;
     const items = Array.isArray(plan.items) ? plan.items : [];
@@ -2402,10 +2403,9 @@ const App = (() => {
     if (idx < 0) return;
     const item = items[idx];
     if (!item || item.status === "logged") return;
-    const nextMeal = UI.adjacentMeal(item.meal || "snack", delta);
-    if (!nextMeal || nextMeal === (item.meal || "snack")) return;
+    if ((item.meal || "snack") === meal) return;
     const next = cloneLocalData(plan);
-    next.items[idx] = { ...next.items[idx], meal: nextMeal };
+    next.items[idx] = { ...next.items[idx], meal };
     next.updatedAt = Date.now();
     try { saveDayPlan(day, next); }
     catch (error) { UI.toast("Couldn’t change meal — nothing changed"); return; }
@@ -5342,18 +5342,11 @@ const App = (() => {
           logGapItemNow(logBtn.dataset.id);
           return;
         }
-        const mealUp = e.target.closest("[data-action='gap-meal-up']");
-        if (mealUp) {
+        const mealBtn = e.target.closest("[data-action='gap-set-meal']");
+        if (mealBtn) {
           e.preventDefault();
           e.stopPropagation();
-          stepGapPlanItemMeal(mealUp.dataset.id, -1);
-          return;
-        }
-        const mealDown = e.target.closest("[data-action='gap-meal-down']");
-        if (mealDown) {
-          e.preventDefault();
-          e.stopPropagation();
-          stepGapPlanItemMeal(mealDown.dataset.id, 1);
+          setGapPlanItemMeal(mealBtn.dataset.id, mealBtn.dataset.meal);
           return;
         }
         const editBtn = e.target.closest("[data-action='edit-gap-item']");
@@ -6900,10 +6893,8 @@ const App = (() => {
       } else if (action === "toggle-entry") {
         UI.toggleEntryExpand(id);
         UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
-      } else if (action === "entry-meal-up") {
-        stepDiaryEntryMeal(id, -1);
-      } else if (action === "entry-meal-down") {
-        stepDiaryEntryMeal(id, 1);
+      } else if (action === "entry-set-meal") {
+        setDiaryEntryMeal(id, actionEl.dataset.meal);
       } else if (action === "edit-entry") {
         const day = actionEl.dataset.day || state.viewDay;
         const entry = Ledger.entriesFor(day).find((x) => x.id === id);
