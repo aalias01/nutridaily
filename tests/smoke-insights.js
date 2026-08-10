@@ -298,6 +298,11 @@ async function run(label, days) {
       "every visible sheet dialog has an accessible name",
       visibleDialogs.filter((sheet) => !dialogName(sheet)).map((sheet) => sheet.id).join(", "));
     const addSheet = $("#sheet-add");
+    ok(!$("#pick-mode-seg"), "add picker has no Single/Multi mode seg");
+    ok(!$("#pick-multi-bar").hidden && $("#btn-pick-multi-continue"),
+      "add picker shows multi continue bar by default");
+    ok(!$("#pick-single-actions").hidden,
+      "add picker keeps Log once / NUTRI / Import visible in multi");
     ok(addSheet.contains(window.document.activeElement), "Add food moves focus inside its dialog without opening search");
     ok(!addSheet.parentElement.hasAttribute("inert"), "modal sheet ancestor is never inert");
     ok($("#view-today").closest("main").hasAttribute("inert"), "modal makes the background view inert");
@@ -2473,6 +2478,7 @@ async function runImportSecurity() {
   const catalogPick = $("#pick-list [data-action='pick-catalog']");
   ok(!!catalogPick, "catalog fixture is available for atomic promotion test");
   catalogPick.click();
+  $("#btn-pick-multi-continue").click();
   const beforePromotion = JSON.stringify({
     eventsRaw: window.localStorage.getItem("nd_events_v1"),
     foodsRaw: window.localStorage.getItem("nd_personal_v1"),
@@ -2490,7 +2496,7 @@ async function runImportSecurity() {
     return originalSetItem.call(this, key, value);
   };
   try {
-    $("#qty-save").click();
+    $("#multi-qty-save").click();
   } finally {
     storageProto.setItem = originalSetItem;
     Sync.schedulePush = originalSchedulePush;
@@ -2505,7 +2511,7 @@ async function runImportSecurity() {
     "failed catalog log rolls both the new event and promoted food back exactly");
   ok(promotionSyncCalls === 0 && /nothing changed/i.test($("#toast").textContent) && !/^Logged$/.test($("#toast").textContent.trim()),
     "failed catalog log emits no success or sync signal");
-  $("#qty-cancel").click();
+  $("#multi-qty-cancel").click();
   await new Promise((r) => setTimeout(r, 220));
 
   const installPendingGap = (itemId) => {
@@ -2691,18 +2697,20 @@ async function runImportSecurity() {
 
   $("#fab-add").click();
   $("#pick-list [data-action='pick-food'][data-id='baseline-food']").click();
-  $("#qty-units [data-unit='g']").click();
-  $("#qty-input").value = "1000000001";
+  $("#btn-pick-multi-continue").click();
+  const diaryRow = $("#multi-qty-list .multi-qty-row");
+  diaryRow.querySelector("[data-multi-units] [data-unit='g']").click();
+  diaryRow.querySelector("[data-multi-qty]").value = "1000000001";
   const beforeDiaryReject = window.localStorage.getItem("nd_events_v1");
   producerRejectSyncs = 0;
   Sync.schedulePush = () => { producerRejectSyncs += 1; };
-  $("#qty-save").click();
+  $("#multi-qty-save").click();
   ok(window.localStorage.getItem("nd_events_v1") === beforeDiaryReject && producerRejectSyncs === 0 &&
-      !$("#sheet-qty").hidden,
+      !$("#sheet-multi-qty").hidden,
     "overbound diary grams, quantity, and derived macros cause no event, UI close, or sync");
-  $("#qty-input").value = "1000000000";
+  diaryRow.querySelector("[data-multi-qty]").value = "1000000000";
   Sync.schedulePush = originalSchedulePush;
-  $("#qty-save").click();
+  $("#multi-qty-save").click();
   const diaryBoundary = Ledger.entriesFor(producerDay).find((entry) => entry.source !== "quick");
   ok(diaryBoundary && diaryBoundary.grams === 1e9 && diaryBoundary.qty === 1e9 &&
       diaryBoundary.macros.kcal === 1e9,
@@ -3993,14 +4001,49 @@ async function runImportSecurity() {
       "Log once enables alongside Save food when the review is valid");
     $("#btn-review-log-once").click();
     const logged = Ledger.entriesFor(logOnceDay).find((e) => e.source === "once" && e.name === "Review Pad Thai");
-    ok(logged && logged.foodId == null && logged.grams === 100 &&
+    ok(logged && logged.foodId == null && logged.unit === "portion" && logged.qty === 1 &&
+        logged.displayQty === "1 portion" && logged.grams === 100 &&
         logged.macros.kcal === 200 && logged.macros.p === 10 &&
         logged.macros.na === null && logged.macros.k === null &&
         !Object.prototype.hasOwnProperty.call(logged, "per100"),
-      "Log once writes a 100 g portion one-off with no per100 and unknown minerals");
+      "Log once writes a 1-portion one-off (100 g mass metadata) with no per100 and unknown minerals");
     ok(App.state.personalFoods.length === foodsBefore,
       "Log once does not add anything to My Foods");
 
+    // Acceptance: Batch mass → Totals as 1 portion (not 100 g of per100 density).
+    {
+      const batchDay = "2019-06-30";
+      App.state.viewDay = batchDay;
+      [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
+      $("#fab-add").click();
+      $("#btn-paste-new").click();
+      $("#btn-manual-food").click();
+      $("#rev-name").value = "Hot Iron Mongolian Grill Lunch";
+      $("#rev-kcal").value = "142";
+      $("#rev-p").value = "9.8";
+      $("#rev-c").value = "16.1";
+      $("#rev-f").value = "4.3";
+      $("#rev-fb").value = "1.8";
+      $("#rev-na").value = "289";
+      $("#rev-k").value = "278";
+      $("#rev-batch-g").value = "900";
+      $("#rev-batch-s").value = "1";
+      $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
+      $("#btn-review-log-once").click();
+      const batchLogged = Ledger.entriesFor(batchDay).find(
+        (e) => e.source === "once" && e.name === "Hot Iron Mongolian Grill Lunch"
+      );
+      ok(batchLogged && batchLogged.unit === "portion" && batchLogged.qty === 1 &&
+          batchLogged.displayQty === "1 portion" && batchLogged.grams === 900 &&
+          batchLogged.macros.kcal === 1278 &&
+          Math.abs(batchLogged.macros.p - 88.2) < 0.05 &&
+          batchLogged.macros.na === 2601 && batchLogged.macros.k === 2502 &&
+          !Object.prototype.hasOwnProperty.call(batchLogged, "per100"),
+        "Log once with Batch 900 g logs 1 portion at Totals (1278 kcal), not 100 g");
+      ok(App.state.personalFoods.length === foodsBefore,
+        "Batch Log once still does not add to My Foods");
+      App.state.viewDay = logOnceDay;
+    }
     // Hidden while updating a library food.
     [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "foods").click();
     await new Promise((r) => setTimeout(r, 20));

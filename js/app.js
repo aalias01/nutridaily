@@ -62,7 +62,6 @@ const App = (() => {
     gapStep: "select",
     gapPortionCache: null, // Map foodId -> portionStats for select list
     qtyIntent: "log", // "log" | "plan" — qty sheet saves to ledger or dayPlans
-    pickMode: "single", // "single" | "multi" — #sheet-add selection mode
     multiPick: {}, // key -> { food, pendingCatalog }
     multiQtyItems: [], // [{ key, food, qty, unit, meal, pendingCatalog }]
     qtyReturnToMultiKey: null, // when set, #sheet-qty writes back to multi draft
@@ -1577,16 +1576,10 @@ const App = (() => {
   }
 
   function syncPickModeChrome() {
-    const multi = state.pickMode === "multi";
-    UI.$$("#pick-mode-seg [data-pick-mode]").forEach((btn) => {
-      const on = btn.dataset.pickMode === state.pickMode;
-      btn.classList.toggle("on", on);
-      btn.setAttribute("aria-pressed", String(on));
-    });
     const multiBar = UI.$("#pick-multi-bar");
     const singleActs = UI.$("#pick-single-actions");
-    if (multiBar) multiBar.hidden = !multi;
-    if (singleActs) singleActs.hidden = multi;
+    if (multiBar) multiBar.hidden = false;
+    if (singleActs) singleActs.hidden = false;
     const n = multiPickKeys().size;
     const cont = UI.$("#btn-pick-multi-continue");
     if (cont) {
@@ -1595,22 +1588,13 @@ const App = (() => {
     }
   }
 
-  function setPickMode(mode) {
-    const next = mode === "multi" ? "multi" : "single";
-    if (state.pickMode === next) return;
-    state.pickMode = next;
-    if (next === "single") state.multiPick = {};
-    syncPickModeChrome();
-    refreshAddPicker();
-  }
-
   function refreshAddPicker() {
     const search = UI.$("#pick-search");
     const q = search ? search.value : "";
     UI.renderPicker(state.personalFoods, q, true, {
       yesterday: Ledger.entriesFor(state.yesterdayKey || yesterdayKey()),
       yesterdayLabel: isToday() ? "Yesterday" : "Previous day",
-      multiMode: state.pickMode === "multi",
+      multiMode: true,
       selectedKeys: multiPickKeys(),
     });
     syncPickModeChrome();
@@ -3066,11 +3050,8 @@ const App = (() => {
     state.pendingCatalogFood = null;
     state.qtyReturnToMultiKey = null;
     if (!(opts && opts.keepMulti)) {
-      state.pickMode = "single";
       state.multiPick = {};
       state.multiQtyItems = [];
-    } else if (state.pickMode !== "multi") {
-      state.pickMode = "multi";
     }
     UI.$("#pick-search").value = (opts && opts.keepSearch) ? (UI.$("#pick-search").value || "") : "";
     state.yesterdayKey = yesterdayKey();
@@ -3754,20 +3735,25 @@ const App = (() => {
 
   /**
    * Log the review draft as a one-off (source:once) without writing My Foods.
-   * Portion = 1 piece if logging by count, else 1 serving if set, else 100 g.
+   * Always 1 portion of the imported Totals (batch-scaled from per100 when Batch
+   * is set). Mass is kept on entry.grams for promote/plausibility only — display
+   * stays "1 portion", not an editable grams multiplier.
    * When editing a ledger entry (Estimate-from-edit), amend that id — do not add a duplicate.
    */
   function logOnceFromReview() {
     if (state.updateFoodId || state.promotingOnce) return;
     if (!validateReviewSave()) { UI.toast("Fix the highlighted fields"); return; }
     const draft = UI.readReviewDraft(state.reviewParsed && state.reviewParsed.food);
-    let grams = 100;
-    if (draft.logAs === "piece" && draft.units && Number(draft.units.piece) > 0) {
-      grams = Number(draft.units.piece);
+    const batchG = Number(draft.batch && draft.batch.grams);
+    let massGrams = 100;
+    if (Number.isFinite(batchG) && batchG >= 10) {
+      massGrams = batchG;
+    } else if (draft.logAs === "piece" && draft.units && Number(draft.units.piece) > 0) {
+      massGrams = Number(draft.units.piece);
     } else if (draft.units && Number(draft.units.serving) > 0) {
-      grams = Number(draft.units.serving);
+      massGrams = Number(draft.units.serving);
     }
-    const macros = FoodMatch.computeMacros(draft.per100, grams);
+    const macros = FoodMatch.computeMacros(draft.per100, massGrams);
     const day = state.editEntryId
       ? (state.editEntryDay || state.viewDay || Ledger.todayKey())
       : (state.viewDay || Ledger.todayKey());
@@ -3782,7 +3768,11 @@ const App = (() => {
       macros,
       confidence: onceConfidenceFromReview(draft.confidence),
       macrosOpened: true,
-    }, grams, "g", meal);
+    }, 1, "portion", meal);
+    // Keep estimated/batch mass for promote + plausibility; unit stays portion.
+    if (Number.isFinite(massGrams) && massGrams > 0) {
+      entry.grams = Math.round(massGrams);
+    }
     const producerError = validateProducerEntry(entry);
     if (producerError) { UI.toast(producerError); return; }
     if (!confirmOffTodayLog(day)) return;
@@ -5895,13 +5885,6 @@ const App = (() => {
 
     UI.$("#foods-search").addEventListener("input", refreshFoods);
     UI.$("#pick-search").addEventListener("input", () => refreshAddPicker());
-    if (UI.$("#pick-mode-seg")) {
-      UI.$("#pick-mode-seg").addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-pick-mode]");
-        if (!btn) return;
-        setPickMode(btn.dataset.pickMode);
-      });
-    }
     if (UI.$("#btn-pick-multi-continue")) {
       UI.$("#btn-pick-multi-continue").addEventListener("click", continueMultiPick);
     }
@@ -5917,7 +5900,6 @@ const App = (() => {
           nextPick[item.key] = { food: item.food, pendingCatalog: !!item.pendingCatalog };
         }
         state.multiPick = nextPick;
-        state.pickMode = "multi";
         UI.closeSheet("sheet-multi-qty");
         clearMultiQtySheetViewport();
         openAddSheet({ keepMulti: true, keepSearch: true });
@@ -7032,7 +7014,6 @@ const App = (() => {
         }
         if (sheetId === "sheet-add") {
           clearMultiPickFlow();
-          state.pickMode = "single";
           if (state.qtyIntent === "plan") {
             state.qtyIntent = "log";
             openGapSheet({ plan: true });
@@ -7059,23 +7040,14 @@ const App = (() => {
         state.pendingCatalogFood = null;
         const food = findFood(id);
         if (!food) return;
-        if (state.pickMode === "multi") {
-          toggleMultiFood(`food:${food.id}`, food, false);
-          return;
-        }
-        openQty(food);
+        toggleMultiFood(`food:${food.id}`, food, false);
       } else if (action === "pick-catalog") {
         const db = (typeof FOOD_DB !== "undefined" ? FOOD_DB : []).find((f) => f.id === id);
         if (!db) return;
         const existing = state.personalFoods.find((f) => !f.deleted && f.catalogId === db.id);
         const food = existing || Foods.fromCatalog(db);
-        if (state.pickMode === "multi") {
-          if (existing) toggleMultiFood(`food:${existing.id}`, existing, false);
-          else toggleMultiFood(`cat:${db.id}`, food, true);
-          return;
-        }
-        state.pendingCatalogFood = existing ? null : food;
-        openQty(food);
+        if (existing) toggleMultiFood(`food:${existing.id}`, existing, false);
+        else toggleMultiFood(`cat:${db.id}`, food, true);
       } else if (action === "toggle-entry") {
         UI.toggleEntryExpand(id);
         UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
@@ -7104,18 +7076,15 @@ const App = (() => {
       } else if (action === "repeat-yesterday") {
         const entry = Ledger.entriesFor(state.yesterdayKey || yesterdayKey()).find((x) => x.id === id);
         if (!entry) return;
-        if (state.pickMode === "multi") {
-          const food = foodFromLogEntry(entry);
-          if (!food) {
-            UI.toast("One-offs stay on Single — switch modes to repeat that log");
-            return;
-          }
-          const key = food.id ? `food:${food.id}` : `yest:${entry.id}`;
-          toggleMultiFood(key, food, false, multiPrefillFromEntry(entry));
+        const food = foodFromLogEntry(entry);
+        if (!food) {
+          // One-offs / quick: no library food for multi checklist — open qty directly.
+          UI.closeSheet("sheet-add");
+          openQtyFromEntry(entry);
           return;
         }
-        UI.closeSheet("sheet-add");
-        openQtyFromEntry(entry);
+        const key = food.id ? `food:${food.id}` : `yest:${entry.id}`;
+        toggleMultiFood(key, food, false, multiPrefillFromEntry(entry));
       } else if (action === "goto-day") {
         state.viewDay = actionEl.dataset.day;
         switchView("today");
@@ -7261,7 +7230,6 @@ const App = (() => {
       }
       if (top === "sheet-add") {
         clearMultiPickFlow();
-        state.pickMode = "single";
         if (state.qtyIntent === "plan") {
           state.qtyIntent = "log";
           openGapSheet({ plan: true });
