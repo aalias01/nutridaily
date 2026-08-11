@@ -2492,15 +2492,17 @@ const UI = (() => {
     }
     const rankSeg = $("#topfoods-rank");
     if (rankSeg) {
+      // Rank-by is only interactive under Overall; otherwise Top foods follows
+      // the dock nutrient. Always sync the .on chip so a dock change (e.g.
+      // Overall+Fiber → Protein) does not leave a stale highlight if the seg
+      // is briefly visible or the user returns to Overall.
       const showRank = ctx.nutrient === "overall";
       rankSeg.hidden = !showRank;
-      if (showRank) {
-        rankSeg.querySelectorAll("[data-topfood-metric]").forEach((btn) => {
-          const on = btn.dataset.topfoodMetric === metric;
-          btn.classList.toggle("on", on);
-          btn.setAttribute("aria-pressed", on ? "true" : "false");
-        });
-      }
+      rankSeg.querySelectorAll("[data-topfood-metric]").forEach((btn) => {
+        const on = btn.dataset.topfoodMetric === metric;
+        btn.classList.toggle("on", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
     }
 
     const agg = typeof Analytics.foodNutrientAgg === "function"
@@ -3389,9 +3391,14 @@ const UI = (() => {
     const idx = keys.indexOf(day);
     const x = hit.pad.l + (idx + 0.5) * (hit.iw / Math.max(1, keys.length));
     const label = new Date(day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const value = byDay[day];
+    // Open the day *before* the weigh-in so you can check what led into it.
+    const prevDay = Analytics.addDays(day, -1);
     showTip("#weight-tip", "#section-weight .canvas-wrap", x,
-      `<span class="tip-day">${esc(label)}</span><b>${byDay[day].toFixed(1)} ${esc(unit)}</b>`);
-    return { day, value: byDay[day], unit };
+      `<span class="tip-day">${esc(label)}</span>` +
+      `<b>${value.toFixed(1)} ${esc(unit)}</b>` +
+      `<button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(prevDay)}">Open previous day</button>`);
+    return { day, prevDay, value, unit };
   }
 
   // Legacy query helpers kept for callers that only want the day key.

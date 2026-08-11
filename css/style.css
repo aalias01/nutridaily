@@ -777,6 +777,8 @@ body.sheet-open .insight-dock { display: none; }
 .check-row { display: flex !important; align-items: center; gap: 8px; font-weight: 500 !important; }
 .check-row input { width: auto !important; }
 .seg { display: inline-flex; gap: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 2px; }
+/* Author display must not defeat [hidden] (Top foods Rank-by under a dock nutrient). */
+.seg[hidden] { display: none !important; }
 .seg button {
   border: none; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 650;
   padding: 7px 12px; min-height: 36px; border-radius: 8px; cursor: pointer; text-transform: capitalize;

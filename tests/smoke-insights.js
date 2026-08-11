@@ -206,6 +206,8 @@ async function run(label, days) {
       "insight-section [hidden] uses display:none !important");
     ok(/\.insight-panel\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
       "insight-panel [hidden] uses display:none !important");
+    ok(/\.seg\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
+      "seg [hidden] uses display:none !important (Rank-by must actually hide)");
     ok(/\.insight-carousel-track[^}]*scroll-snap-type:\s*x\s+mandatory/s.test(cssText) &&
         /\.carousel-dot\.on\s*\{/s.test(cssText),
       "Intake carousel uses mandatory scroll-snap and shaded pagination dots");
@@ -384,13 +386,27 @@ async function run(label, days) {
     "Top foods Rank-by chips show under Overall");
   ok($('#topfoods-rank [data-topfood-metric="kcal"].on'),
     "Overall Top foods defaults Rank-by to Kcal");
+  $('#topfoods-rank [data-topfood-metric="fiber"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($('#topfoods-rank [data-topfood-metric="fiber"].on'),
+    "Rank-by can switch to Fiber under Overall");
+  window.document.querySelector('#insight-nutrient [data-nutrient="protein"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#topfoods-rank").hidden,
+    "Rank-by hides when a single nutrient is selected");
+  ok($('#topfoods-rank [data-topfood-metric="protein"].on') &&
+      !$('#topfoods-rank [data-topfood-metric="fiber"].on'),
+    "Rank-by chip tracks the dock nutrient after leaving Overall");
+  ok(/Protein/i.test(text("#topfoods-scope")),
+    "Top foods scope label matches the dock nutrient");
   if (carDotsTop[0]) carDotsTop[0].click();
   await new Promise((r) => setTimeout(r, 20));
   window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
   await new Promise((r) => setTimeout(r, 20));
   if (carDotsTop[2]) carDotsTop[2].click();
   await new Promise((r) => setTimeout(r, 20));
-  ok($("#topfoods-rank").hidden, "Rank-by hides when a single nutrient is selected");
+  ok($("#topfoods-rank").hidden,
+    "Rank-by stays hidden under Kcal dock");
   window.document.querySelector('#insight-nutrient [data-nutrient="overall"]').click();
   await new Promise((r) => setTimeout(r, 20));
   if (carDotsTop[0]) carDotsTop[0].click();
@@ -1433,7 +1449,30 @@ Projected: 1000000000 kcal | P 0 | C 0 | F 0 | Fiber 0 | Sodium 0 | Potassium 0
     }
     const wHit = window.UI.onWeightTap(180);
     ok(wHit == null || typeof wHit.value === "number", "weight tap returns a weigh-in or null");
-  }
+    if (wHit && wHit.day) {
+      const App = window.eval("App");
+      const Analytics = window.eval("Analytics");
+      ok(!$("#weight-tip").hidden, "weight tap shows the tooltip");
+      ok(!!$("#weight-tip .tip-day") && text("#weight-tip .tip-day").length > 0,
+        "weight tip shows the weigh-in date");
+      ok(new RegExp(`${wHit.value.toFixed(1)}\\s*${wHit.unit}`).test(text("#weight-tip")),
+        "weight tip shows the weigh-in value");
+      const prevBtn = $("#weight-tip [data-action='goto-day']");
+      const expectedPrev = Analytics.addDays(wHit.day, -1);
+      ok(prevBtn && /Open previous day/i.test(prevBtn.textContent) &&
+          prevBtn.dataset.day === expectedPrev,
+        "weight tip offers Open previous day for the day before the weigh-in");
+      prevBtn.click();
+      await new Promise((r) => setTimeout(r, 30));
+      ok(!!$("#view-today.active"), "Open previous day jumps to Today");
+      ok(App.state.viewDay === expectedPrev,
+        "Open previous day opens the calendar day before the weigh-in");
+      ok(!$("#insights-back").hidden && /Back to Insights > Weight/i.test(text("#insights-back-btn")),
+        "Open previous day arms Back to Insights > Weight");
+      const insightsTab = [...window.document.querySelectorAll(".tab")]
+        .find((x) => x.dataset.view === "insights");
+      if (insightsTab) { insightsTab.click(); await new Promise((r) => setTimeout(r, 40)); }
+    }
 
   // Today HUD → same contribution card for the viewed day.
   // Set Insights nutrient to protein first so we can assert HUD taps do not bleed.
