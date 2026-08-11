@@ -1735,21 +1735,23 @@ const UI = (() => {
       return;
     }
 
+    // Jump to category panels (not inner cards). Teaser clicks switch
+    // category only — scrolling to a sticky-offset section caused a bump.
     const cards = [
       {
         cat: "Patterns",
         detail: "Where macros and meals land",
-        jump: ctx.maturity === "thin" ? "#insight-scorecard" : "#section-composition",
+        jump: "#insight-panel-patterns",
       },
       {
         cat: "Body",
         detail: "Weight trend and energy",
-        jump: "#section-weight",
+        jump: "#insight-panel-body",
       },
       {
         cat: "Intake",
         detail: "Trend, calendar, top foods · swipe",
-        jump: "#section-intake",
+        jump: "#insight-panel-intake",
       },
     ];
 

@@ -7128,6 +7128,11 @@ const App = (() => {
             forceRefresh: true,
           });
         }
+        // Overview destination tiles only switch category (like tapping the
+        // tab). scrollIntoView against a sticky view-head caused a small
+        // upward bump — Patterns was the loud case. Observation jumps still
+        // scroll to the concrete card.
+        if (jump.closest("#insight-teasers")) return;
         const target = sel && UI.$(sel);
         if (target) {
           const reduceMotion = !!(window.matchMedia &&
