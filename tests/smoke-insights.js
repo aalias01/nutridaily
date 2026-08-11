@@ -2442,6 +2442,7 @@ async function runImportSecurity() {
     gapSelected: App.state.gapSelected,
     gapPendingItemId: App.state.gapPendingItemId,
     gapPendingDay: App.state.gapPendingDay,
+    gapPendingEditOnly: App.state.gapPendingEditOnly,
     gapParsed: App.state.gapParsed,
     gapStep: App.state.gapStep,
     pickFood: App.state.pickFood,
@@ -2646,11 +2647,13 @@ async function runImportSecurity() {
     };
     originalSetItem.call(window.localStorage, "nd_settings_v1", JSON.stringify(App.state.settings));
   };
-  const exerciseGapWriteFailures = () => {
+  // writeCount: plan-edit uses commitGapPlanAndFoods (foods+settings = 2);
+  // diary amend + gapPending uses commitGapEntryChange (events+foods+settings = 3).
+  const exerciseGapWriteFailures = (writeCount = 3) => {
     let exactRollback = true;
     let pendingPreserved = true;
     let surfaced = true;
-    for (let failAt = 1; failAt <= 3; failAt++) {
+    for (let failAt = 1; failAt <= writeCount; failAt++) {
       const beforeStorage = JSON.stringify(storageSnapshot());
       const beforeMemory = memorySnapshot();
       let write = 0;
@@ -2671,31 +2674,49 @@ async function runImportSecurity() {
         JSON.stringify(storageSnapshot()) === beforeStorage && memorySnapshot() === beforeMemory;
       pendingPreserved = pendingPreserved && pending && pending.status === "pending" &&
         App.state.settings.gapDrafts[today] && App.state.gapPendingItemId === pending.id;
-      surfaced = surfaced && /GAP item.*nothing changed/i.test($("#toast").textContent) &&
-        !/^Logged$/.test($("#toast").textContent.trim());
+      surfaced = surfaced && /plan item.*nothing changed|GAP item.*nothing changed/i.test($("#toast").textContent) &&
+        !/^Logged$/.test($("#toast").textContent.trim()) &&
+        !/^Updated plan$/.test($("#toast").textContent.trim());
     }
     return { exactRollback, pendingPreserved, surfaced };
   };
 
-  // A new GAP log via the qty sheet spans the event ledger, food promotion/use
-  // metadata, plan, and consumed draft. Open qty with Edit (one-tap Log commits
-  // immediately and is covered separately below), then fail each forward write.
+  // Edit opens qty to adjust a pending plan row only (does not log). Fail each
+  // durable write and require exact rollback with the item still pending.
   installPendingGap("gap-new-atomic");
   $("#btn-gap-plan").click();
   // Edit lives in the expanded row actions (one-tap + is always on the row).
   $("#gap-plan-list [data-action='toggle-gap-item']").click();
   $("#gap-plan-list [data-action='edit-gap-item']").click();
-  ok(!$("#sheet-qty").hidden && App.state.gapPendingItemId === "gap-new-atomic",
-    "Edit on a pending GAP item opens qty with gapPendingItemId armed");
+  ok(!$("#sheet-qty").hidden && App.state.gapPendingItemId === "gap-new-atomic" &&
+      App.state.gapPendingEditOnly === true && /Save to plan/i.test($("#qty-save").textContent),
+    "Edit on a pending GAP item opens qty in plan-edit mode");
   let gapSyncCalls = 0;
   Sync.schedulePush = () => { gapSyncCalls += 1; };
-  const failedGapAdd = exerciseGapWriteFailures();
+  const failedGapAdd = exerciseGapWriteFailures(2);
   ok(failedGapAdd.exactRollback && failedGapAdd.pendingPreserved,
-    "failed GAP add rolls ledger, foods, plan, draft, and pending memory back at every write");
+    "failed GAP plan edit rolls ledger, foods, plan, draft, and pending memory back at every write");
   ok(failedGapAdd.surfaced && gapSyncCalls === 0,
-    "failed GAP add reports no success and schedules no sync");
-  $("#qty-cancel").click();
-  await new Promise((r) => setTimeout(r, 220));
+    "failed GAP plan edit reports no success and schedules no sync");
+  // Successful Edit saves to the plan without logging.
+  const eventsBeforePlanEdit = Ledger.allEvents().length;
+  $("#qty-input").value = "150";
+  $("#qty-input").dispatchEvent(new window.Event("input", { bubbles: true }));
+  $("#qty-save").click();
+  await new Promise((r) => setTimeout(r, 30));
+  {
+    const plan = App.state.settings.dayPlans[today];
+    const pending = plan && plan.items && plan.items[0];
+    ok(pending && pending.status === "pending" && Number(pending.qty) === 150 &&
+        Number(pending.grams) === 150,
+      "Edit → Save to plan updates qty and keeps the item pending");
+    ok(Ledger.allEvents().length === eventsBeforePlanEdit,
+      "Edit → Save to plan does not append a diary log");
+    ok(/Updated plan/i.test($("#toast").textContent), "plan edit toasts Updated plan");
+  }
+  gapSyncCalls = 0;
+  try { $("#btn-gap-plan-close").click(); } catch (_) {}
+  await new Promise((r) => setTimeout(r, 100));
 
   // One-tap Log on a pending item uses the same commitGapEntryChange transaction
   // without opening qty — fail each durable write and require exact rollback.
@@ -2736,12 +2757,13 @@ async function runImportSecurity() {
   }
 
   // The same transaction is used if an existing diary line is amended while
-  // satisfying a pending GAP item.
+  // satisfying a pending GAP item (edit-only flag stays off).
   installPendingGap("gap-edit-atomic");
   $("#day-log [data-action='toggle-entry'][data-id='baseline-entry']").click();
   $("#day-log [data-action='edit-entry'][data-id='baseline-entry']").click();
   App.state.gapPendingItemId = "gap-edit-atomic";
   App.state.gapPendingDay = today;
+  App.state.gapPendingEditOnly = false;
   const failedGapEdit = exerciseGapWriteFailures();
   ok(failedGapEdit.exactRollback && failedGapEdit.pendingPreserved,
     "failed GAP edit rolls ledger, foods, plan, draft, and pending memory back at every write");

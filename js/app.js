@@ -62,6 +62,7 @@ const App = (() => {
     gapSelected: {}, // key -> food object (personal or catalog copy)
     gapPendingItemId: null, // plan item id while qty sheet open
     gapPendingDay: null, // day the pending item belongs to (survives midnight roll)
+    gapPendingEditOnly: false, // Edit from Planner: Save updates plan, does not log
     gapParsed: null, // last GapPrompt.parseGapBlock result (multi-option)
     gapStep: "select",
     qtyIntent: "log", // "log" | "plan" | "gap" — log, add-to-plan, or pick candidates for AI fill
@@ -2289,11 +2290,51 @@ const App = (() => {
       ? item.qty
       : (item.grams != null ? item.grams : (item.suggestedGrams != null ? item.suggestedGrams : item.qty));
     UI.closeSheet("sheet-gap");
-    state.qtyIntent = "log";
-    // openQty clears any stale gapPendingItemId; set after
+    // Edit only adjusts the pending plan row. Logging stays on the plan row +.
+    state.qtyIntent = "plan";
     openQty(food, { qty, unit, meal: item.meal || Foods.inferMeal() });
     state.gapPendingItemId = item.id;
     state.gapPendingDay = day;
+    state.gapPendingEditOnly = true;
+    const saveBtn = UI.$("#qty-save");
+    if (saveBtn) saveBtn.textContent = "Save to plan";
+  }
+
+  /** Rewrite a pending plan item from the qty sheet (unit / amount / meal). Does not log. */
+  function applyQtyToPendingGapItem(day, itemId, food, entry) {
+    const d = day || state.viewDay;
+    const plan = dayPlan(d);
+    if (!plan || !itemId) throw new Error("The GAP item is no longer pending");
+    const items = Array.isArray(plan.items) ? plan.items : [];
+    const idx = items.findIndex((it) => it && it.id === itemId && it.status !== "logged");
+    if (idx < 0) throw new Error("The GAP item is no longer pending");
+
+    let nextPersonal = cloneLocalData(state.personalFoods);
+    if (food && food.id && !food._orphan && !nextPersonal.some((f) => f.id === food.id)) {
+      nextPersonal.push(cloneLocalData(food));
+    }
+    const foodId = food && food._orphan ? null : (entry.foodId || (food && food.id) || null);
+    const grams = entry.grams != null ? entry.grams : null;
+    const next = cloneLocalData(plan);
+    next.items[idx] = {
+      ...next.items[idx],
+      foodId,
+      name: (food && food.name) || entry.name || next.items[idx].name,
+      grams,
+      suggestedGrams: grams,
+      qty: entry.qty,
+      unit: entry.unit || "g",
+      meal: entry.meal || next.items[idx].meal || "snack",
+      status: "pending",
+      loggedEntryId: null,
+    };
+    if (!Array.isArray(next.candidates)) next.candidates = [];
+    if (foodId && !next.candidates.some((c) => c.foodId === foodId)) {
+      next.candidates.push({ foodId, name: next.items[idx].name });
+    }
+    next.projected = projectPlanFromItems(d, next.items, nextPersonal);
+    next.updatedAt = Date.now();
+    commitGapPlanAndFoods(d, next, nextPersonal);
   }
 
   /** Log a pending plan item at its planned amount (no qty sheet). */
@@ -3109,6 +3150,7 @@ const App = (() => {
     state.pendingCatalogFood = null;
     state.qtyIntent = "log";
     state.qtyReturnToMultiKey = null;
+    state.gapPendingEditOnly = false;
   }
 
   function openQty(food, prefill) {
@@ -3120,6 +3162,7 @@ const App = (() => {
     // Always clear gap pending on any qty open; openGapItemQty sets it after
     state.gapPendingItemId = null;
     state.gapPendingDay = null;
+    state.gapPendingEditOnly = false;
     state.qtyReturnToMultiKey = null;
     state.pickFood = food;
     UI.fillQtySheet(food, !!state.settings.imperial, {
@@ -3425,6 +3468,30 @@ const App = (() => {
 
     const gapItemId = state.gapPendingItemId;
     const day = gapItemId ? (state.gapPendingDay || editDay()) : editDay();
+
+    // Planner Edit: rewrite the pending row only. One-tap + remains the log path.
+    if (gapItemId && state.gapPendingEditOnly) {
+      if (!entry.foodId && food.id && !food._orphan) entry.foodId = food.id;
+      if (food._orphan) entry.foodId = null;
+      try {
+        applyQtyToPendingGapItem(day, gapItemId, food, entry);
+      } catch (error) {
+        UI.toast("Couldn’t update this plan item — nothing changed");
+        return;
+      }
+      if (state.pendingCatalogFood && state.pendingCatalogFood.id === food.id) state.pendingCatalogFood = null;
+      state.gapPendingItemId = null;
+      state.gapPendingDay = null;
+      state.gapPendingEditOnly = false;
+      Sync.schedulePush();
+      UI.closeSheet("sheet-qty");
+      resetQtyState();
+      refreshDay();
+      openGapSheet({ plan: true });
+      UI.toast("Updated plan");
+      return;
+    }
+
     if (!confirmOffTodayLog(day)) return;
 
     // Manual Planner add: pending item on dayPlans, not a ledger entry.
@@ -6643,6 +6710,7 @@ const App = (() => {
     UI.$("#qty-edit-food").addEventListener("click", () => {
       state.gapPendingItemId = null;
       state.gapPendingDay = null;
+      state.gapPendingEditOnly = false;
       openEditFood(state.pickFood);
     });
     const qtyRefine = UI.$("#qty-refine-food");
@@ -6650,6 +6718,7 @@ const App = (() => {
       qtyRefine.addEventListener("click", () => {
         state.gapPendingItemId = null;
         state.gapPendingDay = null;
+        state.gapPendingEditOnly = false;
         openRefineFood(state.pickFood);
       });
     }
