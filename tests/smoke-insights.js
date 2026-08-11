@@ -1070,10 +1070,10 @@ END`;
     todayTab.click();
     $("#btn-close-gap").click();
     // Planner opens plan-first; enter the AI fill path, then dismiss the
-    // one-time intro if shown so #btn-gap-to-prompt is enabled.
+    // one-time intro if shown so the shared Add-food picker can Continue.
     $("#btn-gap-recalc").click();
     if (!$("#gap-step-intro").hidden) $("#btn-gap-intro-ok").click();
-    $("#btn-gap-to-prompt").click();
+    $("#btn-pick-multi-continue").click();
     $("#gap-paste").value = `GAP v1
 Day: ${todayKey}
 Reachable: yes

@@ -3984,41 +3984,6 @@ const UI = (() => {
   }
 
   /**
-   * Multi-select food list for gap plan.
-   * rows: [{ key, name, sub, selected }] — selected rows are expected first.
-   * opts.queryActive: true when a search string is present (show empty results under selected).
-   */
-  function renderGapSelectList(rows, opts) {
-    const foodsRoot = $("#gap-foods-list");
-    const selectedRoot = $("#gap-selected-list");
-    const selectedLabel = $("#gap-selected-label");
-    if (!foodsRoot || !selectedRoot) return;
-    const queryActive = !!(opts && opts.queryActive);
-    const list = rows || [];
-    const selected = list.filter((r) => r.selected);
-    const rest = list.filter((r) => !r.selected);
-    const rowHtml = (r) => `
-      <button type="button" class="gap-select-row${r.selected ? " selected" : ""}" data-action="gap-toggle" data-key="${esc(r.key)}">
-        <input type="checkbox" tabindex="-1" ${r.selected ? "checked" : ""} aria-hidden="true">
-        <div class="gap-meta">
-          <div class="r-name">${esc(r.name)}</div>
-          <div class="r-qty">${esc(r.sub || "")}</div>
-        </div>
-      </button>`;
-    if (rest.length) {
-      foodsRoot.innerHTML = rest.map(rowHtml).join("");
-    } else if (queryActive) {
-      foodsRoot.innerHTML = `<div class="empty small">No foods match. Try a different search.</div>`;
-    } else {
-      foodsRoot.innerHTML = `<div class="empty small">No foods match. Add foods to My Foods or search the catalog.</div>`;
-    }
-    if (selectedLabel) selectedLabel.textContent = `Selected (${selected.length})`;
-    selectedRoot.innerHTML = selected.length
-      ? selected.map(rowHtml).join("")
-      : `<div class="empty small">None yet</div>`;
-  }
-
-  /**
    * Plan items list (Today log layout). pending first, then logged.
    * items: [{ id, name, meal, qtyLabel, qty, unit, macrosObj, status }]
    */
@@ -4088,12 +4053,10 @@ const UI = (() => {
 
   function showGapStep(step) {
     const intro = $("#gap-step-intro");
-    const select = $("#gap-step-select");
     const prompt = $("#gap-step-prompt");
     const choose = $("#gap-step-choose");
     const plan = $("#gap-step-plan");
     if (intro) intro.hidden = step !== "intro";
-    if (select) select.hidden = step !== "select";
     if (prompt) prompt.hidden = step !== "prompt";
     if (choose) choose.hidden = step !== "choose";
     if (plan) plan.hidden = step !== "plan";
@@ -4105,15 +4068,13 @@ const UI = (() => {
           ? "AI fill prompt"
           : step === "choose"
             ? "Choose a plan"
-            : step === "select"
-              ? "Pick foods for AI"
-              : step === "intro"
-                ? "Fill with AI"
-                : "Planner";
+            : step === "intro"
+              ? "Fill with AI"
+              : "Planner";
     }
     const disclaimer = $("#gap-disclaimer");
-    // Intro carries its own copy; select/plan stay compact without the banner.
-    if (disclaimer) disclaimer.hidden = step === "intro" || step === "select" || step === "plan";
+    // Intro carries its own copy; plan stays compact without the banner.
+    if (disclaimer) disclaimer.hidden = step === "intro" || step === "plan";
   }
 
   /**
@@ -4161,6 +4122,6 @@ const UI = (() => {
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
     inlineAmountFields,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
-    titleCaseName, renderGapSelectList, renderGapPlanList, showGapStep, renderGapOptions,
+    titleCaseName, renderGapPlanList, showGapStep, renderGapOptions,
   };
 })();

@@ -60,8 +60,7 @@ const App = (() => {
     gapPendingDay: null, // day the pending item belongs to (survives midnight roll)
     gapParsed: null, // last GapPrompt.parseGapBlock result (multi-option)
     gapStep: "select",
-    gapPortionCache: null, // Map foodId -> portionStats for select list
-    qtyIntent: "log", // "log" | "plan" — qty sheet saves to ledger or dayPlans
+    qtyIntent: "log", // "log" | "plan" | "gap" — log, add-to-plan, or pick candidates for AI fill
     multiPick: {}, // key -> { food, pendingCatalog }
     multiQtyItems: [], // [{ key, food, qty, unit, meal, pendingCatalog }]
     qtyReturnToMultiKey: null, // when set, #sheet-qty writes back to multi draft
@@ -1285,161 +1284,47 @@ const App = (() => {
     });
   }
 
-  function refreshGapRemainingBlurb() {
-    const el = UI.$("#gap-remaining-blurb");
-    if (!el) return;
-    const totals = Ledger.totalsFor(state.viewDay);
-    const goals = goalsForView();
-    const resolved = typeof Phases !== "undefined" ? Phases.effectiveGoals(totals, goals) : goals;
-    // An honoured fast has nothing to close — do not print P150 against 0 kcal.
-    if (resolved && resolved._dayPlan && resolved._dayPlan.intent === "fast" && resolved._unscored) {
-      el.textContent = "Declared fast — targets for this day are not scored, so Planner has nothing to fill.";
-      return;
+  /** Map a gap-selected food onto the shared Add-food multiPick key space. */
+  function multiKeyForGapFood(food) {
+    if (!food) return "";
+    if (food.id) {
+      const inLib = findFood(food.id);
+      if (inLib) return `food:${food.id}`;
+      if (food.catalogId) {
+        const byCat = state.personalFoods.find((f) => !f.deleted && f.catalogId === food.catalogId);
+        if (byCat) return `food:${byCat.id}`;
+        return `cat:${food.catalogId}`;
+      }
+      return `food:${food.id}`;
     }
-    const remaining = GapPrompt.remainingFrom(GapPrompt.totalsMeans(totals), goals, totals);
-    el.textContent = UI.formatGapRemaining(remaining, resolved || goals, totals);
+    if (food.catalogId) return `cat:${food.catalogId}`;
+    return "";
   }
 
-  function gapPortionFor(foodId) {
-    if (!foodId) return { n: 0 };
-    if (!state.gapPortionCache) state.gapPortionCache = new Map();
-    if (state.gapPortionCache.has(foodId)) return state.gapPortionCache.get(foodId);
-    const stats = Ledger.portionStats(foodId);
-    state.gapPortionCache.set(foodId, stats);
-    return stats;
-  }
-
-  function gapSelectRowForFood(food, key, kind) {
-    const k = key || gapFoodKey(food);
-    if (kind === "catalog") {
-      const kcal = food && food.per100 ? food.per100.kcal : 0;
-      return {
-        key: k,
-        name: food.name,
-        sub: `Reference · USDA avg · ${UI.fmt(kcal)} kcal/100g`,
-        selected: !!state.gapSelected[k],
-        food,
-        kind: "catalog",
+  function seedMultiPickFromGapSelected() {
+    const next = {};
+    for (const food of Object.values(state.gapSelected || {})) {
+      if (!food) continue;
+      const key = multiKeyForGapFood(food);
+      if (!key) continue;
+      const pendingCatalog = key.startsWith("cat:");
+      next[key] = {
+        food: pendingCatalog ? food : (findFood(food.id) || food),
+        pendingCatalog,
       };
     }
-    const stats = food && food.id ? gapPortionFor(food.id) : { n: 0 };
-    const prov = Foods.provenance(food);
-    const hist = stats.n
-      ? GapPrompt.portionLine(stats)
-      : `${UI.fmt(food.per100 && food.per100.kcal)} kcal/100g`;
-    const tag = prov && prov.kind === "ref" ? "Reference · USDA avg · " : "";
-    return {
-      key: k,
-      name: food.name,
-      sub: `${tag}${hist}`,
-      selected: !!state.gapSelected[k],
-      food,
-      kind: "personal",
-    };
+    state.multiPick = next;
   }
 
-  function refreshGapSelectList() {
-    const q = (UI.$("#gap-food-search") && UI.$("#gap-food-search").value) || "";
-    const needle = String(q).trim().toLowerCase();
-    const personal = activeFoods();
-    const DB = typeof FOOD_DB !== "undefined" ? FOOD_DB : [];
-    const byCatalogId = new Map(personal.filter((f) => f.catalogId).map((f) => [f.catalogId, f]));
-    const ownedCatalogIds = new Set(byCatalogId.keys());
-
-    const match = (name, aliases) => {
-      if (!needle) return true;
-      if (FoodMatch.scoreMatch(needle, name) >= 0.35) return true;
-      return (aliases || []).some((a) => FoodMatch.scoreMatch(needle, a) >= 0.35);
-    };
-
-    // Prefer personal library copy whenever selection key matches a catalogId
-    for (const [key, sel] of Object.entries(state.gapSelected)) {
-      if (sel && sel.catalogId && byCatalogId.has(sel.catalogId)) {
-        state.gapSelected[key] = byCatalogId.get(sel.catalogId);
-      }
+  function commitMultiPickToGapSelected() {
+    state.gapSelected = {};
+    for (const row of Object.values(state.multiPick || {})) {
+      if (row && row.food) state.gapSelected[gapFoodKey(row.food)] = row.food;
     }
-
-    // Selected always pinned at bottom (even if they don't match the current query)
-    const selectedRows = [];
-    const seen = new Set();
-    for (const [key, food] of Object.entries(state.gapSelected)) {
-      if (!food) continue;
-      const kind = food.catalogId && !personal.some((f) => f.id === food.id) ? "catalog" : "personal";
-      selectedRows.push(gapSelectRowForFood(food, key, kind));
-      seen.add(key);
-    }
-
-    const otherRows = [];
-    for (const f of Foods.sortForPicker(personal)) {
-      const key = gapFoodKey(f);
-      if (seen.has(key) || !match(f.name, f.aliases)) continue;
-      otherRows.push(gapSelectRowForFood(f, key, "personal"));
-      seen.add(key);
-      if (otherRows.length >= 40) break;
-    }
-
-    const personalNames = new Set(personal.map((f) => String(f.name || "").toLowerCase()));
-    const catalogPool = needle
-      ? DB.filter((f) =>
-          !ownedCatalogIds.has(f.id) &&
-          !personalNames.has(String(f.name || "").toLowerCase()) &&
-          match(f.name, f.aliases)
-        )
-        .sort((a, b) => FoodMatch.scoreMatch(needle, b.name) - FoodMatch.scoreMatch(needle, a.name))
-        .slice(0, 25)
-      : (typeof FOOD_COMMON_IDS !== "undefined" ? FOOD_COMMON_IDS : [])
-        .map((id) => DB.find((f) => f.id === id))
-        .filter((f) => f && !ownedCatalogIds.has(f.id) && !personalNames.has(String(f.name || "").toLowerCase()));
-
-    for (const db of catalogPool) {
-      const key = `cat:${db.id}`;
-      if (seen.has(key)) continue;
-      otherRows.push(gapSelectRowForFood(Foods.fromCatalog(db), key, "catalog"));
-      seen.add(key);
-    }
-
-    const rows = otherRows.concat(selectedRows);
-    UI.renderGapSelectList(
-      rows.map((r) => ({ key: r.key, name: r.name, sub: r.sub, selected: r.selected })),
-      { queryActive: !!needle }
-    );
-    refreshGapSelectList._rows = rows;
-    const btn = UI.$("#btn-gap-to-prompt");
-    if (btn) btn.disabled = Object.keys(state.gapSelected).length < 1;
   }
 
-  function toggleGapSelect(key) {
-    const rows = refreshGapSelectList._rows || [];
-    const row = rows.find((r) => r.key === key);
-    if (!row) return;
-    const selecting = !state.gapSelected[key];
-    if (selecting) state.gapSelected[key] = row.food;
-    else delete state.gapSelected[key];
-    const search = UI.$("#gap-food-search");
-    if (selecting) {
-      // Clear search after a pick; remember query so undo can restore the hit list
-      if (search && search.value) {
-        refreshGapSelectList._lastQuery = search.value;
-        search.value = "";
-      }
-    } else if (search && !search.value && refreshGapSelectList._lastQuery) {
-      // Restore prior query so a just-deselected catalog hit doesn't vanish
-      search.value = refreshGapSelectList._lastQuery;
-    }
-    persistGapDraft("select");
-    refreshGapSelectList();
-    if (selecting) {
-      const selectedList = UI.$("#gap-selected-list");
-      if (selectedList) {
-        const row = UI.$$("#gap-selected-list [data-action='gap-toggle']")
-          .find((el) => el.dataset.key === key);
-        if (row && typeof row.scrollIntoView === "function") {
-          row.scrollIntoView({ block: "nearest" });
-        } else {
-          selectedList.scrollTop = selectedList.scrollHeight;
-        }
-      }
-    }
+  function returnsToPlannerPick() {
+    return state.qtyIntent === "plan" || state.qtyIntent === "gap";
   }
 
   const GAP_INTRO_SEEN_KEY = "nutridaily.gapIntroSeen";
@@ -1457,10 +1342,7 @@ const App = (() => {
   function showGapSheetStep(step) {
     state.gapStep = step;
     UI.showGapStep(step);
-    if (step === "select") {
-      refreshGapRemainingBlurb();
-      refreshGapSelectList();
-    } else if (step === "prompt") {
+    if (step === "prompt") {
       persistGapDraft("prompt");
     } else if (step === "choose") {
       renderGapChooseStep();
@@ -1540,7 +1422,6 @@ const App = (() => {
 
   function openGapSheet(opts) {
     const preferPlan = opts && opts.plan;
-    state.gapPortionCache = null;
 
     const totals = Ledger.totalsFor(state.viewDay);
     const goals = goalsForView();
@@ -1569,6 +1450,14 @@ const App = (() => {
     state.qtyIntent = "plan";
     UI.closeSheet("sheet-gap");
     openAddSheet();
+  }
+
+  /** Same multi-select sheet as Add food to plan; Continue builds the AI prompt candidates. */
+  function openAddForGapAi(opts) {
+    state.qtyIntent = "gap";
+    UI.closeSheet("sheet-gap");
+    if (!(opts && opts.keepMulti)) seedMultiPickFromGapSelected();
+    openAddSheet({ keepMulti: true, keepSearch: !!(opts && opts.keepSearch) });
   }
 
   function multiPickKeys() {
@@ -1732,6 +1621,16 @@ const App = (() => {
     const keys = Object.keys(state.multiPick);
     if (!keys.length) {
       UI.toast("Select at least one food");
+      return;
+    }
+    if (state.qtyIntent === "gap") {
+      commitMultiPickToGapSelected();
+      clearMultiPickFlow();
+      state.qtyIntent = "log";
+      if (UI.$("#gap-paste")) UI.$("#gap-paste").value = "";
+      UI.closeSheet("sheet-add");
+      UI.openSheet("sheet-gap", { noAutofocus: true });
+      showGapSheetStep("prompt");
       return;
     }
     const imperial = !!state.settings.imperial;
@@ -1928,7 +1827,11 @@ const App = (() => {
     // Preserve an in-progress selection when there is no plan yet (tests / mid-flow).
     if (plan) restoreGapSelectionFromPlan(plan, true);
     if (UI.$("#gap-paste")) UI.$("#gap-paste").value = "";
-    showGapSheetStep(gapIntroSeen() ? "select" : "intro");
+    if (!gapIntroSeen()) {
+      showGapSheetStep("intro");
+      return;
+    }
+    openAddForGapAi();
   }
 
   function copyGapPrompt() {
@@ -2208,7 +2111,7 @@ const App = (() => {
   function importGapPaste() {
     if (Object.keys(state.gapSelected).length < 1) {
       UI.toast("Select at least one food first");
-      showGapSheetStep("select");
+      openAddForGapAi();
       return;
     }
     const text = (UI.$("#gap-paste") && UI.$("#gap-paste").value) || "";
@@ -5413,27 +5316,14 @@ const App = (() => {
         openGapSheet({ plan: true });
       });
     }
-    if (UI.$("#btn-gap-to-prompt")) {
-      UI.$("#btn-gap-to-prompt").addEventListener("click", () => {
-        if (Object.keys(state.gapSelected).length < 1) {
-          UI.toast("Select at least one food");
-          return;
-        }
-        if (UI.$("#gap-paste")) UI.$("#gap-paste").value = "";
-        showGapSheetStep("prompt");
-      });
-    }
     if (UI.$("#btn-gap-intro-ok")) {
       UI.$("#btn-gap-intro-ok").addEventListener("click", () => {
         markGapIntroSeen();
-        showGapSheetStep("select");
+        openAddForGapAi();
       });
     }
     if (UI.$("#btn-gap-intro-cancel")) {
       UI.$("#btn-gap-intro-cancel").addEventListener("click", () => UI.closeSheet("sheet-gap"));
-    }
-    if (UI.$("#btn-gap-select-cancel")) {
-      UI.$("#btn-gap-select-cancel").addEventListener("click", () => UI.closeSheet("sheet-gap"));
     }
     if (UI.$("#btn-gap-copy-prompt")) {
       UI.$("#btn-gap-copy-prompt").addEventListener("click", copyGapPrompt);
@@ -5445,7 +5335,7 @@ const App = (() => {
       UI.$("#btn-gap-parse").addEventListener("click", importGapPaste);
     }
     if (UI.$("#btn-gap-back-select")) {
-      UI.$("#btn-gap-back-select").addEventListener("click", () => showGapSheetStep("select"));
+      UI.$("#btn-gap-back-select").addEventListener("click", () => openAddForGapAi());
     }
     if (UI.$("#btn-gap-choose-back")) {
       UI.$("#btn-gap-choose-back").addEventListener("click", () => showGapSheetStep("prompt"));
@@ -5474,17 +5364,6 @@ const App = (() => {
     }
     if (UI.$("#btn-gap-plan-close")) {
       UI.$("#btn-gap-plan-close").addEventListener("click", () => UI.closeSheet("sheet-gap"));
-    }
-    if (UI.$("#gap-food-search")) {
-      UI.$("#gap-food-search").addEventListener("input", () => refreshGapSelectList());
-    }
-    const gapBuckets = UI.$(".gap-select-buckets");
-    if (gapBuckets) {
-      gapBuckets.addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-action='gap-toggle']");
-        if (!btn) return;
-        toggleGapSelect(btn.dataset.key);
-      });
     }
     if (UI.$("#gap-plan-list")) {
       // Commit inline amount before blur can re-render and swallow the + click.
@@ -5907,12 +5786,12 @@ const App = (() => {
     }
     if (UI.$("#multi-qty-cancel")) {
       UI.$("#multi-qty-cancel").addEventListener("click", () => {
-        const wasPlan = state.qtyIntent === "plan";
+        const wasPlanner = returnsToPlannerPick();
         UI.closeSheet("sheet-multi-qty");
         clearMultiQtySheetViewport();
         clearMultiPickFlow();
         resetQtyState();
-        if (wasPlan) openGapSheet({ plan: true });
+        if (wasPlanner) openGapSheet({ plan: true });
       });
     }
     if (UI.$("#multi-qty-list")) {
@@ -7014,20 +6893,17 @@ const App = (() => {
         }
         if (sheetId === "sheet-add") {
           clearMultiPickFlow();
-          if (state.qtyIntent === "plan") {
+          if (returnsToPlannerPick()) {
             state.qtyIntent = "log";
             openGapSheet({ plan: true });
           }
         }
         if (sheetId === "sheet-multi-qty") {
-          const wasPlan = state.qtyIntent === "plan";
+          const wasPlanner = returnsToPlannerPick();
           clearMultiQtySheetViewport();
           clearMultiPickFlow();
           resetQtyState();
-          if (wasPlan) openGapSheet({ plan: true });
-        }
-        if (sheetId === "sheet-gap") {
-                state.gapPortionCache = null;
+          if (wasPlanner) openGapSheet({ plan: true });
         }
       }
 
@@ -7222,24 +7098,21 @@ const App = (() => {
         resetQtyState();
       }
       if (top === "sheet-multi-qty") {
-        const wasPlan = state.qtyIntent === "plan";
+        const wasPlanner = returnsToPlannerPick();
         clearMultiQtySheetViewport();
         clearMultiPickFlow();
         resetQtyState();
-        if (wasPlan) openGapSheet({ plan: true });
+        if (wasPlanner) openGapSheet({ plan: true });
       }
       if (top === "sheet-add") {
         clearMultiPickFlow();
-        if (state.qtyIntent === "plan") {
+        if (returnsToPlannerPick()) {
           state.qtyIntent = "log";
           openGapSheet({ plan: true });
         }
       }
       if (top === "sheet-paste") {
         finishPasteSheetClose();
-      }
-      if (top === "sheet-gap") {
-            state.gapPortionCache = null;
       }
     });
 
@@ -7265,7 +7138,6 @@ const App = (() => {
       state.gapSelected = {};
       state.gapPendingItemId = null;
       state.gapPendingDay = null;
-      state.gapPortionCache = null;
       refreshAll();
       Sync.fullSync(false).catch(() => {});
       UI.toast("Logs cleared");
@@ -7308,7 +7180,6 @@ const App = (() => {
       state.gapSelected = {};
       state.gapPendingItemId = null;
       state.gapPendingDay = null;
-      state.gapPortionCache = null;
       state.viewDay = today;
       state.lastCalendarToday = state.viewDay;
       state.insightDays = 14;
