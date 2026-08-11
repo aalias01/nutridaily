@@ -757,9 +757,9 @@ async function run(label, days) {
       "Back to Insights > Top Foods chip appears after a pill jump");
     ok(/Back to Insights > Top Foods/i.test(text("#insights-back-btn")),
       "return chip uses Insights > Top Foods path label");
-    ok($("#insights-back").classList.contains("is-flashing") ||
-        /insights-back-pulse/.test(String(window.getComputedStyle($("#insights-back")).animationName)),
-      "return chip pulses once on arrival");
+    ok($("#insights-back").dataset.flashed === "1" &&
+        (/@keyframes\s+insights-back-pulse/.test(fs.readFileSync(path.join(ROOT, "css/style.css"), "utf8"))),
+      "return chip arming records a one-shot flash with CSS pulse");
     $("#insights-back [data-action='back-to-insights']").click();
     await new Promise((r) => setTimeout(r, 30));
     ok(window.document.querySelector('.tab[data-view="insights"].active') &&

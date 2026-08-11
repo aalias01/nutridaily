@@ -1015,6 +1015,7 @@ const App = (() => {
     el.hidden = !show;
     if (!show) {
       el.classList.remove("is-flashing");
+      delete el.dataset.flashed;
       return;
     }
     if (btn) btn.textContent = state.insightsReturn.label || "Back to Insights";
@@ -1024,8 +1025,13 @@ const App = (() => {
       // Retrigger so a second jump still pulses.
       void el.offsetWidth;
       el.classList.add("is-flashing");
-      const clearFlash = () => el.classList.remove("is-flashing");
-      el.addEventListener("animationend", clearFlash, { once: true });
+      el.dataset.flashed = "1";
+      const clearFlash = () => {
+        el.classList.remove("is-flashing");
+      };
+      el.addEventListener("animationend", (ev) => {
+        if (String(ev.animationName || "").includes("insights-back-pulse")) clearFlash();
+      }, { once: true });
       // Reduced-motion CSS drops the animation; still clear the accent outline.
       setTimeout(clearFlash, 1600);
     }
