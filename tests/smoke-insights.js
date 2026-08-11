@@ -754,14 +754,17 @@ async function run(label, days) {
     ok(!!$("#today-day-detail") && /Hot Iron|Sodium/i.test(text("#today-day-detail")),
       "Peaks pill jump opens day contribution for the spike");
     ok(!$("#insights-back").hidden,
-      "Back to Top foods chip appears after a pill jump");
-    ok(/Back to Top foods/i.test(text("#insights-back-btn")),
-      "return chip uses contextual Top foods label");
+      "Back to Insights > Top Foods chip appears after a pill jump");
+    ok(/Back to Insights > Top Foods/i.test(text("#insights-back-btn")),
+      "return chip uses Insights > Top Foods path label");
+    ok($("#insights-back").classList.contains("is-flashing") ||
+        /insights-back-pulse/.test(String(window.getComputedStyle($("#insights-back")).animationName)),
+      "return chip pulses once on arrival");
     $("#insights-back [data-action='back-to-insights']").click();
     await new Promise((r) => setTimeout(r, 30));
     ok(window.document.querySelector('.tab[data-view="insights"].active') &&
         !$("#insight-panel-intake").hidden,
-      "Back to Top foods returns to Insights Intake");
+      "Back to Insights > Top Foods returns to Insights Intake");
     ok($("#topfoods-mode [data-topfood-mode='peaks']").classList.contains("on"),
       "Back restores Peaks mode");
     $("#topfoods-search").value = "Hot Iron";
@@ -791,8 +794,8 @@ async function run(label, days) {
       if (openDay) {
         openDay.click();
         await new Promise((r) => setTimeout(r, 30));
-        ok(!$("#insights-back").hidden && /Back to heatmap/i.test(text("#insights-back-btn")),
-          "heatmap Open day shows Back to heatmap chip");
+        ok(!$("#insights-back").hidden && /Back to Insights > Heatmap/i.test(text("#insights-back-btn")),
+          "heatmap Open day shows Back to Insights > Heatmap chip");
         $("#btn-day-prev").click();
         await new Promise((r) => setTimeout(r, 15));
         $("#btn-day-prev").click();

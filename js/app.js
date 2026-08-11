@@ -978,25 +978,25 @@ const App = (() => {
   function insightsReturnOrigin(el) {
     if (!el || !el.closest) return {};
     if (el.closest("#top-foods-card, #top-foods")) {
-      return { label: "Back to Top foods", category: "intake", intakePage: 3 };
+      return { origin: "topfoods", label: "Back to Insights > Top Foods", category: "intake", intakePage: 3 };
     }
     if (el.closest("#insight-heatmap, #heatmap-tip, #intake-page-heatmap")) {
-      return { label: "Back to heatmap", category: "intake", intakePage: 1 };
+      return { origin: "heatmap", label: "Back to Insights > Heatmap", category: "intake", intakePage: 1 };
     }
     if (el.closest("#intake-page-trend, #trend-tip, #trend-data, #intake-stats")) {
-      return { label: "Back to trend", category: "intake", intakePage: 0 };
+      return { origin: "trend", label: "Back to Insights > Trend", category: "intake", intakePage: 0 };
     }
     if (el.closest("#intake-page-dow, #dow-pattern")) {
-      return { label: "Back to day-of-week", category: "intake", intakePage: 2 };
+      return { origin: "dow", label: "Back to Insights > Day of week", category: "intake", intakePage: 2 };
     }
     if (el.closest("#section-weight, #weight-tip, #weight-data")) {
-      return { label: "Back to weight", category: "body" };
+      return { origin: "weight", label: "Back to Insights > Weight", category: "body" };
     }
     if (el.closest("#section-energy, #tdee-card")) {
-      return { label: "Back to energy", category: "body" };
+      return { origin: "energy", label: "Back to Insights > Energy", category: "body" };
     }
     if (el.closest("#insight-observations")) {
-      return { label: "Back to Insights", category: state.insightCategory || "overview" };
+      return { origin: "overview", label: "Back to Insights", category: state.insightCategory || "overview" };
     }
     return {};
   }
@@ -1013,12 +1013,28 @@ const App = (() => {
     const onToday = !!document.querySelector("#view-today.active");
     const show = !!(state.insightsReturn && onToday);
     el.hidden = !show;
-    if (show && btn) btn.textContent = state.insightsReturn.label || "Back to Insights";
+    if (!show) {
+      el.classList.remove("is-flashing");
+      return;
+    }
+    if (btn) btn.textContent = state.insightsReturn.label || "Back to Insights";
+    if (state.insightsReturn.flash) {
+      state.insightsReturn.flash = false;
+      el.classList.remove("is-flashing");
+      // Retrigger so a second jump still pulses.
+      void el.offsetWidth;
+      el.classList.add("is-flashing");
+      const clearFlash = () => el.classList.remove("is-flashing");
+      el.addEventListener("animationend", clearFlash, { once: true });
+      // Reduced-motion CSS drops the animation; still clear the accent outline.
+      setTimeout(clearFlash, 1600);
+    }
   }
 
   function armInsightsReturnFrom(el, overrides) {
     const origin = insightsReturnOrigin(el);
     state.insightsReturn = {
+      origin: null,
       label: "Back to Insights",
       category: state.insightCategory || "overview",
       intakePage: state.insightIntakePage || 0,
@@ -1027,6 +1043,7 @@ const App = (() => {
       query: state.insightTopFoodQuery || "",
       expanded: state.insightTopFoodExpanded || null,
       daysSeen: [],
+      flash: true,
       ...origin,
       ...(overrides || {}),
     };
@@ -1083,17 +1100,15 @@ const App = (() => {
         b.tabIndex = on ? 0 : -1;
       });
     }
-    const scrollSel = ret && ret.label === "Back to Top foods"
-      ? "#top-foods-card"
-      : ret && ret.label === "Back to heatmap"
-        ? "#insight-heatmap"
-        : ret && ret.label === "Back to trend"
-          ? "#intake-page-trend"
-          : ret && ret.label === "Back to weight"
-            ? "#section-weight"
-            : ret && ret.label === "Back to energy"
-              ? "#section-energy"
-              : null;
+    const scrollByOrigin = {
+      topfoods: "#top-foods-card",
+      heatmap: "#insight-heatmap",
+      trend: "#intake-page-trend",
+      dow: "#intake-page-dow",
+      weight: "#section-weight",
+      energy: "#section-energy",
+    };
+    const scrollSel = ret && ret.origin ? scrollByOrigin[ret.origin] : null;
     const card = scrollSel && UI.$(scrollSel);
     if (card) {
       requestAnimationFrame(() => {

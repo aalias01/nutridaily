@@ -1697,6 +1697,41 @@ button.obs-jump:hover { background: color-mix(in srgb, var(--card) 92%, var(--in
   margin: 0 0 8px;
 }
 .insights-back[hidden] { display: none !important; }
+.insights-back.is-flashing {
+  animation: insights-back-pulse 1.4s ease-out 1;
+}
+.insights-back.is-flashing #insights-back-btn {
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+}
+@keyframes insights-back-pulse {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  18% {
+    transform: scale(1.03);
+    filter: brightness(1.12);
+  }
+  36% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  54% {
+    transform: scale(1.02);
+    filter: brightness(1.08);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .insights-back.is-flashing {
+    animation: none;
+    outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+    outline-offset: 2px;
+  }
+}
 
 @media (max-width: 380px) {
   .headline-stats { grid-template-columns: repeat(2, 1fr); }
