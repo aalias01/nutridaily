@@ -2294,7 +2294,12 @@ const UI = (() => {
       ? `<span class="muted small">target ${fmt(goal)}${esc(meta.unit)}</span>`
       : "";
     const statusHtml = status ? `<span class="muted small">${esc(status)}</span>` : "";
-    tip.innerHTML = `<span class="tip-day">${esc(label)}</span>${valueHtml}${goalHtml}${statusHtml}
+    tip.innerHTML = `
+      <div class="hm-tip-main">
+        <span class="tip-day">${esc(label)}</span>
+        ${valueHtml}
+        ${goalHtml}${goalHtml && statusHtml ? `<span class="muted small tip-sep">·</span>` : ""}${statusHtml}
+      </div>
       <button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(dayKey)}">Open day</button>`;
     tip.hidden = false;
   }

@@ -1521,12 +1521,22 @@ button.obs-jump:hover { background: color-mix(in srgb, var(--card) 92%, var(--in
 .score-key .sw:first-child { margin-left: 0; }
 
 .hm-tip {
-  margin: 8px 0 0; padding: 8px 10px;
+  margin: 8px 0 0; padding: 6px 10px;
   border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
-  display: flex; flex-direction: column; gap: 2px;
+  display: flex; flex-direction: row; align-items: center; justify-content: space-between;
+  gap: 10px; flex: 0 0 auto; width: 100%; box-sizing: border-box;
 }
 .hm-tip[hidden] { display: none !important; }
-.hm-tip .tip-goto { min-height: 32px; }
+.hm-tip-main {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
+  min-width: 0; flex: 1 1 auto;
+}
+.hm-tip-main > b { font-size: 15px; letter-spacing: -0.2px; }
+.hm-tip .tip-sep { margin: 0 -2px; }
+.hm-tip .tip-goto {
+  flex: 0 0 auto; align-self: center;
+  margin-top: 0; min-height: 28px; padding: 2px 0;
+}
 
 /* --- heatmap ---------------------------------------------- */
 .hm-scroll { --hm-size: 24px; --hm-gap: 3px; overflow-x: auto; margin: 10px 0 6px; padding: 2px 0 5px; }
