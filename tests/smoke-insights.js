@@ -208,9 +208,9 @@ async function run(label, days) {
       "insight-panel [hidden] uses display:none !important");
     ok(/\.seg\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
       "seg [hidden] uses display:none !important (Rank-by must actually hide)");
-    ok(/\.bar\.warn-over::after[^}]*border-left:\s*[^;]*var\(--warn\)/s.test(cssText) ||
-        /\.bar\.warn-over::after[^}]*border-color:[^}]*var\(--warn\)/s.test(cssText),
-      "HUD over bars use a warn-colored chevron past the track end");
+    ok(/\.bar\.warn-over::after[^}]*border-color:\s*transparent\s+var\(--warn\)/s.test(cssText) &&
+        /\.bar\.warn-over::after[^}]*border-width:\s*5px\s+7px\s+5px\s+0/s.test(cssText),
+      "HUD over bars use a left-pointing warn chevron as a track-end expansion");
     ok(!/\.bar\.warn::after[^}]*content:\s*"!"/s.test(cssText),
       "HUD bars no longer use a bang glyph for over/near");
     ok(/\.insight-carousel-track[^}]*scroll-snap-type:\s*x\s+mandatory/s.test(cssText) &&

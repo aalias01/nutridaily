@@ -191,22 +191,27 @@ header {
 .bar { position: relative; height: 7px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .bar.big { height: 9px; }
 .bar.warn { overflow: visible; }
-/* Over target: tiny solid chevron past the track end (overflow cue).
-   Kept ~4×6px and only ~3px past the rail so it stays inside the 16px
-   macro column gap and clear of the value row above. Near uses color only. */
+/* Over target: left-pointing chevron at the track end. Same warn fill as the
+   bar, so the tip merges into the fill and the thick base sticks out (~6px) —
+   reads as a solid expansion past the goal, not a vanishing point. Sized
+   above the 7px rail but still inside the 16px macro column gap. Near: color only. */
 .bar.warn-over::after {
   content: "";
   position: absolute;
-  right: -3px;
+  right: -6px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 1;
   width: 0;
   height: 0;
   border-style: solid;
-  border-width: 3px 0 3px 4px;
-  border-color: transparent transparent transparent var(--warn);
+  border-width: 5px 7px 5px 0;
+  border-color: transparent var(--warn) transparent transparent;
   pointer-events: none;
+}
+.bar.big.warn-over::after {
+  border-width: 6px 8px 6px 0;
+  right: -7px;
 }
 .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; }
 .fill.p { background: #4a7dbd; } .fill.c { background: #c99a3a; } .fill.f { background: #b56aa2; } .fill.fb { background: #6a9e48; }
