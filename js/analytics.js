@@ -1097,6 +1097,47 @@ const Analytics = (() => {
       .map((r) => ({ ...r, pct: grand ? r.value / grand : 0, total: grand }));
   }
 
+  /**
+   * Rank foods by biggest single log line for the nutrient (not range sum).
+   * Ties break toward the more recent peak day. value aliases peak for bar width.
+   */
+  function topFoodPeaks(keys, entriesForDay, metric, limit) {
+    const field = { kcal: "kcal", protein: "p", sodium: "na", potassium: "k", fiber: "fb", carbs: "c", fat: "f" }[metric] || "kcal";
+    const agg = new Map();
+    for (const day of keys || []) {
+      for (const e of entriesForDay(day) || []) {
+        const v = (e.macros && e.macros[field]) || 0;
+        if (!v) continue;
+        const name = e.name || "";
+        if (!name) continue;
+        let cur = agg.get(name);
+        if (!cur) {
+          cur = {
+            name,
+            peak: v,
+            peakDay: day,
+            peakSource: e.source || "",
+            count: 1,
+            total: v,
+          };
+          agg.set(name, cur);
+          continue;
+        }
+        cur.count += 1;
+        cur.total += v;
+        if (v > cur.peak || (v === cur.peak && day > cur.peakDay)) {
+          cur.peak = v;
+          cur.peakDay = day;
+          cur.peakSource = e.source || "";
+        }
+      }
+    }
+    return [...agg.values()]
+      .sort((a, b) => b.peak - a.peak || (b.peakDay > a.peakDay ? 1 : -1))
+      .slice(0, limit || 5)
+      .map((r) => ({ ...r, value: r.peak }));
+  }
+
   /** Protein relative to body weight — the form the evidence is actually in. */
   function proteinPerKg(days) {
     const logged = completeLoggedRows(days);
@@ -1776,7 +1817,7 @@ const Analytics = (() => {
     mean, median, stdev, summaryStats, rollingMean, linearFit,
     trendWeight, weightRate, estimateTdee, intakeForRate, projectWeight,
     consistency, nutritionScore, gradeFor, biggestGap, SCORE_WEIGHTS,
-    weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods,
+    weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods, topFoodPeaks,
     proteinPerKg, heatmapCells, heatmapWeeks, extremes, momentum, observations,
     phaseKcalOf,
     partialDays, onceDays, dayPlanAudit, dayPlanProvenance,

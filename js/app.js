@@ -49,6 +49,7 @@ const App = (() => {
     insightPhaseId: null, // null = active phase when daysBack is "phase"
     insightRollup: "day", // day | week — weekly smooths out single-day noise
     insightTopFoodMetric: "kcal", // kcal | protein | sodium | fiber
+    insightTopFoodMode: "totals", // totals | peaks — range sum vs biggest single log
     insightCategory: "overview", // overview | patterns | body | intake
     insightIntakePage: 0, // 0 trend · 1 heatmap · 2 DOW · 3 top foods
     dayContribMetric: null, // when set, Today shows contribution breakdown for viewDay
@@ -758,6 +759,7 @@ const App = (() => {
       // One-release alias: prefer nutrient; accept insightTopFoodMetric if a
       // caller still passes it through buildInsightContext.
       topFoodMetric: state.insightNutrient || state.insightTopFoodMetric,
+      topFoodMode: state.insightTopFoodMode === "peaks" ? "peaks" : "totals",
       category: state.insightCategory || "overview",
       intakePage: state.insightIntakePage || 0,
     };
@@ -6735,6 +6737,17 @@ const App = (() => {
         refreshInsights();
       });
     }
+    const topFoodModeSeg = UI.$("#topfoods-mode");
+    if (topFoodModeSeg) {
+      topFoodModeSeg.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-topfood-mode]");
+        if (!btn) return;
+        const mode = btn.dataset.topfoodMode === "peaks" ? "peaks" : "totals";
+        if (state.insightTopFoodMode === mode) return;
+        state.insightTopFoodMode = mode;
+        refreshInsights();
+      });
+    }
     // Apply a TDEE-derived calorie target without retyping it into Settings.
     const tdeeCard = UI.$("#tdee-card");
     if (tdeeCard) {
@@ -6965,6 +6978,17 @@ const App = (() => {
         state.viewDay = actionEl.dataset.day;
         switchView("today");
         refreshDay();
+      } else if (action === "topfood-peak") {
+        const day = actionEl.dataset.day;
+        if (!day) return;
+        state.viewDay = day;
+        switchView("today");
+        refreshDay();
+        openDayContrib(state.insightNutrient || "kcal", {
+          day,
+          root: "#today-day-detail",
+          focus: true,
+        });
       } else if (action === "close-day-contrib") {
         state.dayContribMetric = null;
         UI.renderDayDetail(null, { root: "#today-day-detail" });
@@ -7187,6 +7211,7 @@ const App = (() => {
       state.insightPhaseId = null;
       state.insightRollup = "day";
       state.insightTopFoodMetric = "kcal";
+      state.insightTopFoodMode = "totals";
       applyTheme();
       // Keep Drive connection and Client ID override so the wipe can sync up
       refreshAll();

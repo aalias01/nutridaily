@@ -220,6 +220,10 @@
                 <div class="card-block" id="top-foods-card">
                   <div class="card-head-row">
                     <b>Top foods</b>
+                    <span class="seg" id="topfoods-mode" role="group" aria-label="Rank by range total or biggest single log">
+                      <button type="button" data-topfood-mode="totals" class="on" aria-pressed="true">Totals</button>
+                      <button type="button" data-topfood-mode="peaks" aria-pressed="false">Peaks</button>
+                    </span>
                     <span class="muted small" id="topfoods-scope"></span>
                   </div>
                   <div id="top-foods"></div>

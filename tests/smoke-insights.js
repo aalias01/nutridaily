@@ -689,6 +689,72 @@ async function run(label, days) {
     "sodium ranking promotes the salty item above its calorie rank",
     `sodium #${naRank + 1} vs kcal #${kcalRank + 1}`);
   ok(/Sodium/i.test(text("#topfoods-scope")), "top foods scope chip follows the dock");
+
+  // Totals vs Peaks: repeated modest sodium beats a spike on Totals; Peaks flips it.
+  {
+    const Analytics = window.eval("Analytics");
+    const LedgerPeak = window.eval("Ledger");
+    const peakToday = LedgerPeak.todayKey();
+    const stapleDays = [];
+    for (let i = 1; i <= 8; i += 1) stapleDays.push(Analytics.addDays(peakToday, -i));
+    for (const day of stapleDays) {
+      LedgerPeak.addEntry(day, {
+        name: "Daily tofu staple",
+        displayQty: "100 g", grams: 100, meal: "lunch",
+        macros: { kcal: 150, p: 15, c: 5, f: 8, fb: 2, na: 450, k: null },
+        sd: 0.1,
+      });
+    }
+    const spikeDay = stapleDays[1];
+    LedgerPeak.addEntry(spikeDay, {
+      name: "Hot Iron Mongolian Grill Lunch",
+      displayQty: "1 portion", grams: 500, meal: "lunch", source: "once",
+      macros: { kcal: 900, p: 45, c: 70, f: 35, fb: 5, na: 2601, k: null },
+      sd: 0.2,
+    });
+    window.document.querySelector('#insight-range [data-days="14"]').click();
+    window.document.querySelector('#insight-nutrient [data-nutrient="sodium"]').click();
+    await new Promise((r) => setTimeout(r, 30));
+    const carDotsPeak = [...window.document.querySelectorAll("#intake-carousel-dots .carousel-dot")];
+    if (carDotsPeak[3]) carDotsPeak[3].click();
+    await new Promise((r) => setTimeout(r, 20));
+    $("#topfoods-mode [data-topfood-mode='totals']").click();
+    await new Promise((r) => setTimeout(r, 20));
+    const topNames = () => [...window.document.querySelectorAll("#top-foods .tf-name")]
+      .map((n) => n.childNodes[0] && n.childNodes[0].textContent
+        ? n.childNodes[0].textContent.trim()
+        : n.textContent.trim().replace(/\s*One-off\s*$/i, "").replace(/\s*Quick\s*$/i, "").trim());
+    const totalsRank = topNames();
+    const stapleTot = totalsRank.indexOf("Daily tofu staple");
+    const spikeTot = totalsRank.indexOf("Hot Iron Mongolian Grill Lunch");
+    ok(stapleTot >= 0 && spikeTot >= 0 && stapleTot < spikeTot,
+      "Totals ranks the repeated staple above the one-off spike",
+      `staple #${stapleTot + 1} spike #${spikeTot + 1} :: ${totalsRank.join(", ")}`);
+    $("#topfoods-mode [data-topfood-mode='peaks']").click();
+    await new Promise((r) => setTimeout(r, 20));
+    ok($("#topfoods-mode [data-topfood-mode='peaks']").classList.contains("on"),
+      "Peaks mode chip is active");
+    ok(topNames()[0] === "Hot Iron Mongolian Grill Lunch",
+      "Peaks mode crowns the single sodium spike",
+      `got ${topNames()[0]}`);
+    ok(/One-off/i.test($("#top-foods .tf-name").textContent),
+      "Peaks row badges the one-off source");
+    ok(/Biggest single logs/i.test(text("#top-foods")),
+      "Peaks footer explains single-log ranking");
+    $("#top-foods [data-action='topfood-peak']").click();
+    await new Promise((r) => setTimeout(r, 30));
+    const AppPeak = window.eval("App");
+    ok(AppPeak.state.viewDay === spikeDay &&
+        window.document.querySelector('.tab[data-view="today"].active'),
+      "Peaks row opens that day on Today");
+    ok(!!$("#today-day-detail") && /Hot Iron|Sodium/i.test(text("#today-day-detail")),
+      "Peaks jump opens day contribution for the spike");
+    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+    await new Promise((r) => setTimeout(r, 20));
+    $("#topfoods-mode [data-topfood-mode='totals']").click();
+    await new Promise((r) => setTimeout(r, 20));
+  }
+
   window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
   await new Promise((r) => setTimeout(r, 20));
 

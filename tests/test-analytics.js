@@ -463,6 +463,29 @@ console.log("\n[11] Meals and top foods");
   const topP = Analytics.topFoods(keys, entriesFor, "protein", 2);
   ok(topP.length === 2 && topP[0].name === "Chicken bowl", "top by protein, limited");
 
+  // Peaks: one huge single log beats many modest repeats (range totals diverge).
+  const peakEntries = {};
+  const peakKeys = keysEndingAt(END, 8);
+  for (let i = 0; i < peakKeys.length; i += 1) {
+    peakEntries[peakKeys[i]] = [
+      { name: "Daily tofu", macros: { kcal: 200, p: 20, c: 5, f: 10, fb: 2, na: 400, k: 100 }, source: "personal" },
+    ];
+  }
+  // Single spike below the tofu range total (8×400=3200) but above any one tofu log.
+  peakEntries[peakKeys[1]].push({
+    name: "Hot Iron lunch",
+    macros: { kcal: 900, p: 40, c: 60, f: 40, fb: 4, na: 2600, k: 800 },
+    source: "once",
+  });
+  const peakFor = (d) => peakEntries[d] || [];
+  const byTotal = Analytics.topFoods(peakKeys, peakFor, "sodium", 5);
+  const byPeak = Analytics.topFoodPeaks(peakKeys, peakFor, "sodium", 5);
+  ok(byTotal[0].name === "Daily tofu", "totals still crown the repeated food", `got ${byTotal[0] && byTotal[0].name}`);
+  ok(byPeak[0].name === "Hot Iron lunch", "peaks crowns the single spike", `got ${byPeak[0] && byPeak[0].name}`);
+  ok(byPeak[0].peak === 2600 && byPeak[0].peakDay === peakKeys[1], "peak keeps amount and day");
+  ok(byPeak[0].peakSource === "once", "peak remembers one-off source");
+  ok(byPeak[0].value === byPeak[0].peak, "peak value aliases for bar width");
+
   // Single-day range: same pct model the day-detail card uses.
   const oneDay = [keys[0]];
   const dayNa = Analytics.topFoods(oneDay, entriesFor, "sodium", 6);

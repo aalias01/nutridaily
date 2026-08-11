@@ -1570,6 +1570,7 @@ const UI = (() => {
       nutrient: o.nutrient || "kcal",
       rollup: o.rollup === "week" ? "week" : "day",
       topFoodMetric: o.topFoodMetric || o.nutrient,
+      topFoodMode: o.topFoodMode === "peaks" ? "peaks" : "totals",
       weightUnit: settings.weightUnit === "kg" ? "kg" : "lb",
       // Today is still in progress; counting it as a miss would be wrong.
       scoreOpts: { todayKey: viewingPastPhase ? null : todayKey },
@@ -2434,19 +2435,56 @@ const UI = (() => {
    * Top contributors by the metric you choose. Ranking by sodium or protein —
    * not only calories — is what makes this actionable.
    */
+  function shortInsightDate(day) {
+    const d = new Date(`${day}T12:00:00`);
+    if (!Number.isFinite(d.getTime())) return String(day || "");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${mm}-${dd}`;
+  }
+
   function renderTopFoods(ctx) {
     const root = $("#top-foods");
     if (!root) return;
     const metric = ctx.topFoodMetric;
+    const peaks = ctx.topFoodMode === "peaks";
     const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg", potassium: " mg" }[metric] || "";
-    const rows = Analytics.topFoods(ctx.keys, ctx.entriesForDay || ((day) => Ledger.entriesFor(day)), metric, 6);
+    const entriesForDay = ctx.entriesForDay || ((day) => Ledger.entriesFor(day));
+    const rows = peaks
+      ? Analytics.topFoodPeaks(ctx.keys, entriesForDay, metric, 6)
+      : Analytics.topFoods(ctx.keys, entriesForDay, metric, 6);
     const scope = $("#topfoods-scope");
     if (scope) scope.textContent = nutMeta(metric).label;
+    const modeSeg = $("#topfoods-mode");
+    if (modeSeg) {
+      modeSeg.querySelectorAll("[data-topfood-mode]").forEach((btn) => {
+        const on = btn.dataset.topfoodMode === (peaks ? "peaks" : "totals");
+        btn.classList.toggle("on", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
     if (!rows.length) {
       root.innerHTML = `<p class="muted small">Top foods appear as you log.</p>`;
       return;
     }
     const max = rows[0].value || 1;
+    if (peaks) {
+      root.innerHTML = `<ul class="topfood-list topfood-peaks">${rows.map((r) => {
+        const badge = sourceBadgeForKind(r.peakSource === "once" || r.peakSource === "quick" ? r.peakSource : "");
+        const when = r.peakDay ? shortInsightDate(r.peakDay) : "";
+        const times = r.count === 1 ? "1× in range" : `${r.count}× in range`;
+        const aria = `Open ${accessibleDate(r.peakDay || "")} contribution for ${r.name}`;
+        return `<li>
+          <button type="button" class="tf-row" data-action="topfood-peak" data-day="${esc(r.peakDay || "")}" aria-label="${esc(aria)}">
+            <span class="tf-name">${esc(r.name)}${badge}</span>
+            <span class="tf-track"><i style="width:${((r.value / max) * 100).toFixed(2)}%"></i></span>
+            <span class="tf-v">${fmt(r.peak)}${esc(unit)}${when ? `<span class="muted small"> · ${esc(when)}</span>` : ""}<span class="muted small"> · ${esc(times)}</span></span>
+          </button>
+        </li>`;
+      }).join("")}</ul>
+        <p class="muted small">Biggest single logs in this range. Tap a row to open that day.</p>`;
+      return;
+    }
     root.innerHTML = `<ul class="topfood-list">${rows.map((r) => `
       <li>
         <span class="tf-name">${esc(r.name)}</span>
