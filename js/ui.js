@@ -1571,6 +1571,8 @@ const UI = (() => {
       rollup: o.rollup === "week" ? "week" : "day",
       topFoodMetric: o.topFoodMetric || o.nutrient,
       topFoodMode: o.topFoodMode === "peaks" ? "peaks" : "totals",
+      topFoodQuery: o.topFoodQuery || "",
+      topFoodExpanded: o.topFoodExpanded || null,
       weightUnit: settings.weightUnit === "kg" ? "kg" : "lb",
       // Today is still in progress; counting it as a miss would be wrong.
       scoreOpts: { todayKey: viewingPastPhase ? null : todayKey },
@@ -2443,16 +2445,53 @@ const UI = (() => {
     return `${mm}-${dd}`;
   }
 
+  function topFoodDatePills(row, unit, expanded) {
+    if (!expanded || !row || !row.days || !row.days.length) return "";
+    const peak = row.peak || 1;
+    const pills = row.days.map((d) => {
+      const intensity = Math.max(0.28, Math.min(1, (d.value || 0) / peak));
+      const isPeak = d.day === row.peakDay && d.value === row.peak;
+      const label = shortInsightDate(d.day);
+      const aria = `${accessibleDate(d.day)} · ${fmt(d.value)}${unit}${isPeak ? " · peak" : ""}`;
+      return `<button type="button" class="tf-day-pill${isPeak ? " is-peak" : ""}" style="--tf-intensity:${intensity.toFixed(3)}" data-action="topfood-peak-day" data-day="${esc(d.day)}" aria-label="${esc(aria)}">${esc(label)}</button>`;
+    }).join("");
+    return `<div class="tf-day-pills" role="group" aria-label="Days for ${esc(row.name)}">${pills}</div>`;
+  }
+
+  function topFoodExpandableRow(row, opts) {
+    const o = opts || {};
+    const unit = o.unit || "";
+    const max = o.max || 1;
+    const expanded = !!o.expanded;
+    const badge = sourceBadgeForKind(row.peakSource === "once" || row.peakSource === "quick" ? row.peakSource : "");
+    const when = row.peakDay ? shortInsightDate(row.peakDay) : "";
+    const times = row.count === 1 ? "1× in range" : `${row.count}× in range`;
+    const aria = expanded
+      ? `Collapse dates for ${row.name}`
+      : `Show dates for ${row.name}`;
+    return `<li class="tf-expandable${expanded ? " is-expanded" : ""}" data-tf-name="${esc(row.name)}">
+      <button type="button" class="tf-row" data-action="topfood-expand" data-name="${esc(row.name)}" aria-expanded="${expanded ? "true" : "false"}" aria-label="${esc(aria)}">
+        <span class="tf-name">${esc(row.name)}${badge}</span>
+        <span class="tf-track"><i style="width:${((row.value / max) * 100).toFixed(2)}%"></i></span>
+        <span class="tf-v">${fmt(row.peak)}${esc(unit)}${when ? `<span class="muted small"> · ${esc(when)}</span>` : ""}<span class="muted small"> · ${esc(times)}</span></span>
+      </button>
+      ${topFoodDatePills(row, unit, expanded)}
+    </li>`;
+  }
+
   function renderTopFoods(ctx) {
     const root = $("#top-foods");
     if (!root) return;
     const metric = ctx.topFoodMetric;
     const peaks = ctx.topFoodMode === "peaks";
+    const query = String(ctx.topFoodQuery || "").trim();
+    const expandedName = ctx.topFoodExpanded || null;
     const unit = { kcal: " kcal", protein: " g", carbs: " g", fat: " g", fiber: " g", sodium: " mg", potassium: " mg" }[metric] || "";
     const entriesForDay = ctx.entriesForDay || ((day) => Ledger.entriesFor(day));
-    const rows = peaks
-      ? Analytics.topFoodPeaks(ctx.keys, entriesForDay, metric, 6)
-      : Analytics.topFoods(ctx.keys, entriesForDay, metric, 6);
+    const searchInput = $("#topfoods-search");
+    if (searchInput && searchInput.value !== (ctx.topFoodQuery || "")) {
+      searchInput.value = ctx.topFoodQuery || "";
+    }
     const scope = $("#topfoods-scope");
     if (scope) scope.textContent = nutMeta(metric).label;
     const modeSeg = $("#topfoods-mode");
@@ -2463,35 +2502,73 @@ const UI = (() => {
         btn.setAttribute("aria-pressed", on ? "true" : "false");
       });
     }
-    if (!rows.length) {
-      root.innerHTML = `<p class="muted small">Top foods appear as you log.</p>`;
+
+    const agg = typeof Analytics.foodNutrientAgg === "function"
+      ? Analytics.foodNutrientAgg(ctx.keys, entriesForDay, metric)
+      : [];
+    let matches = [];
+    if (query) {
+      const scoreFn = (typeof FoodMatch !== "undefined" && FoodMatch.scoreMatch)
+        ? (name) => FoodMatch.scoreMatch(query, name)
+        : (name) => (String(name || "").toLowerCase().includes(query.toLowerCase()) ? 1 : 0);
+      matches = agg
+        .map((r) => ({ ...r, _score: scoreFn(r.name) }))
+        .filter((r) => r._score >= 0.35)
+        .sort((a, b) => b._score - a._score || b.peak - a.peak)
+        .slice(0, 8)
+        .map(({ _score, ...r }) => r);
+    }
+
+    const ranked = peaks
+      ? [...agg].sort((a, b) => b.peak - a.peak || (b.peakDay > a.peakDay ? 1 : -1)).slice(0, 6)
+      : Analytics.topFoods(ctx.keys, entriesForDay, metric, 6);
+
+    if (!ranked.length && !matches.length) {
+      root.innerHTML = `<p class="muted small">${query ? "No meals match that search in this range." : "Top foods appear as you log."}</p>`;
       return;
     }
-    const max = rows[0].value || 1;
-    if (peaks) {
-      root.innerHTML = `<ul class="topfood-list topfood-peaks">${rows.map((r) => {
-        const badge = sourceBadgeForKind(r.peakSource === "once" || r.peakSource === "quick" ? r.peakSource : "");
-        const when = r.peakDay ? shortInsightDate(r.peakDay) : "";
-        const times = r.count === 1 ? "1× in range" : `${r.count}× in range`;
-        const aria = `Open ${accessibleDate(r.peakDay || "")} contribution for ${r.name}`;
-        return `<li>
-          <button type="button" class="tf-row" data-action="topfood-peak" data-day="${esc(r.peakDay || "")}" aria-label="${esc(aria)}">
-            <span class="tf-name">${esc(r.name)}${badge}</span>
+
+    const matchNames = new Set(matches.map((r) => r.name));
+    const rest = ranked.filter((r) => !matchNames.has(r.name));
+    // For Totals rest rows without days, look up agg for expand when searched...
+    // Totals base list stays non-expandable; search hits expand.
+    const parts = [];
+    if (matches.length) {
+      const maxMatch = matches[0].peak || 1;
+      parts.push(`<div class="tf-section-label muted small">Matches</div>`);
+      parts.push(`<ul class="topfood-list topfood-peaks">${matches.map((r) =>
+        topFoodExpandableRow(r, { unit, max: maxMatch, expanded: expandedName === r.name })
+      ).join("")}</ul>`);
+    }
+    if (rest.length) {
+      if (matches.length) parts.push(`<div class="tf-section-label muted small">${peaks ? "Top peaks" : "Top foods"}</div>`);
+      if (peaks) {
+        const max = rest[0].value || rest[0].peak || 1;
+        parts.push(`<ul class="topfood-list topfood-peaks">${rest.map((r) => {
+          const full = agg.find((a) => a.name === r.name) || r;
+          return topFoodExpandableRow(full, { unit, max, expanded: expandedName === full.name });
+        }).join("")}</ul>`);
+        if (!matches.length) {
+          parts.push(`<p class="muted small">Biggest single logs in this range. Tap a food for its dates.</p>`);
+        }
+      } else {
+        const max = rest[0].value || 1;
+        parts.push(`<ul class="topfood-list">${rest.map((r) => `
+          <li>
+            <span class="tf-name">${esc(r.name)}</span>
             <span class="tf-track"><i style="width:${((r.value / max) * 100).toFixed(2)}%"></i></span>
-            <span class="tf-v">${fmt(r.peak)}${esc(unit)}${when ? `<span class="muted small"> · ${esc(when)}</span>` : ""}<span class="muted small"> · ${esc(times)}</span></span>
-          </button>
-        </li>`;
-      }).join("")}</ul>
-        <p class="muted small">Biggest single logs in this range. Tap a row to open that day.</p>`;
-      return;
+            <span class="tf-v">${fmt(r.value)}${esc(unit)}<span class="muted small"> · ${Math.round(r.pct * 100)}%</span></span>
+          </li>`).join("")}</ul>`);
+        if (!matches.length) {
+          parts.push(`<p class="muted small">${rest.length} of your foods, ${Math.round(rest.reduce((s, r) => s + r.pct, 0) * 100)}% of range ${esc(nutMeta(metric).label.toLowerCase())}.</p>`);
+        }
+      }
+    } else if (matches.length && peaks) {
+      parts.push(`<p class="muted small">Tap a match for its dates, then a day to open it.</p>`);
+    } else if (matches.length) {
+      parts.push(`<p class="muted small">Tap a match for its dates, then a day to open it.</p>`);
     }
-    root.innerHTML = `<ul class="topfood-list">${rows.map((r) => `
-      <li>
-        <span class="tf-name">${esc(r.name)}</span>
-        <span class="tf-track"><i style="width:${((r.value / max) * 100).toFixed(2)}%"></i></span>
-        <span class="tf-v">${fmt(r.value)}${esc(unit)}<span class="muted small"> · ${Math.round(r.pct * 100)}%</span></span>
-      </li>`).join("")}</ul>
-      <p class="muted small">${rows.length} of your foods, ${Math.round(rows.reduce((s, r) => s + r.pct, 0) * 100)}% of range ${esc(nutMeta(metric).label.toLowerCase())}.</p>`;
+    root.innerHTML = parts.join("");
   }
 
   // ------------------------------------------------------------ weight chart

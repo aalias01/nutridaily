@@ -741,18 +741,68 @@ async function run(label, days) {
       "Peaks row badges the one-off source");
     ok(/Biggest single logs/i.test(text("#top-foods")),
       "Peaks footer explains single-log ranking");
-    $("#top-foods [data-action='topfood-peak']").click();
+    $("#top-foods [data-action='topfood-expand']").click();
+    await new Promise((r) => setTimeout(r, 20));
+    ok(!!$("#top-foods .tf-day-pills") && $("#top-foods [data-action='topfood-peak-day']"),
+      "Peaks expand shows date pills instead of jumping");
+    $("#top-foods [data-action='topfood-peak-day']").click();
     await new Promise((r) => setTimeout(r, 30));
     const AppPeak = window.eval("App");
     ok(AppPeak.state.viewDay === spikeDay &&
         window.document.querySelector('.tab[data-view="today"].active'),
-      "Peaks row opens that day on Today");
+      "Peaks date pill opens that day on Today");
     ok(!!$("#today-day-detail") && /Hot Iron|Sodium/i.test(text("#today-day-detail")),
-      "Peaks jump opens day contribution for the spike");
-    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+      "Peaks pill jump opens day contribution for the spike");
+    ok(!$("#insights-back").hidden,
+      "Back to Top foods chip appears after a pill jump");
+    ok(/Back to Top foods/i.test(text("#insights-back-btn")),
+      "return chip uses contextual Top foods label");
+    $("#insights-back [data-action='back-to-insights']").click();
+    await new Promise((r) => setTimeout(r, 30));
+    ok(window.document.querySelector('.tab[data-view="insights"].active') &&
+        !$("#insight-panel-intake").hidden,
+      "Back to Top foods returns to Insights Intake");
+    ok($("#topfoods-mode [data-topfood-mode='peaks']").classList.contains("on"),
+      "Back restores Peaks mode");
+    $("#topfoods-search").value = "Hot Iron";
+    $("#topfoods-search").dispatchEvent(new window.Event("input", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 20));
+    ok(/Matches/i.test(text("#top-foods")) &&
+        /Hot Iron Mongolian Grill Lunch/i.test(text("#top-foods")),
+      "search promotes matching meal names above Top foods");
+    $("#topfoods-search").value = "";
+    $("#topfoods-search").dispatchEvent(new window.Event("input", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 20));
     $("#topfoods-mode [data-topfood-mode='totals']").click();
     await new Promise((r) => setTimeout(r, 20));
+
+    // Heatmap Open day arms a contextual return chip; browsing 3 days clears it.
+    window.document.querySelector('#insight-nutrient [data-nutrient="sodium"]').click();
+    await new Promise((r) => setTimeout(r, 20));
+    const hmDots = [...window.document.querySelectorAll("#intake-carousel-dots .carousel-dot")];
+    if (hmDots[1]) hmDots[1].click();
+    await new Promise((r) => setTimeout(r, 20));
+    const hmCell = [...window.document.querySelectorAll(".hm-cell[data-day]")]
+      .find((c) => /hit|over|under|logged/i.test(c.className) && c.dataset.day);
+    if (hmCell) {
+      hmCell.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const openDay = $("#heatmap-tip [data-action='goto-day']");
+      if (openDay) {
+        openDay.click();
+        await new Promise((r) => setTimeout(r, 30));
+        ok(!$("#insights-back").hidden && /Back to heatmap/i.test(text("#insights-back-btn")),
+          "heatmap Open day shows Back to heatmap chip");
+        $("#btn-day-prev").click();
+        await new Promise((r) => setTimeout(r, 15));
+        $("#btn-day-prev").click();
+        await new Promise((r) => setTimeout(r, 15));
+        ok($("#insights-back").hidden,
+          "Insights return chip clears after browsing 3 distinct Today days");
+        [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }
   }
 
   window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();

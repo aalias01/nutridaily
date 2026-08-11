@@ -485,6 +485,20 @@ console.log("\n[11] Meals and top foods");
   ok(byPeak[0].peak === 2600 && byPeak[0].peakDay === peakKeys[1], "peak keeps amount and day");
   ok(byPeak[0].peakSource === "once", "peak remembers one-off source");
   ok(byPeak[0].value === byPeak[0].peak, "peak value aliases for bar width");
+  ok(Array.isArray(byPeak[0].days) && byPeak[0].days.length === 1 && byPeak[0].days[0].value === 2600,
+    "peak rows expose per-day values for date pills");
+  // Same name on two days → one row, two day pills.
+  const twiceKeys = peakKeys.slice(0, 2);
+  const twiceFor = (d) => [{
+    name: "Shared bowl",
+    macros: { kcal: 400, p: 20, c: 40, f: 10, fb: 2, na: d === twiceKeys[0] ? 900 : 1200, k: 100 },
+    source: "once",
+  }];
+  const twice = Analytics.topFoodPeaks(twiceKeys, twiceFor, "sodium", 5);
+  ok(twice[0].name === "Shared bowl" && twice[0].days.length === 2 && twice[0].peak === 1200,
+    "same name across days yields multiple date pills under one peak row");
+  const agg = Analytics.foodNutrientAgg(twiceKeys, twiceFor, "sodium");
+  ok(agg[0].days.length === 2, "foodNutrientAgg returns day list for expand UI");
 
   // Single-day range: same pct model the day-detail card uses.
   const oneDay = [keys[0]];

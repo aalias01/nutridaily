@@ -50,6 +50,9 @@ const App = (() => {
     insightRollup: "day", // day | week — weekly smooths out single-day noise
     insightTopFoodMetric: "kcal", // kcal | protein | sodium | fiber
     insightTopFoodMode: "totals", // totals | peaks — range sum vs biggest single log
+    insightTopFoodQuery: "",
+    insightTopFoodExpanded: null, // food name currently expanded for date pills
+    insightsReturn: null, // return chip after Insights → Today jump
     insightCategory: "overview", // overview | patterns | body | intake
     insightIntakePage: 0, // 0 trend · 1 heatmap · 2 DOW · 3 top foods
     dayContribMetric: null, // when set, Today shows contribution breakdown for viewDay
@@ -760,6 +763,8 @@ const App = (() => {
       // caller still passes it through buildInsightContext.
       topFoodMetric: state.insightNutrient || state.insightTopFoodMetric,
       topFoodMode: state.insightTopFoodMode === "peaks" ? "peaks" : "totals",
+      topFoodQuery: state.insightTopFoodQuery || "",
+      topFoodExpanded: state.insightTopFoodExpanded || null,
       category: state.insightCategory || "overview",
       intakePage: state.insightIntakePage || 0,
     };
@@ -969,6 +974,133 @@ const App = (() => {
     }
   }
 
+  function insightsReturnOrigin(el) {
+    if (!el || !el.closest) return {};
+    if (el.closest("#top-foods-card, #top-foods")) {
+      return { label: "Back to Top foods", category: "intake", intakePage: 3 };
+    }
+    if (el.closest("#insight-heatmap, #heatmap-tip, #intake-page-heatmap")) {
+      return { label: "Back to heatmap", category: "intake", intakePage: 1 };
+    }
+    if (el.closest("#intake-page-trend, #trend-tip, #trend-data, #intake-stats")) {
+      return { label: "Back to trend", category: "intake", intakePage: 0 };
+    }
+    if (el.closest("#intake-page-dow, #dow-pattern")) {
+      return { label: "Back to day-of-week", category: "intake", intakePage: 2 };
+    }
+    if (el.closest("#section-weight, #weight-tip, #weight-data")) {
+      return { label: "Back to weight", category: "body" };
+    }
+    if (el.closest("#section-energy, #tdee-card")) {
+      return { label: "Back to energy", category: "body" };
+    }
+    if (el.closest("#insight-observations")) {
+      return { label: "Back to Insights", category: state.insightCategory || "overview" };
+    }
+    return {};
+  }
+
+  function clearInsightsReturn() {
+    state.insightsReturn = null;
+    syncInsightsReturnChip();
+  }
+
+  function syncInsightsReturnChip() {
+    const el = UI.$("#insights-back");
+    const btn = UI.$("#insights-back-btn");
+    if (!el) return;
+    const onToday = !!document.querySelector("#view-today.active");
+    const show = !!(state.insightsReturn && onToday);
+    el.hidden = !show;
+    if (show && btn) btn.textContent = state.insightsReturn.label || "Back to Insights";
+  }
+
+  function armInsightsReturnFrom(el, overrides) {
+    const origin = insightsReturnOrigin(el);
+    state.insightsReturn = {
+      label: "Back to Insights",
+      category: state.insightCategory || "overview",
+      intakePage: state.insightIntakePage || 0,
+      nutrient: state.insightNutrient || "kcal",
+      mode: state.insightTopFoodMode === "peaks" ? "peaks" : "totals",
+      query: state.insightTopFoodQuery || "",
+      expanded: state.insightTopFoodExpanded || null,
+      daysSeen: [],
+      ...origin,
+      ...(overrides || {}),
+    };
+  }
+
+  /** Track Today day hops while the Insights return chip is live; clear after 3 distinct days. */
+  function noteInsightsReturnDay(day) {
+    if (!state.insightsReturn || !day) return;
+    const seen = state.insightsReturn.daysSeen || (state.insightsReturn.daysSeen = []);
+    if (!seen.includes(day)) seen.push(day);
+    if (seen.length >= 3) clearInsightsReturn();
+    else syncInsightsReturnChip();
+  }
+
+  function jumpFromInsightsToDay(day, el, opts) {
+    const o = opts || {};
+    if (!day) return;
+    armInsightsReturnFrom(el, o.overrides);
+    state.viewDay = day;
+    switchView("today");
+    refreshDay();
+    noteInsightsReturnDay(day);
+    if (o.openContrib) {
+      openDayContrib(o.metric || state.insightNutrient || "kcal", {
+        day,
+        root: "#today-day-detail",
+        focus: o.focus !== false,
+      });
+    }
+  }
+
+  function returnToInsights() {
+    const ret = state.insightsReturn;
+    clearInsightsReturn();
+    if (ret) {
+      if (ret.nutrient) {
+        state.insightNutrient = ret.nutrient;
+        state.insightTopFoodMetric = ret.nutrient;
+      }
+      state.insightTopFoodMode = ret.mode === "peaks" ? "peaks" : "totals";
+      state.insightTopFoodQuery = ret.query || "";
+      state.insightTopFoodExpanded = ret.expanded || null;
+    }
+    switchView("insights");
+    const cat = (ret && ret.category) || "overview";
+    const pageOpts = { forceRefresh: true, smooth: false };
+    if (ret && ret.intakePage != null) pageOpts.intakePage = ret.intakePage;
+    setInsightCategory(cat, pageOpts);
+    const nutPills = UI.$("#insight-nutrient");
+    if (nutPills && state.insightNutrient) {
+      nutPills.querySelectorAll("[data-nutrient]").forEach((b) => {
+        const on = b.dataset.nutrient === state.insightNutrient;
+        b.classList.toggle("active", on);
+        b.tabIndex = on ? 0 : -1;
+      });
+    }
+    const scrollSel = ret && ret.label === "Back to Top foods"
+      ? "#top-foods-card"
+      : ret && ret.label === "Back to heatmap"
+        ? "#insight-heatmap"
+        : ret && ret.label === "Back to trend"
+          ? "#intake-page-trend"
+          : ret && ret.label === "Back to weight"
+            ? "#section-weight"
+            : ret && ret.label === "Back to energy"
+              ? "#section-energy"
+              : null;
+    const card = scrollSel && UI.$(scrollSel);
+    if (card) {
+      requestAnimationFrame(() => {
+        card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
+  }
+
   function refreshDay() {
     refreshHUD();
     refreshDayGoalsLink();
@@ -976,6 +1108,7 @@ const App = (() => {
     syncWeightField({ resetEditing: true });
     UI.renderDayLog(state.viewDay, Ledger.entriesFor(state.viewDay));
     refreshTodayContrib();
+    syncInsightsReturnChip();
   }
 
   // ---------- Planner (dayPlans / optional AI fill) ----------
@@ -2564,6 +2697,8 @@ const App = (() => {
     if (name === "foods") refreshFoods();
     if (name === "insights") refreshInsights();
     if (name === "today") refreshDay();
+    if (name !== "today") clearInsightsReturn();
+    else syncInsightsReturnChip();
     if (name === "settings") {
       syncSettingsForm();
       refreshDriveStatus();
@@ -2898,6 +3033,7 @@ const App = (() => {
     state.lastCalendarToday = state.viewDay;
     refreshDay();
     switchView("today");
+    noteInsightsReturnDay(state.viewDay);
   }
 
   /** Jump to a calendar day (past through tomorrow — same horizon as shiftDay). */
@@ -2908,6 +3044,7 @@ const App = (() => {
     state.viewDay = key;
     refreshDay();
     switchView("today");
+    noteInsightsReturnDay(key);
   }
 
   function openDayPicker() {
@@ -2946,6 +3083,7 @@ const App = (() => {
     if (key > dayAfter(Ledger.todayKey())) return;
     state.viewDay = key;
     refreshDay();
+    noteInsightsReturnDay(key);
   }
 
   function openAddSheet(opts) {
@@ -6700,6 +6838,7 @@ const App = (() => {
         state.insightNutrient = btn.dataset.nutrient;
         // Keep the one-release top-foods alias in sync with the dock.
         state.insightTopFoodMetric = btn.dataset.nutrient;
+        state.insightTopFoodExpanded = null;
         nutPills.querySelectorAll("button").forEach((b) => {
           const on = b === btn;
           b.classList.toggle("active", on);
@@ -6745,6 +6884,14 @@ const App = (() => {
         const mode = btn.dataset.topfoodMode === "peaks" ? "peaks" : "totals";
         if (state.insightTopFoodMode === mode) return;
         state.insightTopFoodMode = mode;
+        state.insightTopFoodExpanded = null;
+        refreshInsights();
+      });
+    }
+    const topFoodSearch = UI.$("#topfoods-search");
+    if (topFoodSearch) {
+      topFoodSearch.addEventListener("input", () => {
+        state.insightTopFoodQuery = topFoodSearch.value || "";
         refreshInsights();
       });
     }
@@ -6846,14 +6993,7 @@ const App = (() => {
       if (jump && jump.closest("#insight-observations, #insight-teasers")) {
         const jumpDay = jump.dataset.jumpDay;
         if (jumpDay) {
-          state.viewDay = jumpDay;
-          switchView("today");
-          refreshDay();
-          openDayContrib(state.insightNutrient || "kcal", {
-            day: jumpDay,
-            root: "#today-day-detail",
-            focus: true,
-          });
+          jumpFromInsightsToDay(jumpDay, jump, { openContrib: true });
           return;
         }
         const sel = jump.dataset.jump;
@@ -6975,20 +7115,24 @@ const App = (() => {
         const key = food.id ? `food:${food.id}` : `yest:${entry.id}`;
         toggleMultiFood(key, food, false, multiPrefillFromEntry(entry));
       } else if (action === "goto-day") {
-        state.viewDay = actionEl.dataset.day;
-        switchView("today");
-        refreshDay();
-      } else if (action === "topfood-peak") {
         const day = actionEl.dataset.day;
-        if (!day) return;
-        state.viewDay = day;
-        switchView("today");
-        refreshDay();
-        openDayContrib(state.insightNutrient || "kcal", {
-          day,
-          root: "#today-day-detail",
-          focus: true,
-        });
+        const fromInsights = !!document.querySelector("#view-insights.active");
+        if (fromInsights) {
+          jumpFromInsightsToDay(day, actionEl, { openContrib: false });
+        } else {
+          state.viewDay = day;
+          switchView("today");
+          refreshDay();
+          noteInsightsReturnDay(day);
+        }
+      } else if (action === "topfood-expand") {
+        const name = actionEl.dataset.name || "";
+        state.insightTopFoodExpanded = state.insightTopFoodExpanded === name ? null : name;
+        refreshInsights();
+      } else if (action === "topfood-peak-day") {
+        jumpFromInsightsToDay(actionEl.dataset.day, actionEl, { openContrib: true });
+      } else if (action === "back-to-insights") {
+        returnToInsights();
       } else if (action === "close-day-contrib") {
         state.dayContribMetric = null;
         UI.renderDayDetail(null, { root: "#today-day-detail" });
@@ -7212,6 +7356,9 @@ const App = (() => {
       state.insightRollup = "day";
       state.insightTopFoodMetric = "kcal";
       state.insightTopFoodMode = "totals";
+      state.insightTopFoodQuery = "";
+      state.insightTopFoodExpanded = null;
+      state.insightsReturn = null;
       applyTheme();
       // Keep Drive connection and Client ID override so the wipe can sync up
       refreshAll();

@@ -1098,10 +1098,10 @@ const Analytics = (() => {
   }
 
   /**
-   * Rank foods by biggest single log line for the nutrient (not range sum).
-   * Ties break toward the more recent peak day. value aliases peak for bar width.
+   * Aggregate named meals for a nutrient across the range.
+   * peak = max single log; days[] = per-day max (one pill per day).
    */
-  function topFoodPeaks(keys, entriesForDay, metric, limit) {
+  function foodNutrientAgg(keys, entriesForDay, metric) {
     const field = { kcal: "kcal", protein: "p", sodium: "na", potassium: "k", fiber: "fb", carbs: "c", fat: "f" }[metric] || "kcal";
     const agg = new Map();
     for (const day of keys || []) {
@@ -1117,14 +1117,20 @@ const Analytics = (() => {
             peak: v,
             peakDay: day,
             peakSource: e.source || "",
-            count: 1,
-            total: v,
+            count: 0,
+            total: 0,
+            dayMax: Object.create(null),
+            daySource: Object.create(null),
           };
           agg.set(name, cur);
-          continue;
         }
         cur.count += 1;
         cur.total += v;
+        const prevDay = cur.dayMax[day] || 0;
+        if (v >= prevDay) {
+          cur.dayMax[day] = v;
+          cur.daySource[day] = e.source || "";
+        }
         if (v > cur.peak || (v === cur.peak && day > cur.peakDay)) {
           cur.peak = v;
           cur.peakDay = day;
@@ -1132,10 +1138,35 @@ const Analytics = (() => {
         }
       }
     }
-    return [...agg.values()]
+    return [...agg.values()].map((r) => {
+      const days = Object.keys(r.dayMax)
+        .map((day) => ({
+          day,
+          value: r.dayMax[day],
+          source: r.daySource[day] || "",
+        }))
+        .sort((a, b) => b.value - a.value || (a.day < b.day ? 1 : -1));
+      return {
+        name: r.name,
+        peak: r.peak,
+        peakDay: r.peakDay,
+        peakSource: r.peakSource,
+        count: r.count,
+        total: r.total,
+        value: r.peak,
+        days,
+      };
+    });
+  }
+
+  /**
+   * Rank foods by biggest single log line for the nutrient (not range sum).
+   * Ties break toward the more recent peak day. value aliases peak for bar width.
+   */
+  function topFoodPeaks(keys, entriesForDay, metric, limit) {
+    return foodNutrientAgg(keys, entriesForDay, metric)
       .sort((a, b) => b.peak - a.peak || (b.peakDay > a.peakDay ? 1 : -1))
-      .slice(0, limit || 5)
-      .map((r) => ({ ...r, value: r.peak }));
+      .slice(0, limit || 5);
   }
 
   /** Protein relative to body weight — the form the evidence is actually in. */
@@ -1817,7 +1848,7 @@ const Analytics = (() => {
     mean, median, stdev, summaryStats, rollingMean, linearFit,
     trendWeight, weightRate, estimateTdee, intakeForRate, projectWeight,
     consistency, nutritionScore, gradeFor, biggestGap, SCORE_WEIGHTS,
-    weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods, topFoodPeaks,
+    weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods, foodNutrientAgg, topFoodPeaks,
     proteinPerKg, heatmapCells, heatmapWeeks, extremes, momentum, observations,
     phaseKcalOf,
     partialDays, onceDays, dayPlanAudit, dayPlanProvenance,
