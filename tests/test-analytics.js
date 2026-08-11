@@ -585,12 +585,12 @@ console.log("\n[15] Observations");
   });
   const obs = Analytics.observations(days, { todayKey: END });
   ok(obs.some((o) => o.id === "weekend-kcal"), "surfaces the weekend calorie gap");
-  ok(obs.some((o) => o.id === "protein-per-kg"), "surfaces protein per kg");
+  ok(!obs.some((o) => o.id === "protein-per-kg"), "does not restate protein-per-kg already on the scorecard");
   ok(obs.some((o) => o.id === "variability"), "surfaces calorie variability when CV is high");
   ok(obs.every((o) => o.text && o.tone), "every observation has text and a tone");
   ok(obs.every((o) => !/should|bad|failed|too much/i.test(o.text)), "observations stay descriptive, not scolding");
   const weNote = obs.find((o) => o.id === "weekend-kcal");
-  ok(weNote && weNote.panel === "#dow-pattern" && typeof weNote.priority === "number",
+  ok(weNote && weNote.panel === "#intake-stats" && typeof weNote.priority === "number",
     "weekend-kcal carries panel + priority for Insights jump triage");
   ok(weNote && /\d+\s*kcal/.test(weNote.text) && !/\d+\s*→\s*\d+/.test(weNote.text),
     "weekend-kcal keeps the magnitude but drops the weekday→weekend pair");
@@ -2372,12 +2372,12 @@ console.log("\n[onceDays] One-off / quick disclosure (Step 9)");
     goalsForDay: () => ({ ...GOALS }),
   });
   const withNote = Analytics.observations(days, { entriesForDay: (day) => byDay[day] || [] });
-  const note = withNote.find((o) => o.id === "once-days");
-  ok(!!note && note.priority === 0 && /2 days include one-off/.test(note.text),
-    "observations emit honesty once-days note when entriesForDay is provided",
-    note && note.text);
-  ok(!Analytics.observations(days, {}).some((o) => o.id === "once-days"),
-    "without entriesForDay, once-days note is omitted");
+  ok(!withNote.some((o) => o.id === "once-days"),
+    "observations no longer emit once-days count notes");
+  const onceStats = Analytics.onceDays(days.map((d) => d.day), (day) => byDay[day] || []);
+  ok(onceStats.n === 2 && onceStats.share != null,
+    "onceDays helper still counts one-off/quick provenance for callers",
+    JSON.stringify(onceStats));
   const stats = Analytics.summaryStats(days, "kcal");
   ok(stats.n === 3, "once/quick days remain in underlying stats (disclose, never drop)");
 }

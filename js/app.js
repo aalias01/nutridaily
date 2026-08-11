@@ -54,7 +54,7 @@ const App = (() => {
     insightTopFoodExpanded: null, // food name currently expanded for date pills
     insightsReturn: null, // return chip after Insights → Today jump
     insightCategory: "overview", // overview | patterns | body | intake
-    insightIntakePage: 0, // 0 trend · 1 heatmap · 2 DOW · 3 top foods
+    insightIntakePage: 0, // 0 trend · 1 heatmap · 2 top foods
     dayContribMetric: null, // when set, Today shows contribution breakdown for viewDay
     lastCalendarToday: null, // for overnight day roll without yanking past-day browsing
     yesterdayKey: null,
@@ -978,16 +978,13 @@ const App = (() => {
   function insightsReturnOrigin(el) {
     if (!el || !el.closest) return {};
     if (el.closest("#top-foods-card, #top-foods")) {
-      return { origin: "topfoods", label: "Back to Insights > Top Foods", category: "intake", intakePage: 3 };
+      return { origin: "topfoods", label: "Back to Insights > Top Foods", category: "intake", intakePage: 2 };
     }
     if (el.closest("#insight-heatmap, #heatmap-tip, #intake-page-heatmap")) {
       return { origin: "heatmap", label: "Back to Insights > Heatmap", category: "intake", intakePage: 1 };
     }
     if (el.closest("#intake-page-trend, #trend-tip, #trend-data, #intake-stats")) {
       return { origin: "trend", label: "Back to Insights > Trend", category: "intake", intakePage: 0 };
-    }
-    if (el.closest("#intake-page-dow, #dow-pattern, #dow-tip")) {
-      return { origin: "dow", label: "Back to Insights > Day of week", category: "intake", intakePage: 2 };
     }
     if (el.closest("#section-weight, #weight-tip, #weight-data")) {
       return { origin: "weight", label: "Back to Insights > Weight", category: "body" };
@@ -1110,7 +1107,6 @@ const App = (() => {
       topfoods: "#top-foods-card",
       heatmap: "#insight-heatmap",
       trend: "#intake-page-trend",
-      dow: "#intake-page-dow",
       weight: "#section-weight",
       energy: "#section-energy",
     };
@@ -7038,14 +7034,6 @@ const App = (() => {
           goal: Number(goals[nut]) || null,
           status: statusMatch ? statusMatch[1].trim() : "",
         });
-      });
-    }
-    const dowRoot = UI.$("#dow-pattern");
-    if (dowRoot) {
-      dowRoot.addEventListener("click", (e) => {
-        const row = e.target.closest("[data-action='dow-day']");
-        if (!row || row.disabled || row.dataset.dow == null) return;
-        UI.onDowRowTap(row.dataset.dow);
       });
     }
     const canvas = UI.$("#trend-canvas");

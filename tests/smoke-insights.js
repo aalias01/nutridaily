@@ -202,9 +202,8 @@ async function run(label, days) {
     ok(cardFills.length >= 2 &&
         cardFills.every((color) => contrastRatio("#23282d", color) >= 4.5 || contrastRatio("#e8e6e1", color) >= 4.5),
       "insight-dock card surfaces keep text-level contrast in every theme");
-    ok(/\.insight-section\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText) &&
-        /#dow-pattern\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
-      "insight-section and #dow-pattern [hidden] use display:none !important");
+    ok(/\.insight-section\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
+      "insight-section [hidden] uses display:none !important");
     ok(/\.insight-panel\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
       "insight-panel [hidden] uses display:none !important");
     ok(/\.insight-carousel-track[^}]*scroll-snap-type:\s*x\s+mandatory/s.test(cssText) &&
@@ -360,7 +359,11 @@ async function run(label, days) {
   ok(!!dock, "insight-dock exists");
   ok(dock.hidden && !window.document.body.classList.contains("has-insight-dock"),
     "nutrient dock hidden on Overview (Intake-only lane)");
-  ok(!!$("#insight-teasers"), "Overview mounts Patterns/Body teaser row");
+  ok(!!$("#insight-teasers"), "Overview mounts Patterns/Body/Intake teaser row");
+  ok([...window.document.querySelectorAll("#insight-teasers .insight-teaser")].length === 3,
+    "Overview teasers cover Patterns, Body, and Intake");
+  ok(/swipe/i.test(text("#insight-teasers")) && /Where macros/i.test(text("#insight-teasers")),
+    "Overview teasers describe destinations without restating tile numbers");
   cats.querySelector('[data-insight-cat="intake"]').click();
   await new Promise((r) => setTimeout(r, 40));
   ok(!$("#insight-panel-intake").hidden && $("#insight-panel-overview").hidden,
@@ -387,13 +390,13 @@ async function run(label, days) {
       $("#intake-carousel").firstElementChild === $("#intake-carousel-dots"),
     "Intake pagination dots sit above the carousel track");
   ok($("#intake-page-heatmap") && $("#intake-page-heatmap").contains($("#insight-heatmap")) &&
-      $("#intake-page-dow") && $("#intake-page-dow").contains($("#dow-pattern")) &&
-      $("#intake-page-topfoods") && $("#intake-page-topfoods").contains($("#top-foods-card")),
-    "heatmap / DOW / top foods each own a carousel page");
+      $("#intake-page-topfoods") && $("#intake-page-topfoods").contains($("#top-foods-card")) &&
+      !$("#intake-page-dow") && !$("#dow-pattern"),
+    "heatmap / top foods each own a carousel page (no day-of-week page)");
   const carDots = [...window.document.querySelectorAll("#intake-carousel-dots .carousel-dot")];
-  ok(carDots.length === 4 &&
+  ok(carDots.length === 3 &&
       carDots.every((d, i) => Number(d.dataset.intakePage) === i),
-    "Intake carousel has 4 pagination dots");
+    "Intake carousel has 3 pagination dots");
   ok(carDots[0].classList.contains("on") && carDots[0].getAttribute("aria-selected") === "true",
     "carousel starts on page 0 (Trend)");
   carDots[2].click();
@@ -404,8 +407,8 @@ async function run(label, days) {
   await new Promise((r) => setTimeout(r, 20));
   ok(!$("#section-intake").hidden && !$("#section-weight").hidden &&
       !$("#section-energy").hidden && !$("#section-adherence").hidden &&
-      !$("#section-composition").hidden && !$("#dow-pattern").hidden,
-    "full-tier fixture boots with core sections + DOW visible");
+      !$("#section-composition").hidden,
+    "full-tier fixture boots with core sections visible");
   ok($("#section-composition").compareDocumentPosition($("#section-adherence")) &
       window.Node.DOCUMENT_POSITION_FOLLOWING,
     "Patterns lists Composition before Adherence");
@@ -542,7 +545,6 @@ async function run(label, days) {
     ["#insight-heatmap", "heatmap"],
     ["#macro-split", "macro split"],
     ["#meal-split", "meal split"],
-    ["#dow-pattern", "day-of-week"],
     ["#top-foods", "top foods"],
     ["#weight-summary", "weight summary"],
     ["#weight-stats", "weight stats"],
@@ -716,7 +718,7 @@ async function run(label, days) {
     window.document.querySelector('#insight-nutrient [data-nutrient="sodium"]').click();
     await new Promise((r) => setTimeout(r, 30));
     const carDotsPeak = [...window.document.querySelectorAll("#intake-carousel-dots .carousel-dot")];
-    if (carDotsPeak[3]) carDotsPeak[3].click();
+    if (carDotsPeak[2]) carDotsPeak[2].click();
     await new Promise((r) => setTimeout(r, 20));
     $("#topfoods-mode [data-topfood-mode='totals']").click();
     await new Promise((r) => setTimeout(r, 20));
@@ -808,44 +810,6 @@ async function run(label, days) {
     }
   }
 
-  // Day-of-week row tip: average + Open most recent matching logged day.
-  {
-    const catIntake = [...window.document.querySelectorAll("#insight-cats [data-cat]")]
-      .find((b) => b.dataset.cat === "intake");
-    if (catIntake) catIntake.click();
-    await new Promise((r) => setTimeout(r, 20));
-    const dowDots = [...window.document.querySelectorAll("#intake-carousel-dots .carousel-dot")];
-    if (dowDots[2]) dowDots[2].click();
-    await new Promise((r) => setTimeout(r, 20));
-    const dowRow = $("#dow-pattern [data-action='dow-day']:not([disabled])");
-    ok(!!dowRow, "By day of week exposes tappable weekday rows");
-    if (dowRow) {
-      dowRow.click();
-      await new Promise((r) => setTimeout(r, 20));
-      const tip = $("#dow-tip");
-      const openDow = tip && tip.querySelector("[data-action='goto-day']");
-      ok(tip && !tip.hidden && /avg/i.test(tip.textContent),
-        "DOW row opens a tip with weekday average");
-      ok(!!openDow && openDow.dataset.day,
-        "DOW tip offers Open day for the most recent matching log");
-      if (openDow) {
-        const expectedDay = openDow.dataset.day;
-        openDow.click();
-        await new Promise((r) => setTimeout(r, 30));
-        const AppDow = window.eval("App");
-        ok(window.document.querySelector('.tab[data-view="today"].active') &&
-            AppDow.state.viewDay === expectedDay,
-          "DOW Open day jumps to that weekday's most recent log");
-        ok(!$("#insights-back").hidden && /Back to Insights > Day of week/i.test(text("#insights-back-btn")),
-          "DOW Open day shows Back to Insights > Day of week chip");
-        $("#insights-back [data-action='back-to-insights']").click();
-        await new Promise((r) => setTimeout(r, 30));
-        ok(window.document.querySelector('.tab[data-view="insights"].active') &&
-            !$("#insight-panel-intake").hidden,
-          "Day of week return lands back on Insights Intake");
-      }
-    }
-  }
 
   window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
   await new Promise((r) => setTimeout(r, 20));
@@ -956,7 +920,7 @@ async function run(label, days) {
   // §3 test #9 (light check on the main fixture) — honesty top-level + jump.
   // Cap / <details> branch coverage lives in runObservationsTriage().
   {
-    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete", "excluded-days"]);
+    const HONESTY = new Set(["partial-days", "bumps", "fasts", "macro-incomplete", "excluded-days"]);
     const root = $("#insight-observations");
     const topNotes = [...root.children].filter((el) => el.matches(".obs"));
     const moreNotes = [...root.querySelectorAll("details.obs-more .obs")];
@@ -1534,9 +1498,10 @@ async function runObservationsTriage() {
       continue;
     }
     if (!logWeekdays.has(m.key)) continue;
-    const late = m.i <= 14;
+    const late = m.i <= 7; // only the trailing week vs the week before (momentum windows)
     const high = m.i % 3 === 1;
-    const kcal = late ? (high ? 2800 : 2400) : (high ? 1600 : 1300);
+    // Large recent vs prior gap so momentum clears 8% after protein-per-kg left.
+    const kcal = late ? (high ? 3400 : 3000) : (high ? 1500 : 1200);
     add(m.key, "Meal A", { kcal: Math.round(kcal * 0.55), p: 60, c: 80, f: 30 }, "lunch");
     add(m.key, "Meal B", { kcal: Math.round(kcal * 0.45), p: 50, c: 70, f: 25 }, "dinner");
   }
@@ -1600,12 +1565,14 @@ async function runObservationsTriage() {
     firstAddAt: (day) => Ledger.firstAddAt(day),
   });
   const emitted = Analytics.observations(days, { todayKey });
-  const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete", "excluded-days"]);
+  const HONESTY = new Set(["partial-days", "bumps", "fasts", "macro-incomplete", "excluded-days"]);
   const cappable = emitted.filter((o) => o.tone !== "watch" && !HONESTY.has(o.id));
-  ok(cappable.length >= 4, "obs-triage fixture fires ≥4 cappable info notes (enough to force the cap)",
+    ok(cappable.length >= 4, "obs-triage fixture fires ≥4 cappable info notes (enough to force the cap)",
     emitted.map((o) => o.id).join(", "));
   ok(cappable.length > 3, "cappable info exceeds the visible cap of 3",
     `cappable=${cappable.length}`);
+  ok(emitted.some((o) => o.id === "momentum"),
+    "obs-triage fixture includes momentum among cappable notes");
   ok(emitted.some((o) => o.tone === "watch"), "obs-triage fixture includes a watch note");
   ok(emitted.some((o) => HONESTY.has(o.id)), "obs-triage fixture includes an honesty note");
   ok(emitted.some((o) => o.id === "partial-days") && emitted.some((o) => o.id === "bumps"),
@@ -1639,8 +1606,8 @@ async function runObservationsTriage() {
       !!$('#insight-observations > [data-obs-id="partial-days"]'),
     "partial-days and bumps both stay top-level regardless of the info cap");
 
-  const pri = { "partial-days": 0, bumps: 0, fasts: 0, "once-days": 0, "macro-incomplete": 0, "excluded-days": 0, coverage: 10, "weekend-logging": 20,
-    "weekend-kcal": 30, variability: 40, momentum: 50, "protein-per-kg": 60 };
+  const pri = { "partial-days": 0, bumps: 0, fasts: 0, "macro-incomplete": 0, "excluded-days": 0, coverage: 10, "weekend-logging": 20,
+    "weekend-kcal": 30, variability: 40, momentum: 50 };
   const priOk = (ids) => {
     for (let i = 1; i < ids.length; i++) {
       if ((pri[ids[i]] ?? 99) < (pri[ids[i - 1]] ?? 99)) return false;
@@ -1713,7 +1680,6 @@ async function runSparse() {
     "thin maturity keeps intake, weight, and adherence");
   ok($("#section-energy").hidden && $("#section-composition").hidden && $("#section-compare").hidden,
     "thin maturity hides energy, composition, and compare");
-  ok($("#dow-pattern").hidden, "thin maturity hides day-of-week pattern");
   // Dock is Intake-only; open that category before asserting the lane.
   const thinCats = $("#insight-cats");
   thinCats.querySelector('[data-insight-cat="intake"]').click();
@@ -1739,8 +1705,8 @@ async function runSparse() {
   await new Promise((r) => setTimeout(r, 60));
   const afterText = $("#view-insights").textContent;
   ok(/3 of \d+ days logged/.test(afterText), "full maturity: exactly 3 logged days after the 2→3 transition");
-  ok(!$("#section-energy").hidden && !$("#section-composition").hidden && !$("#dow-pattern").hidden,
-    "maturity unhide restores energy, composition, and DOW after 2→3");
+  ok(!$("#section-energy").hidden && !$("#section-composition").hidden,
+    "maturity unhide restores energy and composition after 2→3");
   ok($("#section-compare").hidden, "section-compare stays owned by renderPhaseCompare after 2→3");
   ok(!/NaN|undefined|Infinity|\[object/.test(afterText), "no NaN/undefined leaks after maturity recovery");
   dom.window.close();
@@ -1812,7 +1778,6 @@ async function runEmpty() {
   const visibleEmptySections = [...window.document.querySelectorAll("#view-insights .insight-section")]
     .filter((s) => !s.hidden);
   ok(visibleEmptySections.length === 0, "empty maturity hides every insight-section");
-  ok($("#dow-pattern").hidden, "empty maturity hides day-of-week pattern");
   ok($("#insight-dock").hidden, "empty maturity hides the nutrient dock");
   ok(!window.document.body.classList.contains("has-insight-dock"),
     "empty maturity clears has-insight-dock lane reservation");
@@ -4054,15 +4019,15 @@ async function runImportSecurity() {
     const note = Analytics.observations(days, {
       entriesForDay: (d) => fixtureEntries[d] || [],
     }).find((o) => o.id === "once-days");
-    ok(!!note && /^1 day includes one-off/.test(note.text),
-      "observations once-days note for a single mixed day",
-      note && note.text);
+    ok(!note, "observations no longer emit once-days note for mixed days");
+    const onceStats = Analytics.onceDays([onceInsightsDay], (d) => fixtureEntries[d] || []);
+    ok(onceStats.n === 1, "onceDays helper still finds the mixed day", JSON.stringify(onceStats));
     const stats = Analytics.summaryStats(days, "kcal");
     ok(stats.n === 1 && Math.round(stats.avg) === 1000,
       "one-off day stays in kcal stats (disclose, never exclude)",
       JSON.stringify(stats));
 
-    // Live Insights panel: seed an in-range quick entry so the honesty note is visible.
+    // Live Insights panel: a quick entry must not resurrect Overview once-days copy.
     const todayKey = Ledger.todayKey();
     Ledger.addEntry(todayKey, {
       name: "Today quick snack",
@@ -4073,9 +4038,9 @@ async function runImportSecurity() {
     [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights").click();
     await new Promise((r) => setTimeout(r, 80));
     const live = $('#insight-observations [data-obs-id="once-days"]');
-    ok(!!live && /one-off or quick-kcal/.test(live.textContent || ""),
-      "Insights shows once-days honesty note for in-range quick entries",
-      live && live.textContent);
+    const obsText = (($("#insight-observations") && $("#insight-observations").textContent) || "");
+    ok(!live && !/one-off or quick-kcal/.test(obsText),
+      "Insights Overview drops once-days honesty note");
 
     // Phase 2: Today shows macros as not scored when coverage fails; kcal keeps counting.
     App.state.viewDay = todayKey;

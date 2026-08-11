@@ -1678,7 +1678,7 @@ const UI = (() => {
   function renderObservations(ctx) {
     const root = $("#insight-observations");
     if (!root) return;
-    const HONESTY = new Set(["partial-days", "bumps", "fasts", "once-days", "macro-incomplete", "excluded-days"]);
+    const HONESTY = new Set(["partial-days", "bumps", "fasts", "macro-incomplete", "excluded-days"]);
     const obs = Analytics.observations(ctx.days, {
       ...(ctx.scoreOpts || {}),
       entriesForDay: ctx.entriesForDay,
@@ -1709,8 +1709,8 @@ const UI = (() => {
   }
 
   /**
-   * Compact Overview shortcuts into Patterns / Body so the snapshot points
-   * at the next tabs without becoming a second scorecard.
+   * Overview destinations into Patterns / Body / Intake. Fixed promise copy so
+   * Overview points forward instead of restating scorecard numbers.
    */
   function renderOverviewTeasers(ctx) {
     const root = $("#insight-teasers");
@@ -1720,44 +1720,29 @@ const UI = (() => {
       return;
     }
 
-    const chips = [];
+    const cards = [
+      {
+        cat: "Patterns",
+        detail: "Where macros and meals land",
+        jump: ctx.maturity === "thin" ? "#insight-scorecard" : "#section-composition",
+      },
+      {
+        cat: "Body",
+        detail: "Weight trend and energy",
+        jump: "#section-weight",
+      },
+      {
+        cat: "Intake",
+        detail: "Trend, calendar, top foods · swipe",
+        jump: "#section-intake",
+      },
+    ];
 
-    // Patterns: prefer a concrete adherence / protein cue when available.
-    const s = ctx.score;
-    const ppk = Analytics.proteinPerKg(ctx.days);
-    let patternsDetail = "Macros, meals, adherence";
-    if (ppk) {
-      patternsDetail = `${ppk.gPerKg.toFixed(1)} g protein / kg`;
-    } else if (s && s.score != null) {
-      patternsDetail = `Adherence ${s.score}/100`;
-    }
-    const patternsJump = ctx.maturity === "thin"
-      ? "#insight-scorecard"
-      : "#section-composition";
-    chips.push(
-      `<button type="button" class="insight-teaser" data-jump="${esc(patternsJump)}">` +
-      `<span class="insight-teaser-cat">Patterns</span>` +
-      `<span class="insight-teaser-detail">${esc(patternsDetail)}</span></button>`
-    );
-
-    // Body: weight rate when present, else TDEE when the energy section is live.
-    const rate = Analytics.weightRate(ctx.trend);
-    let bodyDetail = "Weight and energy";
-    let bodyJump = "#section-weight";
-    if (rate) {
-      const perWeek = Analytics.kgToDisplay(rate.kgPerWeek, ctx.weightUnit);
-      bodyDetail = `${Analytics.fmtSigned(perWeek, 2)} ${ctx.weightUnit}/wk`;
-    } else if (ctx.maturity !== "thin" && ctx.tdee && ctx.tdee.tdee != null) {
-      bodyDetail = `TDEE ~${fmt(ctx.tdee.tdee)} kcal`;
-      bodyJump = "#tdee-card";
-    }
-    chips.push(
-      `<button type="button" class="insight-teaser" data-jump="${esc(bodyJump)}">` +
-      `<span class="insight-teaser-cat">Body</span>` +
-      `<span class="insight-teaser-detail">${esc(bodyDetail)}</span></button>`
-    );
-
-    root.innerHTML = chips.join("");
+    root.innerHTML = cards.map((c) =>
+      `<button type="button" class="insight-teaser" data-jump="${esc(c.jump)}" aria-label="${esc(c.cat)}: ${esc(c.detail)}">` +
+      `<span class="insight-teaser-cat">${esc(c.cat)}</span>` +
+      `<span class="insight-teaser-detail">${esc(c.detail)}</span></button>`
+    ).join("");
   }
 
   // ---------------------------------------------------------- intake chart
@@ -2395,127 +2380,6 @@ const UI = (() => {
       <ul class="macro-list">${rows}</ul>`;
   }
 
-  /** Day-of-week pattern — where the weekend drift hides. */
-  function renderDowPattern(ctx) {
-    const root = $("#dow-pattern");
-    if (!root) return;
-    const rows = Analytics.byDayOfWeek(ctx.days, ctx.nutrient);
-    const meta = nutMeta(ctx.nutrient);
-    const vals = rows.map((r) => r.avg).filter(Number.isFinite);
-    if (!vals.length) {
-      root.innerHTML = `<div class="card-head-row"><b>By day of week</b><span class="muted small">${esc(meta.label)}</span></div>
-        <p class="muted small">Appears once you have logged days.</p>
-        <div id="dow-tip" class="hm-tip" hidden></div>`;
-      return;
-    }
-    const goalMax = Math.max(...rows.map((r) => r.goal || 0));
-    const max = Math.max(...vals, goalMax, 1) * 1.05;
-    const theme = chartTheme();
-
-    const bars = rows.map((r) => {
-      if (r.avg == null) {
-        return `<button type="button" class="dow-row" data-action="dow-day" data-dow="${r.dow}" disabled aria-disabled="true">
-          <span class="dow-k">${esc(r.label)}</span>
-          <span class="dow-track"></span><span class="muted small dow-v">no data</span>
-        </button>`;
-      }
-      const pct = (r.avg / max) * 100;
-      const goalPct = r.goal ? (r.goal / max) * 100 : null;
-      const color = statusColor(statusFor(ctx.nutrient, r.avg, r.goal), theme);
-      const mark = goalPct == null ? "" : `<i class="dow-goal" style="left:${goalPct.toFixed(2)}%"></i>`;
-      const aria = `${r.label} average ${fmt(r.avg)}${meta.unit} from ${r.n} day${r.n === 1 ? "" : "s"}`;
-      return `<button type="button" class="dow-row${r.weekend ? " weekend" : ""}" data-action="dow-day" data-dow="${r.dow}" aria-label="${esc(aria)}">
-        <span class="dow-k">${esc(r.label)}</span>
-        <span class="dow-track"><i class="dow-fill" style="width:${pct.toFixed(2)}%;background:${color}"></i>${mark}</span>
-        <span class="dow-v">${fmt(r.avg)}<span class="muted small"> (${r.n})</span></span>
-      </button>`;
-    }).join("");
-
-    const we = Analytics.weekendEffect(ctx.days, ctx.nutrient);
-    const note = we
-      ? `<p class="muted small">Weekends average ${Analytics.fmtSigned(we.delta)}${meta.unit} vs weekdays (${fmt(we.weekdayAvg)} → ${fmt(we.weekendAvg)}).</p>`
-      : `<p class="muted small">Needs a few more logged weekdays and weekends to compare.</p>`;
-
-    root.innerHTML = `
-      <div class="card-head-row"><b>By day of week</b><span class="muted small">${esc(meta.label)}</span></div>
-      <div class="dow-list">${bars}</div>
-      <div id="dow-tip" class="hm-tip" hidden></div>
-      ${note}`;
-  }
-
-  /** Most recent complete logged day in the current Insights range for a weekday (0=Sun). */
-  function latestLoggedDayForDow(dow) {
-    const days = (_insight && _insight.days) || [];
-    let found = null;
-    for (const d of days) {
-      if (d && d.dow === dow && d.logged && !d.excluded) found = d.day;
-    }
-    return found;
-  }
-
-  /** Compact tip under By day of week for a tapped weekday. */
-  function showDowTip(dow, opts) {
-    const tip = $("#dow-tip");
-    if (!tip) return;
-    if (dow == null || dow === "") {
-      tip.hidden = true;
-      tip.innerHTML = "";
-      return;
-    }
-    const o = opts || {};
-    const dowN = Number(dow);
-    const meta = nutMeta(o.nutrient || (_insight && _insight.nutrient) || "kcal");
-    const label = (Analytics.DOW_LABEL && Analytics.DOW_LABEL[dowN]) || `Day ${dowN}`;
-    const avg = o.avg;
-    const goal = o.goal;
-    const n = o.n;
-    const openDay = o.openDay || latestLoggedDayForDow(dowN);
-    const valueHtml = Number.isFinite(avg)
-      ? `<b>${fmt(avg)}${esc(meta.unit)}</b>`
-      : `<b class="muted">no average</b>`;
-    const sampleHtml = Number.isFinite(n) && n > 0
-      ? `<span class="muted small">avg · ${n} day${n === 1 ? "" : "s"}</span>`
-      : `<span class="muted small">avg</span>`;
-    const goalHtml = Number.isFinite(goal) && goal
-      ? `<span class="muted small">target ${fmt(goal)}${esc(meta.unit)}</span>`
-      : "";
-    const openHtml = openDay
-      ? `<button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(openDay)}">Open day</button>`
-      : `<span class="muted small">No logged ${esc(label)} in range</span>`;
-    tip.innerHTML = `
-      <div class="hm-tip-main">
-        <span class="tip-day">${esc(label)}</span>
-        ${valueHtml}
-        ${sampleHtml}
-        ${goalHtml ? `<span class="muted small tip-sep">·</span>${goalHtml}` : ""}
-      </div>
-      ${openHtml}`;
-    tip.hidden = false;
-  }
-
-  /** Resolve avg/goal/open-day from the live Insights context and show the tip. */
-  function onDowRowTap(dow) {
-    if (dow == null || dow === "") {
-      showDowTip(null);
-      return;
-    }
-    const dowN = Number(dow);
-    if (!Number.isFinite(dowN)) return;
-    const nut = (_insight && _insight.nutrient) || "kcal";
-    const match = Analytics.byDayOfWeek((_insight && _insight.days) || [], nut)
-      .find((r) => r.dow === dowN);
-    if (!match || match.avg == null) {
-      showDowTip(null);
-      return;
-    }
-    showDowTip(dowN, {
-      nutrient: nut,
-      avg: match.avg,
-      goal: match.goal,
-      n: match.n,
-    });
-  }
-
   /**
    * Top contributors by the metric you choose. Ranking by sodium or protein —
    * not only calories — is what makes this actionable.
@@ -3076,14 +2940,14 @@ const UI = (() => {
   let _insightIntakePage = 0;
 
   const INSIGHT_CATS = ["overview", "patterns", "body", "intake"];
-  const INTAKE_PAGE_COUNT = 4;
+  const INTAKE_PAGE_COUNT = 3;
   const JUMP_TO_CAT = Object.freeze({
     "#insight-heatmap": { cat: "intake", page: 1 },
-    "#dow-pattern": { cat: "intake", page: 2 },
-    "#top-foods": { cat: "intake", page: 3 },
-    "#top-foods-card": { cat: "intake", page: 3 },
+    "#top-foods": { cat: "intake", page: 2 },
+    "#top-foods-card": { cat: "intake", page: 2 },
     "#intake-stats": { cat: "intake", page: 0 },
     "#section-intake": { cat: "intake", page: 0 },
+    "#intake-page-trend": { cat: "intake", page: 0 },
     "#today-day-detail": { cat: "overview" },
     "#insight-scorecard": { cat: "patterns" },
     "#macro-split": { cat: "patterns" },
@@ -3248,14 +3112,12 @@ const UI = (() => {
       "section-intake", "section-weight", "section-energy",
       "section-adherence", "section-composition", "section-compare",
     ];
-    const dow = $("#dow-pattern");
     _insightMaturity = ctx.maturity || "empty";
     if (ctx.maturity === "empty") {
       for (const id of sectionIds) {
         const el = $("#" + id);
         if (el) el.hidden = true;
       }
-      if (dow) dow.hidden = true;
       applyInsightCategory("overview");
       return;
     }
@@ -3264,13 +3126,11 @@ const UI = (() => {
       const el = $("#" + id);
       if (el) el.hidden = false;
     }
-    if (dow) dow.hidden = false;
     if (ctx.maturity === "thin") {
       for (const id of ["section-energy", "section-composition", "section-compare"]) {
         const el = $("#" + id);
         if (el) el.hidden = true;
       }
-      if (dow) dow.hidden = true;
     }
     applyInsightCategory(_insightCategory);
   }
@@ -3369,14 +3229,12 @@ const UI = (() => {
     renderHeatmap(ctx);
     renderMacroSplit(ctx);
     renderMealSplit(ctx);
-    renderDowPattern(ctx);
     renderTopFoods(ctx);
     renderWeightChart(ctx);
     applyInsightMaturity(ctx);
     hideTip("#trend-tip");
     hideTip("#weight-tip");
     showHeatmapTip(null);
-    showDowTip(null);
   }
 
   // Back-compat: app.js historically called these two separately.
@@ -4317,7 +4175,7 @@ const UI = (() => {
     renderInsights, renderTrends, renderWeightTrend,
     applyInsightCategory, setIntakeCarouselPage, insightJumpTarget,
     insightAdjacentCategory, intakeAtCategoryEdge, currentInsightCategory, insightMaturity,
-    onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip, showDowTip, onDowRowTap,
+    onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip,
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
     inlineAmountFields,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,

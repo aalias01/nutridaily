@@ -1344,9 +1344,9 @@ const Analytics = (() => {
         id: "weekend-kcal",
         tone: "watch",
         priority: 30,
-        panel: "#dow-pattern",
-        // Keep the magnitude here (kcal-locked). Drop only the redundant
-        // weekday→weekend pair that #dow-pattern still prints when on Kcal.
+        panel: "#intake-stats",
+        // Keep the magnitude here (kcal-locked). The chronological trend is
+        // the place to inspect weekend spikes after Day of week was retired.
         text: `Weekend calories run ${Math.abs(Math.round(we.delta))} kcal ${dir} than weekdays.`,
       });
     }
@@ -1361,17 +1361,6 @@ const Analytics = (() => {
         // Keep ±sd kcal here; Typical swing owns the same figure when the
         // dock is on Kcal, and this note stays self-sufficient otherwise.
         text: `Daily calories swing a lot (±${Math.round(kcalStats.sd)} kcal). Weekly view is the steadier read.`,
-      });
-    }
-
-    const ppk = proteinPerKg(days);
-    if (ppk) {
-      out.push({
-        id: "protein-per-kg",
-        tone: "info",
-        priority: 60,
-        panel: "#insight-scorecard",
-        text: `Protein averages ${ppk.gPerKg.toFixed(1)} g per kg of body weight.`,
       });
     }
 
@@ -1401,28 +1390,8 @@ const Analytics = (() => {
       });
     }
 
-    if (typeof o.entriesForDay === "function") {
-      // Pass only entriesForDay-related opts — do not forward todayKey or onceDays
-      // will silently drop today's disclose note (scoreOpts is spread onto observations).
-      const once = onceDays(days.map((d) => d.day), o.entriesForDay, {
-        excludeDay: o.excludeOnceDay || null,
-      });
-      if (once.n > 0) {
-        const sharePct = once.share != null ? Math.round(once.share * 100) : null;
-        const shareText = sharePct != null
-          ? ` About ${sharePct}% of the calories on those days came from one-offs.`
-          : "";
-        out.push({
-          id: "once-days",
-          tone: "info",
-          priority: 0,
-          text: `${once.n} day${once.n === 1 ? " includes" : "s include"} one-off or quick-kcal entries.${shareText}`,
-        });
-      }
-    }
-
-    // Design Phase 3: separate honesty note for macro-incomplete days (scoring),
-    // distinct from once-days (provenance). Jump opens the first incomplete day.
+    // Design Phase 3: honesty note for macro-incomplete days (scoring).
+    // Jump opens the first incomplete day.
     const incompleteMacro = logged.filter((d) => d.macrosCovered === false);
     if (incompleteMacro.length) {
       const n = incompleteMacro.length;

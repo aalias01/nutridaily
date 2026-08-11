@@ -1258,14 +1258,13 @@ body.has-info-banner.has-insight-dock #toast {
 .insight-section { margin: 18px 0 0; }
 .insight-panel > .insight-section:first-child { margin-top: 10px; }
 /* Author rules must not defeat [hidden] (maturity + compare gates). */
-.insight-section[hidden],
-#dow-pattern[hidden] { display: none !important; }
+.insight-section[hidden] { display: none !important; }
 .section-head {
   margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--muted);
 }
 
-/* --- Intake carousel (chart / heatmap / DOW / top foods) --- */
+/* --- Intake carousel (chart / heatmap / top foods) --- */
 .insight-carousel { margin-top: 4px; }
 .insight-carousel-track {
   display: flex; overflow-x: auto; scroll-snap-type: x mandatory;
@@ -1330,11 +1329,11 @@ body.has-info-banner.has-insight-dock #toast {
 .hs-value { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
 .hs-sub { font-size: 11px; overflow-wrap: anywhere; }
 
-/* --- Overview teasers (shortcuts into Patterns / Body) --- */
+/* --- Overview teasers (shortcuts into Patterns / Body / Intake) --- */
 .insight-teasers:empty { display: none; }
 .insight-teasers {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
   margin: 6px 0 2px;
 }
@@ -1357,10 +1356,10 @@ body.has-info-banner.has-insight-dock #toast {
   text-transform: uppercase; color: var(--muted);
 }
 .insight-teaser-detail {
-  font-size: 13px; font-weight: 600; line-height: 1.3;
+  font-size: 12.5px; font-weight: 600; line-height: 1.35;
   overflow-wrap: anywhere;
 }
-@media (max-width: 360px) {
+@media (max-width: 420px) {
   .insight-teasers { grid-template-columns: 1fr; }
 }
 
@@ -1630,31 +1629,6 @@ button.obs-jump:hover { background: color-mix(in srgb, var(--card) 92%, var(--in
   background: var(--line); margin: 10px 0 4px;
 }
 .stack-bar i { display: block; height: 100%; }
-
-/* --- day of week ------------------------------------------ */
-.dow-list { margin: 8px 0 6px; }
-.dow-row {
-  display: grid; grid-template-columns: 2.1rem 1fr auto; gap: 8px;
-  align-items: center; padding: 3px 0; font-size: 12.5px;
-  width: 100%; border: 0; background: transparent; color: inherit;
-  font: inherit; text-align: left; cursor: pointer; border-radius: 8px;
-}
-.dow-row:disabled { cursor: default; opacity: 0.72; }
-.dow-row:not(:disabled):hover .dow-track { filter: brightness(0.97); }
-.dow-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dow-row.weekend .dow-k { color: var(--info); }
-.dow-k { font-weight: 600; color: var(--muted); }
-.dow-track {
-  position: relative; height: 12px; border-radius: 6px;
-  background: var(--line); overflow: visible;
-}
-.dow-fill { display: block; height: 100%; border-radius: 6px; }
-.dow-goal {
-  position: absolute; top: -2px; bottom: -2px; width: 2px;
-  background: var(--ink); opacity: 0.45; border-radius: 1px;
-}
-.dow-v { font-weight: 650; font-variant-numeric: tabular-nums; }
-#dow-tip { margin-top: 6px; }
 
 /* --- top foods -------------------------------------------- */
 .day-contrib { margin: 8px 0 12px; }
