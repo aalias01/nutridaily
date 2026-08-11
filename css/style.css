@@ -191,18 +191,21 @@ header {
 .bar { position: relative; height: 7px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .bar.big { height: 9px; }
 .bar.warn { overflow: visible; }
-.bar.warn::after {
-  content: "!";
+/* Over target: tiny solid chevron past the track end (overflow cue).
+   Kept ~4×6px and only ~3px past the rail so it stays inside the 16px
+   macro column gap and clear of the value row above. Near uses color only. */
+.bar.warn-over::after {
+  content: "";
   position: absolute;
-  right: 1px;
+  right: -3px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 1;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
-  color: #fff;
-  text-shadow: 0 0 2px rgba(0, 0, 0, 0.55);
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 3px 0 3px 4px;
+  border-color: transparent transparent transparent var(--warn);
   pointer-events: none;
 }
 .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; }

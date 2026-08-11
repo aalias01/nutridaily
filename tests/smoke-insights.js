@@ -208,6 +208,11 @@ async function run(label, days) {
       "insight-panel [hidden] uses display:none !important");
     ok(/\.seg\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
       "seg [hidden] uses display:none !important (Rank-by must actually hide)");
+    ok(/\.bar\.warn-over::after[^}]*border-left:\s*[^;]*var\(--warn\)/s.test(cssText) ||
+        /\.bar\.warn-over::after[^}]*border-color:[^}]*var\(--warn\)/s.test(cssText),
+      "HUD over bars use a warn-colored chevron past the track end");
+    ok(!/\.bar\.warn::after[^}]*content:\s*"!"/s.test(cssText),
+      "HUD bars no longer use a bang glyph for over/near");
     ok(/\.insight-carousel-track[^}]*scroll-snap-type:\s*x\s+mandatory/s.test(cssText) &&
         /\.carousel-dot\.on\s*\{/s.test(cssText),
       "Intake carousel uses mandatory scroll-snap and shaded pagination dots");
@@ -1473,6 +1478,7 @@ Projected: 1000000000 kcal | P 0 | C 0 | F 0 | Fiber 0 | Sodium 0 | Potassium 0
         .find((x) => x.dataset.view === "insights");
       if (insightsTab) { insightsTab.click(); await new Promise((r) => setTimeout(r, 40)); }
     }
+  }
 
   // Today HUD → same contribution card for the viewed day.
   // Set Insights nutrient to protein first so we can assert HUD taps do not bleed.

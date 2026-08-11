@@ -385,8 +385,8 @@ const UI = (() => {
       // Today stays strict — it flags the moment you pass your number. But it
       // now names which side of the scoring band you are on, so a day that
       // reads amber here and green in Insights explains itself rather than
-      // looking like the two tabs disagree. Status is a "!" on the bar (not
-      // "over" in the value) so long mg figures don't wrap the card.
+      // looking like the two tabs disagree. Over uses a tiny chevron past the
+      // bar end (not "over" in the value) so long mg figures don't wrap.
       const st = Phases.hudState(mean, g, Phases.BANDS[key]);
       fill.classList.toggle("near", st === "near");
       fill.classList.toggle("over", st === "over");
