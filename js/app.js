@@ -986,7 +986,7 @@ const App = (() => {
     if (el.closest("#intake-page-trend, #trend-tip, #trend-data, #intake-stats")) {
       return { origin: "trend", label: "Back to Insights > Trend", category: "intake", intakePage: 0 };
     }
-    if (el.closest("#intake-page-dow, #dow-pattern")) {
+    if (el.closest("#intake-page-dow, #dow-pattern, #dow-tip")) {
       return { origin: "dow", label: "Back to Insights > Day of week", category: "intake", intakePage: 2 };
     }
     if (el.closest("#section-weight, #weight-tip, #weight-data")) {
@@ -7038,6 +7038,14 @@ const App = (() => {
           goal: Number(goals[nut]) || null,
           status: statusMatch ? statusMatch[1].trim() : "",
         });
+      });
+    }
+    const dowRoot = UI.$("#dow-pattern");
+    if (dowRoot) {
+      dowRoot.addEventListener("click", (e) => {
+        const row = e.target.closest("[data-action='dow-day']");
+        if (!row || row.disabled || row.dataset.dow == null) return;
+        UI.onDowRowTap(row.dataset.dow);
       });
     }
     const canvas = UI.$("#trend-canvas");

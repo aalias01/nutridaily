@@ -1636,7 +1636,12 @@ button.obs-jump:hover { background: color-mix(in srgb, var(--card) 92%, var(--in
 .dow-row {
   display: grid; grid-template-columns: 2.1rem 1fr auto; gap: 8px;
   align-items: center; padding: 3px 0; font-size: 12.5px;
+  width: 100%; border: 0; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer; border-radius: 8px;
 }
+.dow-row:disabled { cursor: default; opacity: 0.72; }
+.dow-row:not(:disabled):hover .dow-track { filter: brightness(0.97); }
+.dow-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dow-row.weekend .dow-k { color: var(--info); }
 .dow-k { font-weight: 600; color: var(--muted); }
 .dow-track {
@@ -1649,6 +1654,7 @@ button.obs-jump:hover { background: color-mix(in srgb, var(--card) 92%, var(--in
   background: var(--ink); opacity: 0.45; border-radius: 1px;
 }
 .dow-v { font-weight: 650; font-variant-numeric: tabular-nums; }
+#dow-tip { margin-top: 6px; }
 
 /* --- top foods -------------------------------------------- */
 .day-contrib { margin: 8px 0 12px; }

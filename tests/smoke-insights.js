@@ -808,6 +808,45 @@ async function run(label, days) {
     }
   }
 
+  // Day-of-week row tip: average + Open most recent matching logged day.
+  {
+    const catIntake = [...window.document.querySelectorAll("#insight-cats [data-cat]")]
+      .find((b) => b.dataset.cat === "intake");
+    if (catIntake) catIntake.click();
+    await new Promise((r) => setTimeout(r, 20));
+    const dowDots = [...window.document.querySelectorAll("#intake-carousel-dots .carousel-dot")];
+    if (dowDots[2]) dowDots[2].click();
+    await new Promise((r) => setTimeout(r, 20));
+    const dowRow = $("#dow-pattern [data-action='dow-day']:not([disabled])");
+    ok(!!dowRow, "By day of week exposes tappable weekday rows");
+    if (dowRow) {
+      dowRow.click();
+      await new Promise((r) => setTimeout(r, 20));
+      const tip = $("#dow-tip");
+      const openDow = tip && tip.querySelector("[data-action='goto-day']");
+      ok(tip && !tip.hidden && /avg/i.test(tip.textContent),
+        "DOW row opens a tip with weekday average");
+      ok(!!openDow && openDow.dataset.day,
+        "DOW tip offers Open day for the most recent matching log");
+      if (openDow) {
+        const expectedDay = openDow.dataset.day;
+        openDow.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const AppDow = window.eval("App");
+        ok(window.document.querySelector('.tab[data-view="today"].active') &&
+            AppDow.state.viewDay === expectedDay,
+          "DOW Open day jumps to that weekday's most recent log");
+        ok(!$("#insights-back").hidden && /Back to Insights > Day of week/i.test(text("#insights-back-btn")),
+          "DOW Open day shows Back to Insights > Day of week chip");
+        $("#insights-back [data-action='back-to-insights']").click();
+        await new Promise((r) => setTimeout(r, 30));
+        ok(window.document.querySelector('.tab[data-view="insights"].active') &&
+            !$("#insight-panel-intake").hidden,
+          "Day of week return lands back on Insights Intake");
+      }
+    }
+  }
+
   window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
   await new Promise((r) => setTimeout(r, 20));
 

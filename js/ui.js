@@ -2404,7 +2404,8 @@ const UI = (() => {
     const vals = rows.map((r) => r.avg).filter(Number.isFinite);
     if (!vals.length) {
       root.innerHTML = `<div class="card-head-row"><b>By day of week</b><span class="muted small">${esc(meta.label)}</span></div>
-        <p class="muted small">Appears once you have logged days.</p>`;
+        <p class="muted small">Appears once you have logged days.</p>
+        <div id="dow-tip" class="hm-tip" hidden></div>`;
       return;
     }
     const goalMax = Math.max(...rows.map((r) => r.goal || 0));
@@ -2413,18 +2414,21 @@ const UI = (() => {
 
     const bars = rows.map((r) => {
       if (r.avg == null) {
-        return `<div class="dow-row"><span class="dow-k">${esc(r.label)}</span>
-          <span class="dow-track"></span><span class="muted small dow-v">no data</span></div>`;
+        return `<button type="button" class="dow-row" data-action="dow-day" data-dow="${r.dow}" disabled aria-disabled="true">
+          <span class="dow-k">${esc(r.label)}</span>
+          <span class="dow-track"></span><span class="muted small dow-v">no data</span>
+        </button>`;
       }
       const pct = (r.avg / max) * 100;
       const goalPct = r.goal ? (r.goal / max) * 100 : null;
       const color = statusColor(statusFor(ctx.nutrient, r.avg, r.goal), theme);
       const mark = goalPct == null ? "" : `<i class="dow-goal" style="left:${goalPct.toFixed(2)}%"></i>`;
-      return `<div class="dow-row${r.weekend ? " weekend" : ""}">
+      const aria = `${r.label} average ${fmt(r.avg)}${meta.unit} from ${r.n} day${r.n === 1 ? "" : "s"}`;
+      return `<button type="button" class="dow-row${r.weekend ? " weekend" : ""}" data-action="dow-day" data-dow="${r.dow}" aria-label="${esc(aria)}">
         <span class="dow-k">${esc(r.label)}</span>
         <span class="dow-track"><i class="dow-fill" style="width:${pct.toFixed(2)}%;background:${color}"></i>${mark}</span>
         <span class="dow-v">${fmt(r.avg)}<span class="muted small"> (${r.n})</span></span>
-      </div>`;
+      </button>`;
     }).join("");
 
     const we = Analytics.weekendEffect(ctx.days, ctx.nutrient);
@@ -2435,7 +2439,81 @@ const UI = (() => {
     root.innerHTML = `
       <div class="card-head-row"><b>By day of week</b><span class="muted small">${esc(meta.label)}</span></div>
       <div class="dow-list">${bars}</div>
+      <div id="dow-tip" class="hm-tip" hidden></div>
       ${note}`;
+  }
+
+  /** Most recent complete logged day in the current Insights range for a weekday (0=Sun). */
+  function latestLoggedDayForDow(dow) {
+    const days = (_insight && _insight.days) || [];
+    let found = null;
+    for (const d of days) {
+      if (d && d.dow === dow && d.logged && !d.excluded) found = d.day;
+    }
+    return found;
+  }
+
+  /** Compact tip under By day of week for a tapped weekday. */
+  function showDowTip(dow, opts) {
+    const tip = $("#dow-tip");
+    if (!tip) return;
+    if (dow == null || dow === "") {
+      tip.hidden = true;
+      tip.innerHTML = "";
+      return;
+    }
+    const o = opts || {};
+    const dowN = Number(dow);
+    const meta = nutMeta(o.nutrient || (_insight && _insight.nutrient) || "kcal");
+    const label = (Analytics.DOW_LABEL && Analytics.DOW_LABEL[dowN]) || `Day ${dowN}`;
+    const avg = o.avg;
+    const goal = o.goal;
+    const n = o.n;
+    const openDay = o.openDay || latestLoggedDayForDow(dowN);
+    const valueHtml = Number.isFinite(avg)
+      ? `<b>${fmt(avg)}${esc(meta.unit)}</b>`
+      : `<b class="muted">no average</b>`;
+    const sampleHtml = Number.isFinite(n) && n > 0
+      ? `<span class="muted small">avg · ${n} day${n === 1 ? "" : "s"}</span>`
+      : `<span class="muted small">avg</span>`;
+    const goalHtml = Number.isFinite(goal) && goal
+      ? `<span class="muted small">target ${fmt(goal)}${esc(meta.unit)}</span>`
+      : "";
+    const openHtml = openDay
+      ? `<button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(openDay)}">Open day</button>`
+      : `<span class="muted small">No logged ${esc(label)} in range</span>`;
+    tip.innerHTML = `
+      <div class="hm-tip-main">
+        <span class="tip-day">${esc(label)}</span>
+        ${valueHtml}
+        ${sampleHtml}
+        ${goalHtml ? `<span class="muted small tip-sep">·</span>${goalHtml}` : ""}
+      </div>
+      ${openHtml}`;
+    tip.hidden = false;
+  }
+
+  /** Resolve avg/goal/open-day from the live Insights context and show the tip. */
+  function onDowRowTap(dow) {
+    if (dow == null || dow === "") {
+      showDowTip(null);
+      return;
+    }
+    const dowN = Number(dow);
+    if (!Number.isFinite(dowN)) return;
+    const nut = (_insight && _insight.nutrient) || "kcal";
+    const match = Analytics.byDayOfWeek((_insight && _insight.days) || [], nut)
+      .find((r) => r.dow === dowN);
+    if (!match || match.avg == null) {
+      showDowTip(null);
+      return;
+    }
+    showDowTip(dowN, {
+      nutrient: nut,
+      avg: match.avg,
+      goal: match.goal,
+      n: match.n,
+    });
   }
 
   /**
@@ -3298,6 +3376,7 @@ const UI = (() => {
     hideTip("#trend-tip");
     hideTip("#weight-tip");
     showHeatmapTip(null);
+    showDowTip(null);
   }
 
   // Back-compat: app.js historically called these two separately.
@@ -4238,7 +4317,7 @@ const UI = (() => {
     renderInsights, renderTrends, renderWeightTrend,
     applyInsightCategory, setIntakeCarouselPage, insightJumpTarget,
     insightAdjacentCategory, intakeAtCategoryEdge, currentInsightCategory, insightMaturity,
-    onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip,
+    onTrendTap, onWeightTap, trendDayAtClientX, weightDayAtClientX, showHeatmapTip, showDowTip, onDowRowTap,
     renderDayDetail, fillMealChips, setSyncPill, showOnboarding, renderWeightTrendLine, MEALS,
     inlineAmountFields,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
