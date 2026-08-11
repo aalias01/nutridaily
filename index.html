@@ -223,6 +223,15 @@
                       <button type="button" data-topfood-mode="totals" class="on" aria-pressed="true">Totals</button>
                       <button type="button" data-topfood-mode="peaks" aria-pressed="false">Peaks</button>
                     </span>
+                    <span class="seg" id="topfoods-rank" role="group" aria-label="Rank Top foods by nutrient" hidden>
+                      <button type="button" data-topfood-metric="kcal" class="on" aria-pressed="true">Kcal</button>
+                      <button type="button" data-topfood-metric="protein" aria-pressed="false">Protein</button>
+                      <button type="button" data-topfood-metric="carbs" aria-pressed="false">Carbs</button>
+                      <button type="button" data-topfood-metric="fat" aria-pressed="false">Fat</button>
+                      <button type="button" data-topfood-metric="fiber" aria-pressed="false">Fiber</button>
+                      <button type="button" data-topfood-metric="sodium" aria-pressed="false">Na</button>
+                      <button type="button" data-topfood-metric="potassium" aria-pressed="false">K</button>
+                    </span>
                     <span class="muted small" id="topfoods-scope"></span>
                   </div>
                   <input id="topfoods-search" type="search" placeholder="Search meals in this range" aria-label="Search meals in this Insights range">
@@ -369,7 +378,8 @@
   <div id="insight-dock" class="insight-dock" hidden>
     <div class="range-pills nutrient-pills" id="insight-nutrient"
          role="toolbar" aria-label="Chart nutrient" aria-controls="section-intake">
-      <button type="button" data-nutrient="kcal" class="active">Kcal</button>
+      <button type="button" data-nutrient="overall" class="active" aria-label="Overall">Overall</button>
+      <button type="button" data-nutrient="kcal">Kcal</button>
       <button type="button" data-nutrient="protein">Protein</button>
       <button type="button" data-nutrient="carbs">Carbs</button>
       <button type="button" data-nutrient="fat">Fat</button>

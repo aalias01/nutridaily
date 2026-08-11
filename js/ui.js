@@ -1328,6 +1328,7 @@ const UI = (() => {
   let _insight = null;
 
   const NUT_META = {
+    overall: { label: "Overall", unit: "%" },
     kcal:    { label: "Calories", unit: "" },
     protein: { label: "Protein",  unit: " g" },
     carbs:   { label: "Carbs",    unit: " g" },
@@ -1337,7 +1338,7 @@ const UI = (() => {
     potassium: { label: "Potassium", unit: " mg" },
   };
 
-  function nutMeta(key) { return NUT_META[key] || NUT_META.kcal; }
+  function nutMeta(key) { return NUT_META[key] || NUT_META.overall; }
 
   /**
    * Targets are not all the same shape, and the UI must not pretend they are:
@@ -1351,6 +1352,7 @@ const UI = (() => {
    * and the scorecard called the very same days on target.
    */
   function bandFor(key) {
+    if (key === "overall") return { dir: "floor", pct: 0 };
     if (typeof Phases === "undefined") return null;
     return Phases.BANDS[key] || Phases.BANDS.kcal;
   }
@@ -1364,6 +1366,12 @@ const UI = (() => {
    */
   function statusFor(key, value, goal, unscored) {
     if (unscored) return "exempt";
+    if (key === "overall") {
+      if (!Number.isFinite(value)) return "none";
+      if (value >= 80) return "hit";
+      if (value >= 50) return "under";
+      return "over";
+    }
     const band = bandFor(key);
     if (!band || !Number.isFinite(value) || !goal) return "none";
     const s = Phases.classify(value, goal, band);
@@ -1385,9 +1393,11 @@ const UI = (() => {
     range:   { under: "under", hit: "on target", over: "over" },
     floor:   { under: "short", hit: "met",       over: "over" },
     ceiling: { under: "under", hit: "within",    over: "over" },
+    overall: { under: "mixed", hit: "strong",    over: "weak" },
   };
 
   function bandText(key) {
+    if (key === "overall") return BAND_TEXT.overall;
     const band = bandFor(key);
     return BAND_TEXT[(band && band.dir) || "range"] || BAND_TEXT.range;
   }
@@ -1565,11 +1575,16 @@ const UI = (() => {
     });
     const viewingPastPhase = daysBack === "phase" && !!selectedPhase && selectedPhase.endDay != null;
     const scoreDay = typeof Phases !== "undefined" ? Phases.scoreDayTotals : null;
+    if (typeof Analytics.dayTargetHitRate === "function" && scoreDay) {
+      for (const d of days) d.overallHit = Analytics.dayTargetHitRate(d, scoreDay);
+    }
+    const nutrient = o.nutrient || "overall";
+    const foodMetric = o.topFoodMetric || (nutrient === "overall" ? "kcal" : nutrient);
     const ctx = {
       keys, days, settings, todayKey, selectedPhase, daysBack, viewingPastPhase, scoreDay,
-      nutrient: o.nutrient || "kcal",
+      nutrient,
       rollup: o.rollup === "week" ? "week" : "day",
-      topFoodMetric: o.topFoodMetric || o.nutrient,
+      topFoodMetric: foodMetric === "overall" ? "kcal" : foodMetric,
       topFoodMode: o.topFoodMode === "peaks" ? "peaks" : "totals",
       topFoodQuery: o.topFoodQuery || "",
       topFoodExpanded: o.topFoodExpanded || null,
@@ -1834,15 +1849,23 @@ const UI = (() => {
           const resolved = (typeof Phases !== "undefined" && typeof Analytics !== "undefined")
             ? Phases.effectiveGoals(Analytics.toTotalsLike(d), d.goals || {})
             : (d.goals || {});
+          const overall = ctx.nutrient === "overall";
+          const hr = d.overallHit;
           return {
             key: d.day,
             label: d.day.slice(5),
-            value: d.logged ? d[ctx.nutrient] : null,
-            goal: (d.goals || {})[ctx.nutrient] || 0,
+            value: !d.logged ? null
+              : overall ? (hr && Number.isFinite(hr.pct) ? hr.pct : null)
+                : d[ctx.nutrient],
+            goal: overall
+              ? (Analytics.OVERALL_GOAL_PCT || 80)
+              : ((d.goals || {})[ctx.nutrient] || 0),
             logged: d.logged,
             sub: typeof Phases !== "undefined" ? Phases.shortDate(d.day) : d.day,
             partial: false,
-            unscored: d.logged && !!(resolved && resolved._unscored && resolved._unscored[ctx.nutrient]),
+            overallHit: overall ? hr : null,
+            unscored: !overall && d.logged &&
+              !!(resolved && resolved._unscored && resolved._unscored[ctx.nutrient]),
           };
         });
 
@@ -1861,14 +1884,17 @@ const UI = (() => {
     const yAt = drawYAxis(c, box, 0, maxV, theme);
 
     // Hit band for the current nutrient, so "on target" is a region not a line.
-    const band = (typeof Phases !== "undefined" && Phases.BANDS[ctx.nutrient]) || null;
+    const band = ctx.nutrient === "overall"
+      ? { dir: "floor", pct: 0 }
+      : ((typeof Phases !== "undefined" && Phases.BANDS[ctx.nutrient]) || null);
     if (band) {
       c.fillStyle = withAlpha(theme.accent, 0.10);
       series.forEach((p, i) => {
-        if (!p.goal) return;
+        if (!p.goal && ctx.nutrient !== "overall") return;
         const x = pad.l + i * slot;
-        const lo = band.dir === "ceiling" ? 0 : p.goal * (1 - band.pct);
-        const hi = band.dir === "floor" ? maxV : p.goal * (1 + band.pct);
+        const goal = p.goal || (ctx.nutrient === "overall" ? 80 : 0);
+        const lo = band.dir === "ceiling" ? 0 : (ctx.nutrient === "overall" ? goal : goal * (1 - band.pct));
+        const hi = band.dir === "floor" ? maxV : goal * (1 + band.pct);
         const yHi = yAt(Math.min(hi, maxV));
         const yLo = yAt(Math.max(0, lo));
         c.fillRect(x, yHi, slot, Math.max(1, yLo - yHi));
@@ -1968,7 +1994,9 @@ const UI = (() => {
     const tip = period === "week"
       ? ""
       : " · tap a bar for details";
-    el.textContent = `${meta.label} per ${period} vs target band${tip}`;
+    el.textContent = ctx.nutrient === "overall"
+      ? `Share of targets hit per ${period}${tip}`
+      : `${meta.label} per ${period} vs target band${tip}`;
   }
 
   /** Distribution stats for the selected nutrient — the spread, not just the mean. */
@@ -2198,14 +2226,19 @@ const UI = (() => {
         } else {
           const stateWord = c.logged ? (bt2[c.status] || c.status) : "not logged";
           title = c.logged
-            ? `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.planned ? " · planned calorie target" : ""}`
+            ? (ctx.nutrient === "overall" && Number.isFinite(c.value)
+              ? `${c.day} · ${fmt(c.value)}% targets hit${c.n ? ` (${c.hit}/${c.n})` : ""} · ${stateWord}${c.planned ? " · planned calorie target" : ""}`
+              : `${c.day} · ${fmt(c.value)}${meta.unit}${c.goal ? ` of ${fmt(c.goal)}` : ""} · ${stateWord}${c.planned ? " · planned calorie target" : ""}`)
             : `${c.day} · not logged`;
         }
         // Status is carried by shape as well as colour: green/orange alone
         // fails for red-green colour blindness, and this grid has no text or
         // position fallback the way the bars and scorecard do.
         const fastMark = c.fasted && c.status !== "fast" ? " hm-fasted" : "";
-        return `<button type="button" class="hm-cell hm-${esc(c.status)}${c.planned ? " hm-planned" : ""}${fastMark}" data-action="heatmap-day" data-day="${esc(c.day)}" title="${esc(title)}" aria-label="${esc(title)}"></button>`;
+        const overallAttrs = ctx.nutrient === "overall" && Number.isFinite(c.value)
+          ? ` data-overall-pct="${esc(String(c.value))}" data-overall-hit="${esc(String(c.hit || 0))}" data-overall-n="${esc(String(c.n || 0))}"`
+          : "";
+        return `<button type="button" class="hm-cell hm-${esc(c.status)}${c.planned ? " hm-planned" : ""}${fastMark}" data-action="heatmap-day" data-day="${esc(c.day)}"${overallAttrs} title="${esc(title)}" aria-label="${esc(title)}"></button>`;
       }).join("");
       return `<div class="hm-col">${inner}</div>`;
     }).join("");
@@ -2220,7 +2253,7 @@ const UI = (() => {
     const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
     // Only show swatches for states this nutrient's band can actually produce.
     const bt = bandText(ctx.nutrient);
-    const dir = (bandFor(ctx.nutrient) || {}).dir || "range";
+    const dir = ctx.nutrient === "overall" ? "overall" : ((bandFor(ctx.nutrient) || {}).dir || "range");
     const keySwatches = [
       `<i class="hm-cell hm-empty"></i>none`,
       `<i class="hm-cell hm-fast"></i>fasted`,
@@ -2228,9 +2261,11 @@ const UI = (() => {
       `<i class="hm-cell hm-hit"></i>${esc(bt.hit)}`,
       dir !== "floor" ? `<i class="hm-cell hm-over"></i>${esc(bt.over)}` : null,
     ].filter(Boolean).join(" ");
-    const dirNote = dir === "ceiling"
-      ? "ceiling — lower is better"
-      : dir === "floor" ? "floor — more is fine" : "range";
+    const dirNote = ctx.nutrient === "overall"
+      ? "targets hit · strong ≥80%"
+      : dir === "ceiling"
+        ? "ceiling — lower is better"
+        : dir === "floor" ? "floor — more is fine" : "range";
     const eatingDays = Math.max(0, (cons.loggedDays || 0) - (cons.fastedDays || 0));
     const missedN = (cons.missedDays && cons.missedDays.length) || 0;
     root.innerHTML = `
@@ -2275,14 +2310,18 @@ const UI = (() => {
     const valueHtml = Number.isFinite(value)
       ? `<b>${fmt(value)}${esc(meta.unit)}</b>`
       : `<b class="muted">not logged</b>`;
+    const detailHtml = o.detail
+      ? `<span class="muted small">${esc(o.detail)}</span>`
+      : "";
     const goalHtml = Number.isFinite(goal) && goal
-      ? `<span class="muted small">target ${fmt(goal)}${esc(meta.unit)}</span>`
+      ? `<span class="muted small">${o.nutrient === "overall" || meta.label === "Overall" ? `strong ≥${fmt(goal)}${esc(meta.unit)}` : `target ${fmt(goal)}${esc(meta.unit)}`}</span>`
       : "";
     const statusHtml = status ? `<span class="muted small">${esc(status)}</span>` : "";
     tip.innerHTML = `
       <div class="hm-tip-main">
         <span class="tip-day">${esc(label)}</span>
         ${valueHtml}
+        ${detailHtml}
         ${goalHtml}${goalHtml && statusHtml ? `<span class="muted small tip-sep">·</span>` : ""}${statusHtml}
       </div>
       <button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(dayKey)}">Open day</button>`;
@@ -2448,6 +2487,18 @@ const UI = (() => {
         btn.classList.toggle("on", on);
         btn.setAttribute("aria-pressed", on ? "true" : "false");
       });
+    }
+    const rankSeg = $("#topfoods-rank");
+    if (rankSeg) {
+      const showRank = ctx.nutrient === "overall";
+      rankSeg.hidden = !showRank;
+      if (showRank) {
+        rankSeg.querySelectorAll("[data-topfood-metric]").forEach((btn) => {
+          const on = btn.dataset.topfoodMetric === metric;
+          btn.classList.toggle("on", on);
+          btn.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+      }
     }
 
     const agg = typeof Analytics.foodNutrientAgg === "function"
@@ -3157,19 +3208,34 @@ const UI = (() => {
         b.dataset.dockName = b.getAttribute("aria-label") || (b.textContent || "").trim();
       }
       const name = b.dataset.dockName;
-      const row = byKey[b.dataset.nutrient];
+      const key = b.dataset.nutrient;
       let status = "none";
       let detail = "not enough scored days";
-      if (row && row.n >= 3) {
-        const rate = row.hit / row.n;
-        const pct = Math.round(rate * 100);
-        detail = `${pct}% of days on target`;
-        if (rate >= 0.8) status = "good";
-        else if (rate >= 0.5) status = "mid";
-        else status = "bad";
+      if (key === "overall") {
+        const rates = (ctx.days || [])
+          .map((d) => d.overallHit)
+          .filter((hr) => hr && Number.isFinite(hr.rate) && hr.n > 0);
+        if (rates.length >= 3) {
+          const avg = rates.reduce((s, hr) => s + hr.rate, 0) / rates.length;
+          const pct = Math.round(avg * 100);
+          detail = `${pct}% targets hit on avg`;
+          if (avg >= 0.8) status = "good";
+          else if (avg >= 0.5) status = "mid";
+          else status = "bad";
+        }
+      } else {
+        const row = byKey[key];
+        if (row && row.n >= 3) {
+          const rate = row.hit / row.n;
+          const pct = Math.round(rate * 100);
+          detail = `${pct}% of days on target`;
+          if (rate >= 0.8) status = "good";
+          else if (rate >= 0.5) status = "mid";
+          else status = "bad";
+        }
       }
       b.dataset.dockStatus = status;
-      const on = b.dataset.nutrient === ctx.nutrient;
+      const on = key === ctx.nutrient;
       b.classList.toggle("active", on);
       b.setAttribute("aria-pressed", String(on));
       b.setAttribute("aria-label", `${name}, ${detail}`);
@@ -3286,12 +3352,17 @@ const UI = (() => {
     const value = Number.isFinite(p.value)
       ? `<b>${fmt(p.value)}${esc(meta.unit)}</b>`
       : `<b class="muted">not logged</b>`;
-    const goal = p.goal ? `<span class="muted small">target ${fmt(p.goal)}${esc(meta.unit)}</span>` : "";
+    const detail = (hit.nutrient === "overall" && p.overallHit && p.overallHit.n)
+      ? `<span class="muted small">${p.overallHit.hit}/${p.overallHit.n} targets</span>`
+      : "";
+    const goal = p.goal
+      ? `<span class="muted small">${hit.nutrient === "overall" ? `strong ≥${fmt(p.goal)}${esc(meta.unit)}` : `target ${fmt(p.goal)}${esc(meta.unit)}`}</span>`
+      : "";
     const open = (!hit.weekly && p.key)
       ? `<button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(p.key)}">Open day</button>`
       : "";
     showTip("#trend-tip", "#section-intake .canvas-wrap", x,
-      `<span class="tip-day">${esc(p.sub || p.key)}</span>${value}${goal}${open}`);
+      `<span class="tip-day">${esc(p.sub || p.key)}</span>${value}${detail}${goal}${open}`);
     // Weekly bars span 7 days, so there is no single day to open.
     return hit.weekly ? null : p.key;
   }

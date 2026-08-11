@@ -372,8 +372,31 @@ async function run(label, days) {
   ok(window.document.body.classList.contains("has-insight-dock"), "body.has-insight-dock set on Intake");
   ok($("#insight-nutrient") && dock.contains($("#insight-nutrient")),
     "insight-nutrient is a descendant of insight-dock");
+  ok($('#insight-nutrient [data-nutrient="overall"]') &&
+      $('#insight-nutrient [data-nutrient="overall"]').classList.contains("active"),
+    "Overall is the default Intake dock pill");
+  ok(/Overall|targets hit/i.test(text("#section-intake") + text("#trend-summary")),
+    "Overall paints Intake copy about targets hit");
+  const carDotsTop = [...window.document.querySelectorAll("#intake-carousel-dots .carousel-dot")];
+  if (carDotsTop[2]) carDotsTop[2].click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(!$("#topfoods-rank").hidden,
+    "Top foods Rank-by chips show under Overall");
+  ok($('#topfoods-rank [data-topfood-metric="kcal"].on'),
+    "Overall Top foods defaults Rank-by to Kcal");
+  if (carDotsTop[0]) carDotsTop[0].click();
+  await new Promise((r) => setTimeout(r, 20));
+  window.document.querySelector('#insight-nutrient [data-nutrient="kcal"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  if (carDotsTop[2]) carDotsTop[2].click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#topfoods-rank").hidden, "Rank-by hides when a single nutrient is selected");
+  window.document.querySelector('#insight-nutrient [data-nutrient="overall"]').click();
+  await new Promise((r) => setTimeout(r, 20));
+  if (carDotsTop[0]) carDotsTop[0].click();
+  await new Promise((r) => setTimeout(r, 20));
   ok(window.document.querySelectorAll(".nutrient-pills").length === 1 &&
-      window.document.querySelectorAll("#insight-nutrient [data-nutrient]").length === 7,
+      window.document.querySelectorAll("#insight-nutrient [data-nutrient]").length === 8,
     "exactly one nutrient pill group");
   ok(!$("#topfood-metric"), "topfood-metric removed; Top foods follows the dock");
   const sectionIds = [...window.document.querySelectorAll("#view-insights .insight-section")].map((s) => s.id);
@@ -414,15 +437,16 @@ async function run(label, days) {
     "Patterns lists Composition before Adherence");
   // Scorecard carousel is asserted after the full Insights render below.
   const dockPills = [...window.document.querySelectorAll("#insight-nutrient [data-nutrient]")];
-  ok(dockPills.length === 7 && dockPills.every((b) => b.dataset.dockStatus),
+  ok(dockPills.length === 8 && dockPills.every((b) => b.dataset.dockStatus),
     "every dock pill carries a data-dock-status mark");
-  ok(dockPills.every((b) => /,\s*(?:not enough scored days|\d+% of days on target)$/.test(b.getAttribute("aria-label") || "")),
+  ok(dockPills.every((b) => /,\s*(?:not enough scored days|\d+% of days on target|\d+% targets hit on avg)$/.test(b.getAttribute("aria-label") || "")),
     "dock pill aria-label names hit-rate state (not colour alone)");
   ok(dockPills.some((b) => /^(good|mid|bad)$/.test(b.dataset.dockStatus)),
     "full fixture paints at least one scored dock status (not all none)");
   {
     const Ledger = window.eval("Ledger");
     const Phases = window.eval("Phases");
+    const Analytics = window.eval("Analytics");
     const settings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
     const todayKey = Ledger.todayKey();
     const keys = [];
@@ -440,6 +464,27 @@ async function run(label, days) {
       return "bad";
     };
     for (const b of dockPills) {
+      if (b.dataset.nutrient === "overall") {
+        const days = Analytics.buildDays({
+          keys,
+          totalsForDay: (day) => Ledger.totalsFor(day),
+          goalsForDay: (day) => Phases.goalsForDay(day, settings),
+        });
+        for (const d of days) d.overallHit = Analytics.dayTargetHitRate(d, Phases.scoreDayTotals);
+        const rates = days
+          .filter((d) => !(todayKey && d.day === todayKey))
+          .map((d) => d.overallHit)
+          .filter((hr) => hr && Number.isFinite(hr.rate) && hr.n > 0);
+        let expected = "none";
+        if (rates.length >= 3) {
+          const avg = rates.reduce((s, hr) => s + hr.rate, 0) / rates.length;
+          expected = avg >= 0.8 ? "good" : avg >= 0.5 ? "mid" : "bad";
+        }
+        ok(b.dataset.dockStatus === expected,
+          "dock overall status matches n>=3 / 0.8 / 0.5 cuts",
+          `${b.dataset.dockStatus} vs ${expected} (n=${rates.length})`);
+        continue;
+      }
       const row = (scorecard.nutrients || []).find((n) => n.key === b.dataset.nutrient);
       ok(b.dataset.dockStatus === expectedDockStatus(row),
         `dock ${b.dataset.nutrient} status matches n>=3 / 0.8 / 0.5 cuts`,
@@ -472,7 +517,9 @@ async function run(label, days) {
   afterArrow.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   await new Promise((r) => setTimeout(r, 30));
   ok(afterArrow.classList.contains("active") &&
-      new RegExp(afterArrow.dataset.dockName || afterArrow.dataset.nutrient, "i").test(text("#intake-head")),
+      (new RegExp(afterArrow.dataset.dockName || afterArrow.dataset.nutrient, "i").test(text("#intake-head")) ||
+        (afterArrow.dataset.nutrient === "kcal" && /Calories/i.test(text("#intake-head"))) ||
+        (afterArrow.dataset.nutrient === "overall" && /Overall/i.test(text("#intake-head")))),
     "Enter activates the focused dock pill");
   ok(window.__ndScrollIntoView.filter((s) => s.nutrient === afterArrow.dataset.nutrient).length === 1,
     "Enter activates exactly once (no double refreshInsights)");

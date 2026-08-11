@@ -255,6 +255,23 @@ const Analytics = (() => {
    * behaves differently from a restrict/binge sawtooth.
    */
   function summaryStats(days, key) {
+    if (key === "overall") {
+      const values = completeLoggedRows(days)
+        .map((d) => (d.overallHit && Number.isFinite(d.overallHit.pct) ? d.overallHit.pct : null))
+        .filter(Number.isFinite);
+      const m = mean(values);
+      const sd = stdev(values);
+      return {
+        key,
+        n: values.length,
+        avg: m,
+        median: median(values),
+        sd,
+        cv: m && sd != null ? sd / m : null,
+        min: values.length ? Math.min(...values) : null,
+        max: values.length ? Math.max(...values) : null,
+      };
+    }
     const values = completeLoggedRows(days).map((d) => d[key]).filter(Number.isFinite);
     const m = mean(values);
     const sd = stdev(values);
@@ -685,6 +702,48 @@ const Analytics = (() => {
 
   /** Non-mineral nutrients scored directly; minerals are one composite below. */
   const SCORED_KEYS = ["kcal", "protein", "carbs", "fat", "fiber"];
+  /** Nutrients that count toward Intake Overall day hit-rate. */
+  const OVERALL_KEYS = ["kcal", "protein", "carbs", "fat", "fiber", "sodium", "potassium"];
+  const OVERALL_HIT = 0.8;
+  const OVERALL_MID = 0.5;
+  const OVERALL_GOAL_PCT = 80;
+
+  /**
+   * Share of scored nutrients that landed in-band for one day.
+   * Heatmap / Overall trend paint from the same bands as the dock (80% / 50%).
+   */
+  function dayTargetHitRate(day, scoreDay) {
+    const empty = { rate: null, pct: null, hit: 0, n: 0, status: "empty", goal: OVERALL_GOAL_PCT };
+    if (!day) return empty;
+    const honouredFast = day.intent === "fast" && day.accounted && !(day.kcal > 0);
+    if (honouredFast) {
+      return { rate: null, pct: null, hit: 0, n: 0, status: "fast", goal: OVERALL_GOAL_PCT };
+    }
+    if (!day.logged || typeof scoreDay !== "function") {
+      return { ...empty, status: day.logged ? "logged" : "empty" };
+    }
+    const s = scoreDay(toTotalsLike(day), day.goals || {});
+    if (!s) return { ...empty, status: "logged" };
+
+    let hit = 0;
+    let n = 0;
+    for (const k of OVERALL_KEYS) {
+      const cell = s[k];
+      if (!cell) continue;
+      const st = cell.status;
+      if (st === "hit" || st === "under" || st === "over") {
+        n += 1;
+        if (st === "hit") hit += 1;
+      }
+    }
+    if (!n) return { ...empty, status: "logged" };
+    const rate = hit / n;
+    const pct = rate * 100;
+    let status = "over";
+    if (rate >= OVERALL_HIT) status = "hit";
+    else if (rate >= OVERALL_MID) status = "under";
+    return { rate, pct, hit, n, status, goal: OVERALL_GOAL_PCT };
+  }
 
   // A hit rate built on one or two real days is not evidence — the same bar
   // biggestGap already holds a nutrient to before naming it "the problem".
@@ -939,16 +998,15 @@ const Analytics = (() => {
       .map(([ws, rows]) => {
         const logged = rows.filter((r) => r.logged);
         const end = rows[rows.length - 1].day;
-        // A declared fast that actually recorded food reverts to an ordinary
-        // day (Phases.effectiveGoals, Part VIII.5) — counting off the raw
-        // declaration here would disagree with Insights' own per-day scoring
-        // and with Today about the same day (Part X.2).
-        const exemptDays = typeof Phases !== "undefined"
+        const exemptDays = typeof Phases !== "undefined" && key !== "overall"
           ? logged.filter((r) => {
               const resolved = Phases.effectiveGoals(toTotalsLike(r), r.goals || {});
               return !!(resolved && resolved._unscored && resolved._unscored[key]);
             }).length
           : 0;
+        const overallVals = key === "overall"
+          ? logged.map((r) => (r.overallHit && r.overallHit.pct)).filter(Number.isFinite)
+          : null;
         return {
           weekStart: ws,
           endDay: end,
@@ -957,8 +1015,12 @@ const Analytics = (() => {
           days: rows.length,
           loggedDays: logged.length,
           exemptDays,
-          value: mean(logged.map((r) => r[key])),
-          goal: mean(rows.map((r) => (key === "kcal" ? phaseKcalOf(r) : (r.goals || {})[key]))),
+          value: key === "overall"
+            ? mean(overallVals)
+            : mean(logged.map((r) => r[key])),
+          goal: key === "overall"
+            ? OVERALL_GOAL_PCT
+            : mean(rows.map((r) => (key === "kcal" ? phaseKcalOf(r) : (r.goals || {})[key]))),
           partial: logged.length > 0 && logged.length < 4,
         };
       });
@@ -1187,6 +1249,34 @@ const Analytics = (() => {
    */
   function heatmapCells(days, key, scoreDay, opts) {
     const excludeDay = opts && (opts.excludeDay || opts.todayKey);
+    if (key === "overall") {
+      return (days || []).map((d) => {
+        const hr = (d.overallHit && typeof d.overallHit === "object")
+          ? d.overallHit
+          : dayTargetHitRate(d, scoreDay);
+        const honouredFast = hr.status === "fast";
+        const fasted = d.intent === "fast";
+        let status = hr.status || "empty";
+        if (excludeDay && d.day === excludeDay && d.logged && status !== "fast") {
+          status = "logged";
+        }
+        return {
+          day: d.day,
+          dow: d.dow,
+          weekStart: weekStart(d.day),
+          logged: d.logged,
+          intent: d.intent || null,
+          accounted: !!d.accounted,
+          fasted,
+          value: Number.isFinite(hr.pct) ? hr.pct : null,
+          goal: OVERALL_GOAL_PCT,
+          ratio: hr.rate,
+          hit: hr.hit,
+          n: hr.n,
+          status: honouredFast ? "fast" : status,
+        };
+      });
+    }
     return (days || []).map((d) => {
       const goal = (d.goals || {})[key] || 0;
       const value = d[key];
@@ -1272,11 +1362,14 @@ const Analytics = (() => {
     const w = windowDays || 7;
     const rows = days || [];
     if (rows.length < w + 2) return null;
+    const pick = (d) => (key === "overall"
+      ? (d.overallHit && Number.isFinite(d.overallHit.pct) ? d.overallHit.pct : null)
+      : d[key]);
     const recent = completeLoggedRows(rows.slice(-w));
     const prior = completeLoggedRows(rows.slice(-2 * w, -w));
     if (recent.length < 2 || prior.length < 2) return null;
-    const a = mean(prior.map((d) => d[key]));
-    const b = mean(recent.map((d) => d[key]));
+    const a = mean(prior.map(pick).filter(Number.isFinite));
+    const b = mean(recent.map(pick).filter(Number.isFinite));
     if (a == null || b == null) return null;
     return {
       recentAvg: b,
@@ -1817,6 +1910,7 @@ const Analytics = (() => {
     mean, median, stdev, summaryStats, rollingMean, linearFit,
     trendWeight, weightRate, estimateTdee, intakeForRate, projectWeight,
     consistency, nutritionScore, gradeFor, biggestGap, SCORE_WEIGHTS,
+    dayTargetHitRate, OVERALL_KEYS, OVERALL_HIT, OVERALL_MID, OVERALL_GOAL_PCT,
     weeklyRollup, byDayOfWeek, weekendEffect, macroSplit, byMeal, topFoods, foodNutrientAgg, topFoodPeaks,
     proteinPerKg, heatmapCells, heatmapWeeks, extremes, momentum, observations,
     phaseKcalOf,

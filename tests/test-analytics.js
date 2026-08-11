@@ -603,6 +603,26 @@ console.log("\n[15] Observations");
   ok(Analytics.observations(makeDays(keysEndingAt(END, 5), () => null), { todayKey: END }).length === 0, "no data → no observations");
 }
 
+console.log("\n[15b] Overall day target hit-rate");
+{
+  const keys = keysEndingAt(END, 3);
+  const days = makeDays(keys, () => ({
+    kcal: 2200, protein: 150, carbs: 250, fat: 70, fiber: 30, sodium: 2000, potassium: 3400, weightKg: 75,
+  }));
+  const perfect = Analytics.dayTargetHitRate(days[0], Phases.scoreDayTotals);
+  ok(perfect && perfect.n >= 5 && perfect.rate >= 0.8 && perfect.status === "hit",
+    "strong day clears overall ≥80% band", JSON.stringify(perfect));
+  const miss = Analytics.dayTargetHitRate({
+    ...days[0],
+    kcal: 900, protein: 40, carbs: 80, fat: 20, fiber: 5, sodium: 5000, potassium: 1000,
+  }, Phases.scoreDayTotals);
+  ok(miss && miss.rate != null && miss.rate < 0.5 && miss.status === "over",
+    "weak day paints overall as weak (<50%)", JSON.stringify(miss));
+  const cells = Analytics.heatmapCells(days, "overall", Phases.scoreDayTotals, {});
+  ok(cells.every((c) => c.status === "hit" || c.status === "logged" || c.status === "empty"),
+    "overall heatmap cells expose band statuses");
+}
+
 console.log("\n[16] Edge cases");
 {
   ok(Analytics.buildDays({ keys: [] }).length === 0, "empty range");

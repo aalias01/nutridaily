@@ -45,10 +45,10 @@ const App = (() => {
     estimateSeedText: "", // appended after ESTIMATE_PROMPT “What I ate” slot
     detailMode: "library", // food detail CTA mode
     insightDays: 14, // number or "phase"
-    insightNutrient: "kcal",
+    insightNutrient: "overall",
     insightPhaseId: null, // null = active phase when daysBack is "phase"
     insightRollup: "day", // day | week — weekly smooths out single-day noise
-    insightTopFoodMetric: "kcal", // kcal | protein | sodium | fiber
+    insightTopFoodMetric: "kcal", // ranking nutrient for Top foods (esp. under Overall)
     insightTopFoodMode: "totals", // totals | peaks — range sum vs biggest single log
     insightTopFoodQuery: "",
     insightTopFoodExpanded: null, // food name currently expanded for date pills
@@ -760,9 +760,10 @@ const App = (() => {
       todayKey: Ledger.todayKey(),
       goalsForDay: (day) => Phases.goalsForDay(day, state.settings),
       rollup: state.insightRollup,
-      // One-release alias: prefer nutrient; accept insightTopFoodMetric if a
-      // caller still passes it through buildInsightContext.
-      topFoodMetric: state.insightNutrient || state.insightTopFoodMetric,
+      // Top foods ranking: follow dock nutrient, unless Overall (pick via Rank-by).
+      topFoodMetric: state.insightNutrient === "overall"
+        ? (state.insightTopFoodMetric || "kcal")
+        : (state.insightNutrient || state.insightTopFoodMetric || "kcal"),
       topFoodMode: state.insightTopFoodMode === "peaks" ? "peaks" : "totals",
       topFoodQuery: state.insightTopFoodQuery || "",
       topFoodExpanded: state.insightTopFoodExpanded || null,
@@ -1045,6 +1046,7 @@ const App = (() => {
       mode: state.insightTopFoodMode === "peaks" ? "peaks" : "totals",
       query: state.insightTopFoodQuery || "",
       expanded: state.insightTopFoodExpanded || null,
+      topFoodMetric: state.insightTopFoodMetric || "kcal",
       daysSeen: [],
       flash: true,
       ...origin,
@@ -1084,7 +1086,11 @@ const App = (() => {
     if (ret) {
       if (ret.nutrient) {
         state.insightNutrient = ret.nutrient;
-        state.insightTopFoodMetric = ret.nutrient;
+        if (ret.nutrient === "overall") {
+          state.insightTopFoodMetric = ret.topFoodMetric || state.insightTopFoodMetric || "kcal";
+        } else {
+          state.insightTopFoodMetric = ret.nutrient;
+        }
       }
       state.insightTopFoodMode = ret.mode === "peaks" ? "peaks" : "totals";
       state.insightTopFoodQuery = ret.query || "";
@@ -6922,8 +6928,13 @@ const App = (() => {
         const btn = e.target.closest("[data-nutrient]");
         if (!btn) return;
         state.insightNutrient = btn.dataset.nutrient;
-        // Keep the one-release top-foods alias in sync with the dock.
-        state.insightTopFoodMetric = btn.dataset.nutrient;
+        if (btn.dataset.nutrient === "overall") {
+          if (!state.insightTopFoodMetric || state.insightTopFoodMetric === "overall") {
+            state.insightTopFoodMetric = "kcal";
+          }
+        } else {
+          state.insightTopFoodMetric = btn.dataset.nutrient;
+        }
         state.insightTopFoodExpanded = null;
         nutPills.querySelectorAll("button").forEach((b) => {
           const on = b === btn;
@@ -6970,6 +6981,19 @@ const App = (() => {
         const mode = btn.dataset.topfoodMode === "peaks" ? "peaks" : "totals";
         if (state.insightTopFoodMode === mode) return;
         state.insightTopFoodMode = mode;
+        state.insightTopFoodExpanded = null;
+        refreshInsights();
+      });
+    }
+    const topFoodRankSeg = UI.$("#topfoods-rank");
+    if (topFoodRankSeg) {
+      topFoodRankSeg.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-topfood-metric]");
+        if (!btn || !btn.dataset.topfoodMetric) return;
+        const metric = btn.dataset.topfoodMetric;
+        if (metric === "overall") return;
+        if (state.insightTopFoodMetric === metric) return;
+        state.insightTopFoodMetric = metric;
         state.insightTopFoodExpanded = null;
         refreshInsights();
       });
@@ -7023,7 +7047,20 @@ const App = (() => {
         const day = cell.dataset.day;
         const title = cell.getAttribute("title") || "";
         const statusMatch = /·\s*([^·]+?)(?:\s*·\s*planned|$)/.exec(title);
-        const nut = state.insightNutrient || "kcal";
+        const nut = state.insightNutrient || "overall";
+        if (nut === "overall") {
+          const pct = Number(cell.dataset.overallPct);
+          const hit = Number(cell.dataset.overallHit);
+          const n = Number(cell.dataset.overallN);
+          UI.showHeatmapTip(day, {
+            nutrient: "overall",
+            value: Number.isFinite(pct) ? pct : null,
+            goal: Analytics.OVERALL_GOAL_PCT || 80,
+            status: statusMatch ? statusMatch[1].trim() : "",
+            detail: Number.isFinite(n) && n > 0 ? `${hit}/${n} targets` : "",
+          });
+          return;
+        }
         const totals = Ledger.totalsFor(day);
         const field = { kcal: "kcal", protein: "p", carbs: "c", fat: "f", fiber: "fb", sodium: "na", potassium: "k" }[nut] || "kcal";
         const value = totals && totals[field] ? totals[field].mean : null;
@@ -7437,7 +7474,7 @@ const App = (() => {
       state.viewDay = today;
       state.lastCalendarToday = state.viewDay;
       state.insightDays = 14;
-      state.insightNutrient = "kcal";
+      state.insightNutrient = "overall";
       state.insightPhaseId = null;
       state.insightRollup = "day";
       state.insightTopFoodMetric = "kcal";
