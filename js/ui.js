@@ -3392,13 +3392,11 @@ const UI = (() => {
     const x = hit.pad.l + (idx + 0.5) * (hit.iw / Math.max(1, keys.length));
     const label = new Date(day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const value = byDay[day];
-    // Open the day *before* the weigh-in so you can check what led into it.
-    const prevDay = Analytics.addDays(day, -1);
+    // Compact tip: linked weigh-in date + weight (no extra Open-day row).
     showTip("#weight-tip", "#section-weight .canvas-wrap", x,
-      `<span class="tip-day">${esc(label)}</span>` +
-      `<b>${value.toFixed(1)} ${esc(unit)}</b>` +
-      `<button type="button" class="tip-goto" data-action="goto-day" data-day="${esc(prevDay)}">Open previous day</button>`);
-    return { day, prevDay, value, unit };
+      `<button type="button" class="tip-goto tip-day" data-action="goto-day" data-day="${esc(day)}" aria-label="Open ${esc(label)} in Today">${esc(label)}</button>` +
+      `<b>${value.toFixed(1)} ${esc(unit)}</b>`);
+    return { day, value, unit };
   }
 
   // Legacy query helpers kept for callers that only want the day key.

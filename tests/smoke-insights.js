@@ -1456,24 +1456,20 @@ Projected: 1000000000 kcal | P 0 | C 0 | F 0 | Fiber 0 | Sodium 0 | Potassium 0
     ok(wHit == null || typeof wHit.value === "number", "weight tap returns a weigh-in or null");
     if (wHit && wHit.day) {
       const App = window.eval("App");
-      const Analytics = window.eval("Analytics");
       ok(!$("#weight-tip").hidden, "weight tap shows the tooltip");
-      ok(!!$("#weight-tip .tip-day") && text("#weight-tip .tip-day").length > 0,
-        "weight tip shows the weigh-in date");
       ok(new RegExp(`${wHit.value.toFixed(1)}\\s*${wHit.unit}`).test(text("#weight-tip")),
         "weight tip shows the weigh-in value");
-      const prevBtn = $("#weight-tip [data-action='goto-day']");
-      const expectedPrev = Analytics.addDays(wHit.day, -1);
-      ok(prevBtn && /Open previous day/i.test(prevBtn.textContent) &&
-          prevBtn.dataset.day === expectedPrev,
-        "weight tip offers Open previous day for the day before the weigh-in");
-      prevBtn.click();
+      const dayBtn = $("#weight-tip [data-action='goto-day']");
+      ok(dayBtn && dayBtn.classList.contains("tip-day") && dayBtn.dataset.day === wHit.day &&
+          !/Open previous day/i.test(text("#weight-tip")),
+        "weight tip links the weigh-in date to the same day (no previous-day row)");
+      dayBtn.click();
       await new Promise((r) => setTimeout(r, 30));
-      ok(!!$("#view-today.active"), "Open previous day jumps to Today");
-      ok(App.state.viewDay === expectedPrev,
-        "Open previous day opens the calendar day before the weigh-in");
+      ok(!!$("#view-today.active"), "weigh-in date link jumps to Today");
+      ok(App.state.viewDay === wHit.day,
+        "weigh-in date link opens the weigh-in day");
       ok(!$("#insights-back").hidden && /Back to Insights > Weight/i.test(text("#insights-back-btn")),
-        "Open previous day arms Back to Insights > Weight");
+        "weigh-in date link arms Back to Insights > Weight");
       const insightsTab = [...window.document.querySelectorAll(".tab")]
         .find((x) => x.dataset.view === "insights");
       if (insightsTab) { insightsTab.click(); await new Promise((r) => setTimeout(r, 40)); }

@@ -1422,6 +1422,15 @@ button.obs-jump:hover { background: color-mix(in srgb, var(--card) 92%, var(--in
 }
 .chart-tip[hidden] { display: none; }
 .tip-day { color: var(--muted); font-size: 10.5px; }
+/* Date-as-link in weight tip: keep tip compact (no 28px Open-day row). */
+.chart-tip .tip-day.tip-goto {
+  margin-top: 0;
+  min-height: 0;
+  padding: 0;
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--accent-ink);
+}
 .tip-goto {
   align-self: flex-start;
   margin-top: 2px;
