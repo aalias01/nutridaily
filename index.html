@@ -843,9 +843,9 @@ END</pre>
           <summary class="muted small">Optional serving size (rare)</summary>
           <label>Serving size (g, optional)<input id="rev-serving" type="text" inputmode="decimal"></label>
         </details>
-        <label>Ingredients (one per line)<textarea id="rev-ingredients" rows="4"></textarea></label>
-        <label>Prep<textarea id="rev-prep" rows="2"></textarea></label>
-        <label>Notes<textarea id="rev-notes" rows="2"></textarea></label>
+        <label>Ingredients (one per line)<textarea id="rev-ingredients" class="rev-grow" rows="3" data-min-rows="3" data-max-rows="8"></textarea></label>
+        <label>Prep<textarea id="rev-prep" class="rev-grow" rows="2" data-min-rows="2" data-max-rows="6"></textarea></label>
+        <label>Notes<textarea id="rev-notes" class="rev-grow" rows="2" data-min-rows="2" data-max-rows="6"></textarea></label>
         <details id="rev-ai-refine" class="rev-ai-refine" hidden>
           <summary>
             <span class="rev-ai-refine-title">Improve with AI</span>

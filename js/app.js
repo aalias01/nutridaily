@@ -7145,6 +7145,11 @@ const App = (() => {
     ["#rev-name", "#rev-kcal", "#rev-p", "#rev-c", "#rev-f", "#rev-fb", "#rev-na", "#rev-k"].forEach((sel) => {
       UI.$(sel).addEventListener("input", validateReviewSave);
     });
+    ["#rev-ingredients", "#rev-prep", "#rev-notes"].forEach((sel) => {
+      const el = UI.$(sel);
+      if (!el) return;
+      el.addEventListener("input", () => UI.autosizeRevGrowFields());
+    });
     UI.$("#rev-cat-filter").addEventListener("input", (e) => UI.filterCategories(e.target.value));
 
     UI.$("#insight-range").addEventListener("click", (e) => {

@@ -848,6 +848,16 @@ body.sheet-open .insight-dock { display: none; }
   width: 100%; margin: 8px 0; padding: 12px; border-radius: 12px; border: 1px solid var(--line);
   background: var(--bg); color: var(--ink); font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+#rev-ingredients.rev-grow,
+#rev-prep.rev-grow,
+#rev-notes.rev-grow {
+  overflow-y: auto;
+  resize: vertical;
+  line-height: 1.35;
+  field-sizing: content; /* progressive; ignored where unsupported */
+  min-height: calc(2 * 1.35em + 24px);
+  max-height: calc(8 * 1.35em + 24px);
+}
 .sheet-card label { display: block; font-weight: 650; font-size: 13px; margin: 12px 0 5px; }
 .sheet-card input[type="text"], .sheet-card input[type="date"], .sheet-card select {
   width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);

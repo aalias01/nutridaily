@@ -1026,6 +1026,27 @@ const UI = (() => {
     return preview.entry;
   }
 
+  /** Grow review Ingredients/Prep/Notes a few lines when content overflows (capped). */
+  function autosizeRevGrow(el) {
+    if (!el) return;
+    const minRows = Math.max(1, Number(el.dataset.minRows) || Number(el.getAttribute("rows")) || 2);
+    const maxRows = Math.max(minRows, Number(el.dataset.maxRows) || 6);
+    const lines = Math.max(1, String(el.value || "").split(/\n/).length);
+    let rows = Math.min(maxRows, Math.max(minRows, lines));
+    el.rows = rows;
+    // If wrapped lines still overflow, bump until the soft max.
+    try {
+      while (rows < maxRows && el.scrollHeight > el.clientHeight + 4) {
+        rows += 1;
+        el.rows = rows;
+      }
+    } catch (_) { /* jsdom / layout-less */ }
+  }
+
+  function autosizeRevGrowFields() {
+    ["#rev-ingredients", "#rev-prep", "#rev-notes"].forEach((sel) => autosizeRevGrow($(sel)));
+  }
+
   function syncReviewLogAsUI() {
     const chip = $("#rev-log-as .uchip.active");
     const logAs = chip ? chip.dataset.logAs : "grams";
@@ -1122,6 +1143,7 @@ const UI = (() => {
     $("#rev-ingredients").value = ((f.recipe && f.recipe.ingredients) || []).map((i) => i.text).join("\n");
     $("#rev-prep").value = (f.recipe && f.recipe.prep) || "";
     $("#rev-notes").value = (f.recipe && f.recipe.notes) || "";
+    autosizeRevGrowFields();
     $("#btn-review-save").disabled = !parsed.canSave && !(opts && opts.forceEnable);
     const err = $("#review-errors");
     if (err) { err.hidden = true; err.textContent = ""; }
@@ -4319,7 +4341,7 @@ const UI = (() => {
     renderDayLog, toggleEntryExpand, setExpandedEntryId, toggleGapItemExpand, setExpandedGapItemId, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
     weightPrefillFromHistory, renderMultiQtyList, readMultiQtyRow, updateMultiRowPreview,
     showPastePrompt, showPromptFallback, showReview, setReviewErrors, filterCategories, readReviewDraft, parseNutrientNumber,
-    syncReviewLogAsUI, renderFoodDetail,
+    syncReviewLogAsUI, autosizeRevGrowFields, renderFoodDetail,
     fillOnceSheet, readOnceDraft, readOnceDraftLenient, formatOnceEstimateSeed, fillOnceSheetFromPending,
     setOnceErrors, selectedOnceUnit, selectedOnceCat, selectedOnceConfidence, syncOnceMacroNudge,
     renderInsights, renderTrends, renderWeightTrend,
