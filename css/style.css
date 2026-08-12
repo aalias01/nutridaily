@@ -539,42 +539,6 @@ body.sheet-open .insight-dock { display: none; }
   background: color-mix(in srgb, var(--control-accent) 12%, var(--card));
   outline: none;
 }
-.add-list-hint-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px 12px;
-  margin-bottom: 4px;
-}
-.add-list-examples {
-  margin: 0;
-  position: relative;
-}
-.add-list-examples summary {
-  cursor: pointer;
-  list-style: none;
-  color: var(--muted);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.add-list-examples summary::-webkit-details-marker { display: none; }
-.add-list-examples[open] summary { color: var(--ink); }
-.add-list-examples-ul {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 4;
-  margin: 0;
-  padding: 8px 10px 8px 1.35em;
-  min-width: 220px;
-  max-width: min(320px, 90vw);
-  line-height: 1.45;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--card);
-  box-shadow: var(--shadow);
-}
 #voice-warnings:not([hidden]) { margin: 6px 0 0; color: var(--warn); }
 .voice-confirm-list {
   display: flex; flex-direction: column; gap: 12px;

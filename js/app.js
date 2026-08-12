@@ -1643,15 +1643,9 @@ const App = (() => {
     btn.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
-  function closeAddListExamples() {
-    const details = UI.$(".add-list-examples");
-    if (details && details.open) details.open = false;
-  }
-
   function openAddListSheet() {
     if (state.qtyIntent === "gap") state.qtyIntent = "log";
     setPickMoreOpen(false);
-    closeAddListExamples();
     const warn = UI.$("#voice-warnings");
     if (warn) { warn.hidden = true; warn.textContent = ""; }
     UI.closeSheet("sheet-add");
@@ -3397,7 +3391,6 @@ const App = (() => {
       if (warn) { warn.hidden = true; warn.textContent = ""; }
     }
     setPickMoreOpen(false);
-    closeAddListExamples();
     state.yesterdayKey = yesterdayKey();
     refreshAddPicker();
     UI.openSheet("sheet-add");
@@ -6255,14 +6248,9 @@ const App = (() => {
     document.addEventListener("click", (e) => {
       const wrap = UI.$(".pick-more-wrap");
       if (!wrap || !wrap.contains(e.target)) setPickMoreOpen(false);
-      const examples = UI.$(".add-list-examples");
-      if (examples && !examples.contains(e.target)) closeAddListExamples();
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        setPickMoreOpen(false);
-        closeAddListExamples();
-      }
+      if (e.key === "Escape") setPickMoreOpen(false);
     });
     if (UI.$("#btn-voice-find")) {
       UI.$("#btn-voice-find").addEventListener("click", () => {
@@ -7501,7 +7489,6 @@ const App = (() => {
           }
         }
         if (sheetId === "sheet-add-list") {
-          closeAddListExamples();
           returnToAddFromList();
         }
         if (sheetId === "sheet-voice-confirm") {

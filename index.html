@@ -441,20 +441,12 @@
     <div class="sheet-card tall">
       <div class="sheet-grab"></div>
       <h3 id="add-list-title">Add several foods</h3>
-      <div class="add-list-hint-row">
-        <span class="muted small">Type or use your keyboard mic</span>
-        <details class="add-list-examples">
-          <summary class="muted small">Examples</summary>
-          <ul class="muted small add-list-examples-ul">
-            <li>200 g chicken 100 g rice and 2 eggs</li>
-            <li>200g chicken, 100g rice, 2 eggs</li>
-            <li>two hundred grams chicken one hundred grams rice</li>
-            <li>chicken 200 g rice 100 g</li>
-            <li>One food per line also works</li>
-          </ul>
-        </details>
-      </div>
-      <textarea id="voice-text" class="add-list-input" rows="5" placeholder="200 g chicken 100 g rice and 2 eggs" autocomplete="off" aria-label="Foods with amounts"></textarea>
+      <p class="muted small">Type or use your keyboard mic. Any of these styles work:</p>
+      <textarea id="voice-text" class="add-list-input" rows="6" placeholder="200 g chicken 100 g rice and 2 eggs
+200g chicken, 100g rice, 2 eggs
+chicken 200 g rice 100 g
+two hundred grams chicken one hundred grams rice
+one food per line also works" autocomplete="off" aria-label="Foods with amounts"></textarea>
       <div id="voice-warnings" class="muted small" hidden></div>
       <div class="row end add-list-actions">
         <button id="btn-add-list-cancel" class="btn ghost" type="button" data-close="sheet-add-list">Cancel</button>
