@@ -69,6 +69,7 @@ const App = (() => {
     multiPick: {}, // key -> { food, pendingCatalog }
     multiQtyItems: [], // [{ key, food, qty, unit, meal, pendingCatalog }]
     qtyReturnToMultiKey: null, // when set, #sheet-qty writes back to multi draft
+    voiceSegments: [], // confirm sheet draft from Voice.parseUtterance
     offTodayAckDay: null, // YYYY-MM-DD: off-today warn already accepted for this day
   };
 
@@ -1652,6 +1653,250 @@ const App = (() => {
     state.multiPick = {};
     state.multiQtyItems = [];
     state.qtyReturnToMultiKey = null;
+  }
+
+  function clearVoiceFlow() {
+    state.voiceSegments = [];
+    if (typeof Voice !== "undefined" && Voice.stopListening) Voice.stopListening();
+  }
+
+  /** Rank personal + catalog hits for a spoken label (FoodMatch.scoreMatch). */
+  function voiceHitsForLabel(label) {
+    const q = String(label || "").trim();
+    if (!q || typeof FoodMatch === "undefined") return [];
+    const personalActive = Foods.active(state.personalFoods);
+    const ownedCatalogIds = new Set(personalActive.map((f) => f.catalogId).filter(Boolean));
+    const DB = typeof FOOD_DB !== "undefined" ? FOOD_DB : [];
+    const scored = [];
+
+    for (const f of personalActive) {
+      let s = FoodMatch.scoreMatch(q, f.name) * 1.05;
+      for (const a of f.aliases || []) {
+        s = Math.max(s, FoodMatch.scoreMatch(q, a) * 1.05);
+      }
+      if (s >= 0.35) {
+        scored.push({
+          key: `food:${f.id}`,
+          food: f,
+          name: f.name,
+          kcal: f.per100 && f.per100.kcal,
+          pendingCatalog: false,
+          score: s,
+        });
+      }
+    }
+    for (const f of DB) {
+      if (ownedCatalogIds.has(f.id)) continue;
+      let s = FoodMatch.scoreMatch(q, f.name);
+      for (const a of f.aliases || []) {
+        s = Math.max(s, FoodMatch.scoreMatch(q, a));
+      }
+      if (s >= 0.4) {
+        scored.push({
+          key: `cat:${f.id}`,
+          food: Foods.fromCatalog(f),
+          name: f.name,
+          kcal: f.per100 && f.per100.kcal,
+          pendingCatalog: true,
+          score: s,
+        });
+      }
+    }
+    scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    return scored.slice(0, 8);
+  }
+
+  function voiceSegmentAmbiguous(hits) {
+    if (!hits || hits.length < 2) return false;
+    const best = hits[0].score;
+    const second = hits[1].score;
+    return best >= 0.55 && second >= 0.55 && (best - second) < 0.08;
+  }
+
+  function seedVoiceConfirm(rawText) {
+    if (typeof Voice === "undefined" || !Voice.parseUtterance) {
+      UI.toast("Voice parsing is unavailable");
+      return false;
+    }
+    const parsed = Voice.parseUtterance(rawText);
+    if (!parsed.ok || !parsed.segments.length) {
+      UI.toast((parsed.warnings && parsed.warnings[0]) || "Could not read that list");
+      return false;
+    }
+    state.voiceSegments = parsed.segments.map((seg) => {
+      const hits = voiceHitsForLabel(seg.spokenLabel);
+      const ambiguous = voiceSegmentAmbiguous(hits);
+      const exact = hits[0] && hits[0].score >= 0.99;
+      let selectedKey = null;
+      if (hits.length && !ambiguous && (exact || hits[0].score >= 0.55)) {
+        selectedKey = hits[0].key;
+      }
+      let unit = seg.unit || "g";
+      if (selectedKey) {
+        const hit = hits.find((h) => h.key === selectedKey);
+        if (hit && hit.food && FoodMatch.prefersPieceLog(hit.food) && (unit === "g" || !unit) && seg.unit === "piece") {
+          unit = "piece";
+        } else if (hit && hit.food && FoodMatch.prefersPieceLog(hit.food) && seg.unit === "piece") {
+          unit = "piece";
+        }
+      }
+      const extraUnits = [];
+      for (const h of hits) {
+        if (h.food && FoodMatch.prefersPieceLog(h.food)) extraUnits.push("piece");
+        if (h.food && h.food.units) {
+          for (const u of Object.keys(h.food.units)) {
+            if (u && !extraUnits.includes(u) && u !== "g") extraUnits.push(u);
+          }
+        }
+      }
+      return {
+        id: seg.id,
+        spokenLabel: seg.spokenLabel,
+        rawText: seg.rawText,
+        qty: seg.qty,
+        unit: unit || "g",
+        issue: seg.issue,
+        dropped: false,
+        selectedKey,
+        ambiguous,
+        hits,
+        extraUnits,
+      };
+    });
+    if (parsed.warnings && parsed.warnings.length) {
+      UI.toast(parsed.warnings[0]);
+    }
+    refreshVoiceConfirm();
+    UI.closeSheet("sheet-voice");
+    UI.openSheet("sheet-voice-confirm", { noAutofocus: true });
+    return true;
+  }
+
+  function refreshVoiceConfirm() {
+    UI.renderVoiceConfirm(state.voiceSegments);
+    syncVoiceConfirmContinue();
+  }
+
+  function syncVoiceConfirmContinue() {
+    const btn = UI.$("#btn-voice-confirm-continue");
+    if (!btn) return;
+    const kept = (state.voiceSegments || []).filter((s) => !s.dropped);
+    const ready = kept.length > 0 && kept.every((s) => {
+      if (!s.selectedKey) return false;
+      const qty = Number(s.qty);
+      return Number.isFinite(qty) && qty > 0;
+    });
+    btn.disabled = !ready;
+  }
+
+  function voiceSegById(id) {
+    return (state.voiceSegments || []).find((s) => s.id === id);
+  }
+
+  function confirmVoiceSegments() {
+    const kept = (state.voiceSegments || []).filter((s) => !s.dropped);
+    if (!kept.length) {
+      UI.toast("Keep at least one food");
+      return;
+    }
+    for (const s of kept) {
+      if (!s.selectedKey) {
+        UI.toast(`Pick a match for “${s.spokenLabel}”`);
+        return;
+      }
+      if (!(Number.isFinite(Number(s.qty)) && Number(s.qty) > 0)) {
+        UI.toast(`Add an amount for “${s.spokenLabel}”`);
+        return;
+      }
+    }
+    // Never leak gap AI intent into voice commits.
+    if (state.qtyIntent === "gap") state.qtyIntent = "log";
+    const meal = Foods.inferMeal();
+    const items = [];
+    for (const s of kept) {
+      const hit = (s.hits || []).find((h) => h.key === s.selectedKey);
+      if (!hit || !hit.food) {
+        UI.toast(`Missing food for “${s.spokenLabel}”`);
+        return;
+      }
+      items.push({
+        key: hit.key,
+        food: hit.food,
+        qty: Number(s.qty),
+        unit: s.unit || "g",
+        meal,
+        pendingCatalog: !!hit.pendingCatalog,
+      });
+    }
+    state.multiQtyItems = items;
+    state.multiPick = {};
+    for (const it of items) {
+      state.multiPick[it.key] = {
+        food: it.food,
+        pendingCatalog: !!it.pendingCatalog,
+        qty: it.qty,
+        unit: it.unit,
+        meal: it.meal,
+      };
+    }
+    clearVoiceFlow();
+    UI.closeSheet("sheet-voice-confirm");
+    openMultiQtySheet();
+  }
+
+  function openVoiceSheet() {
+    // Preserve qtyIntent from FAB (log) or openAddForPlan (plan).
+    if (state.qtyIntent === "gap") state.qtyIntent = "log";
+    clearVoiceFlow();
+    const ta = UI.$("#voice-text");
+    if (ta) ta.value = "";
+    const warn = UI.$("#voice-warnings");
+    if (warn) { warn.hidden = true; warn.textContent = ""; }
+    const micBtn = UI.$("#btn-voice-mic");
+    const fallback = UI.$("#voice-mic-fallback");
+    const status = UI.$("#voice-mic-status");
+    const supported = typeof Voice !== "undefined" && Voice.speechSupported && Voice.speechSupported();
+    if (micBtn) {
+      micBtn.hidden = !supported;
+      micBtn.textContent = "Start listening";
+    }
+    if (fallback) fallback.hidden = !!supported;
+    if (status) status.textContent = "";
+    UI.closeSheet("sheet-add");
+    UI.openSheet("sheet-voice", { noAutofocus: !supported });
+    if (ta && !supported) setTimeout(() => { try { ta.focus(); } catch (_) {} }, 40);
+  }
+
+  function toggleVoiceMic() {
+    if (typeof Voice === "undefined") return;
+    const micBtn = UI.$("#btn-voice-mic");
+    const status = UI.$("#voice-mic-status");
+    const ta = UI.$("#voice-text");
+    if (Voice.isListening && Voice.isListening()) {
+      Voice.stopListening();
+      if (micBtn) micBtn.textContent = "Start listening";
+      if (status) status.textContent = "";
+      return;
+    }
+    const ok = Voice.startListening({
+      onPartial: (text) => {
+        if (ta) ta.value = text;
+        if (status) status.textContent = "Listening…";
+      },
+      onFinal: (text) => {
+        if (ta) ta.value = text;
+      },
+      onError: (msg) => {
+        if (status) status.textContent = msg === "not-allowed" ? "Mic permission denied" : "Mic error";
+        if (micBtn) micBtn.textContent = "Start listening";
+      },
+      onEnd: () => {
+        if (micBtn) micBtn.textContent = "Start listening";
+        if (status) status.textContent = "";
+      },
+    });
+    if (ok && micBtn) micBtn.textContent = "Stop";
+    if (ok && status) status.textContent = "Listening…";
   }
 
   function toggleMultiFood(key, food, pendingCatalog, prefill) {
@@ -5997,6 +6242,66 @@ const App = (() => {
     if (UI.$("#btn-pick-multi-continue")) {
       UI.$("#btn-pick-multi-continue").addEventListener("click", continueMultiPick);
     }
+    if (UI.$("#btn-voice-list")) {
+      UI.$("#btn-voice-list").addEventListener("click", () => openVoiceSheet());
+    }
+    if (UI.$("#btn-voice-mic")) {
+      UI.$("#btn-voice-mic").addEventListener("click", () => toggleVoiceMic());
+    }
+    if (UI.$("#btn-voice-find")) {
+      UI.$("#btn-voice-find").addEventListener("click", () => {
+        if (typeof Voice !== "undefined" && Voice.stopListening) Voice.stopListening();
+        const ta = UI.$("#voice-text");
+        seedVoiceConfirm(ta ? ta.value : "");
+      });
+    }
+    if (UI.$("#btn-voice-cancel")) {
+      UI.$("#btn-voice-cancel").addEventListener("click", () => {
+        clearVoiceFlow();
+      });
+    }
+    if (UI.$("#btn-voice-confirm-back")) {
+      UI.$("#btn-voice-confirm-back").addEventListener("click", () => {
+        UI.closeSheet("sheet-voice-confirm");
+        UI.openSheet("sheet-voice", { noAutofocus: true });
+      });
+    }
+    if (UI.$("#btn-voice-confirm-continue")) {
+      UI.$("#btn-voice-confirm-continue").addEventListener("click", confirmVoiceSegments);
+    }
+    if (UI.$("#voice-confirm-list")) {
+      UI.$("#voice-confirm-list").addEventListener("input", (e) => {
+        const inp = e.target.closest("[data-action='voice-qty']");
+        if (!inp) return;
+        const seg = voiceSegById(inp.dataset.seg);
+        if (!seg) return;
+        const n = parseAmount(inp.value);
+        seg.qty = Number.isFinite(n) && n > 0 ? n : null;
+        if (!(Number.isFinite(n) && n > 0) && String(inp.value || "").trim()) seg.issue = "no-qty";
+        else if (Number.isFinite(n) && n > 0 && seg.issue === "no-qty") seg.issue = null;
+        syncVoiceConfirmContinue();
+      });
+      UI.$("#voice-confirm-list").addEventListener("click", (e) => {
+        const el = e.target.closest("[data-action]");
+        if (!el) return;
+        const action = el.dataset.action;
+        const seg = voiceSegById(el.dataset.seg);
+        if (!seg) return;
+        if (action === "voice-pick") {
+          if (seg.dropped) return;
+          seg.selectedKey = el.dataset.key;
+          seg.ambiguous = false;
+          refreshVoiceConfirm();
+        } else if (action === "voice-unit") {
+          if (seg.dropped) return;
+          seg.unit = el.dataset.unit || "g";
+          refreshVoiceConfirm();
+        } else if (action === "voice-drop") {
+          seg.dropped = !seg.dropped;
+          refreshVoiceConfirm();
+        }
+      });
+    }
     if (UI.$("#multi-qty-save")) {
       UI.$("#multi-qty-save").addEventListener("click", saveMultiQty);
     }
@@ -7178,6 +7483,15 @@ const App = (() => {
             state.qtyIntent = "log";
             openGapSheet({ plan: true });
           }
+        }
+        if (sheetId === "sheet-voice") {
+          clearVoiceFlow();
+          // Return to the Add picker with the same log/plan intent.
+          openAddSheet({ keepMulti: true, keepSearch: true });
+        }
+        if (sheetId === "sheet-voice-confirm") {
+          clearVoiceFlow();
+          UI.openSheet("sheet-voice", { noAutofocus: true });
         }
         if (sheetId === "sheet-multi-qty") {
           const wasPlanner = returnsToPlannerPick();

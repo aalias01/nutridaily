@@ -1,10 +1,10 @@
 /* NutriDaily service worker — app-shell caching for installable/offline use.
  * Bump CACHE to force-refresh cached assets after a deploy.
  */
-const CACHE = "nutridaily-v81";
+const CACHE = "nutridaily-v82";
 const SHELL = [
   ".", "index.html", "css/style.css", "manifest.webmanifest", "js/boot.js",
-  "js/config.js", "js/data-foods.js", "js/foodmatch.js", "js/parse.js", "js/foods.js",
+  "js/config.js", "js/data-foods.js", "js/foodmatch.js", "js/voice.js", "js/parse.js", "js/foods.js",
   "js/share.js", "js/ledger.js", "js/phases.js", "js/analytics.js", "js/phase-prompt.js", "js/gap-prompt.js",
   "js/gdrive.js", "js/sync.js", "js/redact.js", "js/feedback.js", "js/ui.js", "js/app.js",
   "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png",

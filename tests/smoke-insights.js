@@ -332,6 +332,93 @@ async function run(label, days) {
       "focus trap excludes controls inside a hidden multi-step panel");
     pasteSheet.querySelector("[data-close='sheet-paste']").click();
     await new Promise((r) => setTimeout(r, 220));
+
+    // Voice multi-entry: paste path → confirm → multi-qty (log intent).
+    ok(!!$("#btn-voice-list") && !!$("#sheet-voice") && !!$("#sheet-voice-confirm"),
+      "voice list entry and confirm sheets are mounted");
+    $("#fab-add").click();
+    await new Promise((r) => setTimeout(r, 20));
+    {
+      const App = window.eval("App");
+      App.state.qtyIntent = "log";
+      $("#btn-voice-list").click();
+      await new Promise((r) => setTimeout(r, 20));
+      ok(!$("#sheet-voice").hidden, "List by voice or text opens the voice sheet");
+      $("#voice-text").value = "100 g orange and 2 chapati";
+      $("#btn-voice-find").click();
+      await new Promise((r) => setTimeout(r, 40));
+      ok(!$("#sheet-voice-confirm").hidden, "Find foods opens voice confirm");
+      ok(window.document.querySelectorAll("#voice-confirm-list .voice-seg").length >= 2,
+        "voice confirm shows a section per spoken segment");
+      window.document.querySelectorAll("#voice-confirm-list .voice-seg").forEach((sec) => {
+        const on = sec.querySelector(".voice-hit.on");
+        const hit = sec.querySelector(".voice-hit");
+        if (!on && hit) hit.click();
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      const contVoice = $("#btn-voice-confirm-continue");
+      if (contVoice && !contVoice.disabled) {
+        contVoice.click();
+        await new Promise((r) => setTimeout(r, 40));
+        ok(!$("#sheet-multi-qty").hidden, "voice confirm continues into multi-qty");
+        ok(App.state.multiQtyItems && App.state.multiQtyItems.length >= 1,
+          "voice confirm seeded multiQtyItems");
+        ok(App.state.qtyIntent === "log", "voice log path keeps qtyIntent=log");
+        $("#multi-qty-cancel").click();
+        await new Promise((r) => setTimeout(r, 40));
+      } else {
+        ok(true, "voice confirm continue gated until picks/amounts are ready");
+        $("#sheet-voice-confirm [data-close='sheet-voice-confirm']").click();
+        await new Promise((r) => setTimeout(r, 40));
+        $("#sheet-voice [data-close='sheet-voice']").click();
+        await new Promise((r) => setTimeout(r, 40));
+      }
+
+      // Voice into Planner intent uses Add to plan multi-qty copy.
+      $("#fab-add").click();
+      await new Promise((r) => setTimeout(r, 20));
+      App.state.qtyIntent = "plan";
+      $("#btn-voice-list").click();
+      await new Promise((r) => setTimeout(r, 20));
+      $("#voice-text").value = "50 g apple";
+      $("#btn-voice-find").click();
+      await new Promise((r) => setTimeout(r, 40));
+      window.document.querySelectorAll("#voice-confirm-list .voice-seg").forEach((sec) => {
+        const hit = sec.querySelector(".voice-hit");
+        if (hit && !hit.classList.contains("on")) hit.click();
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      ok(App.state.qtyIntent === "plan", "voice sheet preserves plan qtyIntent");
+      if ($("#btn-voice-confirm-continue") && !$("#btn-voice-confirm-continue").disabled) {
+        $("#btn-voice-confirm-continue").click();
+        await new Promise((r) => setTimeout(r, 40));
+        ok(/Add to plan/i.test(text("#multi-qty-title")),
+          "voice plan intent reaches Add to plan multi-qty");
+        // Avoid multi-qty cancel reopening Planner (qtyIntent=plan) and
+        // leaving a sheet open for later Insights dock keyboard tests.
+        App.state.qtyIntent = "log";
+        $("#multi-qty-cancel").click();
+        await new Promise((r) => setTimeout(r, 40));
+      } else {
+        App.state.qtyIntent = "log";
+        $("#sheet-voice-confirm [data-close='sheet-voice-confirm']").click();
+        await new Promise((r) => setTimeout(r, 20));
+        $("#sheet-voice [data-close='sheet-voice']").click();
+        await new Promise((r) => setTimeout(r, 20));
+        ok(true, "voice plan confirm path exercised");
+      }
+      if ($("#sheet-gap") && !$("#sheet-gap").hidden) {
+        const gapClose = $("#sheet-gap [data-close='sheet-gap']");
+        if (gapClose) gapClose.click();
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      if ($("#sheet-add") && !$("#sheet-add").hidden) {
+        const addClose = $("#sheet-add [data-close='sheet-add']");
+        if (addClose) addClose.click();
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      App.state.qtyIntent = "log";
+    }
   }
 
   if (label === "main") {

@@ -4242,6 +4242,60 @@ const UI = (() => {
     }).join("");
   }
 
+  /**
+   * Voice confirm list: one card per spoken segment with qty + match hits.
+   * @param {Array} sections — [{ id, spokenLabel, qty, unit, issue, dropped, selectedKey, hits:[{key,name,kcal,pendingCatalog}] }]
+   */
+  function renderVoiceConfirm(sections) {
+    const root = $("#voice-confirm-list");
+    if (!root) return;
+    const list = Array.isArray(sections) ? sections : [];
+    if (!list.length) {
+      root.innerHTML = `<p class="muted small">No foods found in that list.</p>`;
+      return;
+    }
+    root.innerHTML = list.map((seg) => {
+      const dropped = !!seg.dropped;
+      let status = "Pick a match";
+      let statusClass = "";
+      if (dropped) { status = "Dropped"; statusClass = ""; }
+      else if (seg.issue === "no-qty") { status = "Add an amount"; statusClass = "is-bad"; }
+      else if (!seg.hits || !seg.hits.length) { status = "No match — search or drop"; statusClass = "is-bad"; }
+      else if (seg.ambiguous && !seg.selectedKey) { status = "Ambiguous — pick one"; statusClass = "is-bad"; }
+      else if (seg.selectedKey) { status = "Selected"; statusClass = ""; }
+
+      const units = ["g", "piece", "oz"].concat(
+        (seg.extraUnits || []).filter((u) => u && u !== "g" && u !== "piece" && u !== "oz")
+      );
+      const unitChips = units.map((u) =>
+        `<button type="button" class="uchip${seg.unit === u ? " on" : ""}" data-action="voice-unit" data-seg="${esc(seg.id)}" data-unit="${esc(u)}">${esc(u)}</button>`
+      ).join("");
+
+      const hits = (seg.hits || []).map((h) => {
+        const on = !dropped && seg.selectedKey === h.key;
+        return `<button type="button" class="voice-hit${on ? " on" : ""}" data-action="voice-pick" data-seg="${esc(seg.id)}" data-key="${esc(h.key)}" ${dropped ? "disabled" : ""}>
+          <span class="r-name">${esc(h.name)}${h.pendingCatalog ? ` <span class="mini">catalog</span>` : ""}</span>
+          <span class="mini">${h.kcal != null ? `${fmt(h.kcal)} /100g` : ""}</span>
+        </button>`;
+      }).join("");
+
+      return `<section class="voice-seg${dropped ? " is-dropped" : ""}" data-seg="${esc(seg.id)}">
+        <div class="voice-seg-head">
+          <span class="voice-seg-label">${esc(seg.spokenLabel || seg.rawText || "Food")}</span>
+          <span class="voice-seg-status ${statusClass}">${esc(status)}</span>
+        </div>
+        <div class="voice-seg-qty-row">
+          <input type="text" inputmode="decimal" value="${seg.qty != null && Number.isFinite(Number(seg.qty)) ? esc(String(seg.qty)) : ""}" data-action="voice-qty" data-seg="${esc(seg.id)}" aria-label="Amount for ${esc(seg.spokenLabel || "food")}" ${dropped ? "disabled" : ""}>
+          <span class="unit-chips" role="group" aria-label="Unit">${unitChips}</span>
+        </div>
+        <div class="voice-hits">${hits || `<p class="muted small">No library hits for “${esc(seg.spokenLabel || "")}”.</p>`}</div>
+        <div class="voice-seg-actions">
+          <button type="button" class="linkbtn" data-action="voice-drop" data-seg="${esc(seg.id)}">${dropped ? "Keep line" : "Drop line"}</button>
+        </div>
+      </section>`;
+    }).join("");
+  }
+
   return {
     $, $$, fmt, esc, toast, openSheet, closeSheet, closeAllSheets, topSheetId, setDayLabel, updateHUD,
     renderDayLog, toggleEntryExpand, setExpandedEntryId, toggleGapItemExpand, setExpandedGapItemId, renderFoods, renderPicker, fillQtySheet, updateQtyPreview, selectedUnit, selectedMeal, selectedMealIn,
@@ -4258,5 +4312,6 @@ const UI = (() => {
     inlineAmountFields,
     formatGapRemaining, planProjectionFlags, renderPlanProjection, renderGapPlanStatus,
     titleCaseName, renderGapPlanList, showGapStep, renderGapOptions,
+    renderVoiceConfirm,
   };
 })();

@@ -249,7 +249,7 @@ const FoodMatch = (() => {
 
   return {
     normalize, tokens, scoreMatch, resolve, toGrams, computeMacros, sdFor, plausibility, displayQty,
-    pieceGrams, countNoun, pluralCount, prefersPieceLog, SD, MASS_UNITS,
+    pieceGrams, countNoun, pluralCount, prefersPieceLog, SD, MASS_UNITS, VOLUME_ML, UNIT_SYNONYMS, COUNT_NOUNS,
   };
 })();
 
