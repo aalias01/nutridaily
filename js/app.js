@@ -1686,6 +1686,27 @@ const App = (() => {
     state.voiceSegments = [];
   }
 
+  /**
+   * Recency + frequency weight for list-confirm hit order.
+   * Match score stays pure for auto-select / ambiguity; this only reorders.
+   */
+  function voiceUsageWeight(food) {
+    if (!food) return 0;
+    const count = Number(food.useCount) || 0;
+    const last = Number(food.lastUsedAt) || 0;
+    const freq = count > 0 ? Math.min(6, Math.log2(1 + count)) : 0;
+    let recency = 0;
+    if (last > 0) {
+      const days = (Date.now() - last) / 86400000;
+      if (days < 3) recency = 5;
+      else if (days < 14) recency = 4;
+      else if (days < 45) recency = 2.5;
+      else if (days < 120) recency = 1;
+      else recency = 0.3;
+    }
+    return freq + recency;
+  }
+
   /** Rank personal + catalog hits for a spoken label (FoodMatch.scoreMatch). */
   function voiceHitsForLabel(label) {
     const q = String(label || "").trim();
@@ -1728,7 +1749,16 @@ const App = (() => {
         });
       }
     }
-    scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    // Prefer recent/frequent when match quality is close; otherwise match wins.
+    const CLOSE = 0.15;
+    scored.sort((a, b) => {
+      const dScore = b.score - a.score;
+      const dUse = voiceUsageWeight(b.food) - voiceUsageWeight(a.food);
+      if (Math.abs(dScore) < CLOSE && dUse) return dUse;
+      if (dScore) return dScore;
+      if (dUse) return dUse;
+      return a.name.localeCompare(b.name);
+    });
     return scored.slice(0, 8);
   }
 
