@@ -3095,12 +3095,11 @@ const App = (() => {
       macrosOpened: p.macrosOpened,
       confidence: p.confidence,
     });
-    UI.openSheet("sheet-once");
-    setTimeout(() => {
-      const inp = UI.$("#once-name");
-      if (inp && !p.from) { inp.focus(); }
-      else if (UI.$("#once-kcal")) UI.$("#once-kcal").focus();
-    }, 50);
+    // noAutofocus: focusing Name/kcal opens the keyboard and scrolls the sheet
+    // mid-form on mobile. Start at the top; user taps a field when ready.
+    UI.openSheet("sheet-once", { noAutofocus: true });
+    const onceCard = UI.$("#sheet-once .sheet-card");
+    if (onceCard) onceCard.scrollTop = 0;
   }
 
   function clearOnceEstimatePending() {
@@ -3116,7 +3115,9 @@ const App = (() => {
       imperial: !!state.settings.imperial,
       allowRemove: !!state.editEntryId || !!pending.allowRemove,
     });
-    UI.openSheet("sheet-once");
+    UI.openSheet("sheet-once", { noAutofocus: true });
+    const onceCard = UI.$("#sheet-once .sheet-card");
+    if (onceCard) onceCard.scrollTop = 0;
     state.estimateSeedText = "";
     state.foodSaveIntent = "library";
     return true;
