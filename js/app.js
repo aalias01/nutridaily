@@ -1643,6 +1643,11 @@ const App = (() => {
     btn.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
+  function closeAddListExamples() {
+    const details = UI.$(".add-list-examples");
+    if (details && details.open) details.open = false;
+  }
+
   function syncVoiceListExpand() {
     const ta = UI.$("#voice-text");
     if (!ta) return;
@@ -6229,11 +6234,15 @@ const App = (() => {
     }
     document.addEventListener("click", (e) => {
       const wrap = UI.$(".pick-more-wrap");
-      if (!wrap || wrap.contains(e.target)) return;
-      setPickMoreOpen(false);
+      if (!wrap || !wrap.contains(e.target)) setPickMoreOpen(false);
+      const examples = UI.$(".add-list-examples");
+      if (examples && !examples.contains(e.target)) closeAddListExamples();
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") setPickMoreOpen(false);
+      if (e.key === "Escape") {
+        setPickMoreOpen(false);
+        closeAddListExamples();
+      }
     });
     if (UI.$("#voice-text")) {
       UI.$("#voice-text").addEventListener("focus", () => {
