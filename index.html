@@ -413,9 +413,24 @@
     <div class="sheet-backdrop" data-close="sheet-add"></div>
     <div class="sheet-card">
       <div class="sheet-grab"></div>
-      <div class="voice-entry-row">
-        <button id="btn-voice-list" class="btn ghost" type="button">List by voice or text</button>
+      <div class="add-list-block">
+        <h3 class="add-list-title">List with amounts</h3>
+        <p class="muted small">Type or use your keyboard mic. Commas optional. Nothing is logged until you confirm.</p>
+        <label class="small muted" for="voice-text">List<textarea id="voice-text" rows="6" placeholder="200 g chicken 100 g rice and 2 eggs" autocomplete="off"></textarea></label>
+        <details class="add-list-examples">
+          <summary class="muted small">Examples</summary>
+          <ul class="muted small add-list-examples-ul">
+            <li>200 g chicken 100 g rice and 2 eggs</li>
+            <li>200g chicken, 100g rice, 2 eggs</li>
+            <li>two hundred grams chicken one hundred grams rice</li>
+            <li>chicken 200 g rice 100 g</li>
+            <li>One food per line also works</li>
+          </ul>
+        </details>
+        <button id="btn-voice-find" class="btn full" type="button">Find foods</button>
+        <div id="voice-warnings" class="muted small" hidden></div>
       </div>
+      <p class="add-or-search muted small">Or search your foods</p>
       <input id="pick-search" type="search" placeholder="Search banana, eggs, rice…" aria-label="Search foods to log">
       <div id="pick-list" class="sheet-list"></div>
       <div id="pick-multi-bar" class="pick-multi-bar">
@@ -425,27 +440,6 @@
         <button id="btn-once-food" class="btn ghost full" type="button">+ Log once (not saved to My Foods)</button>
         <button id="btn-paste-new" class="btn ghost full" type="button">+ Homemade dish (NUTRI import)</button>
         <button id="btn-import-shared-add" class="btn ghost full" type="button">Import shared food</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Voice / paste multi-entry -->
-  <div id="sheet-voice" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="voice-title">
-    <div class="sheet-backdrop" data-close="sheet-voice"></div>
-    <div class="sheet-card tall">
-      <div class="sheet-grab"></div>
-      <h3 id="voice-title">List foods</h3>
-      <p class="muted small">Say or type amounts and foods in one list, e.g. <b>200 g chicken, 100 g rice, and 2 eggs</b>. Use grams or a count (eggs, bananas). Nothing is logged until you confirm.</p>
-      <div class="voice-mic-row">
-        <button id="btn-voice-mic" class="btn" type="button" hidden>Start listening</button>
-        <span id="voice-mic-status" class="muted small"></span>
-      </div>
-      <p id="voice-mic-fallback" class="muted small" hidden>Mic is unavailable here — paste or type the list instead.</p>
-      <label class="small muted" for="voice-text">List<textarea id="voice-text" rows="4" placeholder="200 g chicken, 100 g rice, and 2 eggs" autocomplete="off"></textarea></label>
-      <div id="voice-warnings" class="muted small" hidden></div>
-      <div class="row end">
-        <button id="btn-voice-cancel" class="btn ghost" type="button" data-close="sheet-voice">Cancel</button>
-        <button id="btn-voice-find" class="btn" type="button">Find foods</button>
       </div>
     </div>
   </div>

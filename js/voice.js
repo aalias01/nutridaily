@@ -1,6 +1,4 @@
-/* NutriDaily — voice / paste multi-entry: STT wrapper + deterministic utterance parse.
- * Speech is progressive enhancement (Web Speech API). Parsing is local and free.
- */
+/* NutriDaily — list utterance parse (type or keyboard mic). Local, deterministic. */
 const Voice = (() => {
   const ONES = {
     zero: 0, oh: 0, a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5,
@@ -12,15 +10,32 @@ const Voice = (() => {
     twenty: 20, thirty: 30, forty: 40, fifty: 50,
     sixty: 60, seventy: 70, eighty: 80, ninety: 90,
   };
+  const FALLBACK_COUNT = [
+    "chapati", "roti", "egg", "banana", "apple", "orange", "slice", "bar",
+    "bagel", "cookie", "tortilla", "wrap",
+  ];
+  const MASS_ALT = "g|grams?|gm|gms|oz|ounces?";
+  const COUNT_ALT = "pieces?|pcs?|eggs?|bananas?|apples?|oranges?|slices?|bars?|chapatis?|rotis?|bagels?|cookies?|tortillas?|wraps?|servings?";
+  const SPOKEN_NUM = "(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)(?:[\\s-]+(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and))*";
+  const CONNECTOR = /\s+(?:and|plus|with|then|also)\s+/i;
 
-  function preprocess(raw) {
-    return String(raw || "")
+  function preprocess(raw, opts) {
+    const keepNewlines = !!(opts && opts.keepNewlines);
+    let s = String(raw || "")
       .replace(/[\u2018\u2019]/g, "'")
       .replace(/[\u201C\u201D]/g, '"')
       .replace(/[\u2013\u2014]/g, "-")
       .replace(/\u00A0/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+      .replace(/\.+$/g, "");
+    // STT often yields "78 G spinach" — treat lone G/GM as grams near digits.
+    s = s.replace(/(\d)\s*[Gg](?=\s|$)/g, "$1 g");
+    s = s.replace(/(\d)\s*[Gg][Mm][Ss]?(?=\s|$)/g, "$1 g");
+    if (keepNewlines) {
+      s = s.replace(/[^\S\n]+/g, " ").replace(/\n+/g, "\n").trim();
+    } else {
+      s = s.replace(/\s+/g, " ").trim();
+    }
+    return s;
   }
 
   /** Convert spoken number words / digits into a finite number, or null. */
@@ -28,7 +43,6 @@ const Voice = (() => {
     const raw = String(text || "").toLowerCase().trim();
     if (!raw) return null;
     if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
-    // "thirty-seven" / "thirty seven" / "a hundred"
     const tokens = raw.replace(/-/g, " ").split(/\s+/).filter(Boolean);
     if (!tokens.length) return null;
     let total = 0;
@@ -78,9 +92,7 @@ const Voice = (() => {
       chapati: "piece", chapatis: "piece", roti: "piece", rotis: "piece",
       pc: "piece", pcs: "piece", pieces: "piece",
     };
-    const count = (typeof FoodMatch !== "undefined" && FoodMatch.COUNT_NOUNS) || [
-      "chapati", "roti", "egg", "banana", "slice", "bar",
-    ];
+    const count = (typeof FoodMatch !== "undefined" && FoodMatch.COUNT_NOUNS) || FALLBACK_COUNT;
     return { mass, syn, count };
   }
 
@@ -88,7 +100,11 @@ const Voice = (() => {
     const { mass, syn } = unitTables();
     const t = String(tok || "").toLowerCase().replace(/[^a-z]/g, "");
     if (!t) return null;
-    if (mass[t] != null) return t === "gram" || t === "grams" || t === "gm" || t === "gms" ? "g" : (t === "ounce" || t === "ounces" ? "oz" : t);
+    if (mass[t] != null) {
+      if (t === "gram" || t === "grams" || t === "gm" || t === "gms") return "g";
+      if (t === "ounce" || t === "ounces") return "oz";
+      return t;
+    }
     if (syn[t]) return syn[t];
     if (t === "piece" || t === "serving" || t === "cup" || t === "scoop" || t === "slice") return t;
     return null;
@@ -99,75 +115,156 @@ const Voice = (() => {
     const t = String(tok || "").toLowerCase().replace(/[^a-z]/g, "");
     if (!t) return false;
     if (count.includes(t)) return true;
+    if (FALLBACK_COUNT.includes(t)) return true;
     if (syn[t] === "piece") return true;
-    // plural: chapatis → chapati
-    if (t.endsWith("s") && count.includes(t.slice(0, -1))) return true;
-    if (t.endsWith("es") && count.includes(t.slice(0, -2))) return true;
+    if (t.endsWith("s") && (count.includes(t.slice(0, -1)) || FALLBACK_COUNT.includes(t.slice(0, -1)))) return true;
+    if (t.endsWith("es") && (count.includes(t.slice(0, -2)) || FALLBACK_COUNT.includes(t.slice(0, -2)))) return true;
     return false;
   }
 
+  function singularCountLabel(tok) {
+    const t = String(tok || "").toLowerCase().replace(/[^a-z]/g, "");
+    if (/^chapat/.test(t)) return "chapati";
+    if (/^roti/.test(t)) return "roti";
+    if (/^eggs?$/.test(t)) return "egg";
+    if (/^bananas?$/.test(t)) return "banana";
+    if (/^apples?$/.test(t)) return "apple";
+    if (/^oranges?$/.test(t)) return "orange";
+    if (t.endsWith("ies")) return `${t.slice(0, -3)}y`;
+    if (t.endsWith("oes")) return t.slice(0, -2);
+    if (t.endsWith("ses") || t.endsWith("xes") || t.endsWith("zes")) return t.slice(0, -2);
+    if (t.endsWith("s") && !t.endsWith("ss")) return t.slice(0, -1);
+    return t || tok;
+  }
+
+  function looksLikeQtyStart(s) {
+    const t = String(s || "").trim();
+    if (!t) return false;
+    if (new RegExp(`^\\d+(?:\\.\\d+)?\\s*(?:${MASS_ALT})\\b`, "i").test(t)) return true;
+    if (new RegExp(`^\\d+(?:\\.\\d+)?\\s+(?:${COUNT_ALT})\\b`, "i").test(t)) return true;
+    if (/^\d+(?:\.\d+)?\s+[a-z]/i.test(t)) return true;
+    if (new RegExp(`^${SPOKEN_NUM}\\s+(?:${MASS_ALT}|${COUNT_ALT})\\b`, "i").test(t)) return true;
+    if (/^(?:a|an|one)\s+[a-z]/i.test(t) && isCountNoun(t.split(/\s+/)[1])) return true;
+    return false;
+  }
+
+  function softSplitConnectors(part) {
+    const bits = part.split(CONNECTOR);
+    if (bits.length === 1) return [part];
+    const out = [];
+    let buf = bits[0];
+    for (let i = 1; i < bits.length; i++) {
+      const next = bits[i];
+      const leftEndsHundred = /\bhundred\s*$/i.test(buf);
+      const rightContinuesNumber = /^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|one|two|three|four|five|six|seven|eight|nine)\b/i.test(next);
+      if (leftEndsHundred && rightContinuesNumber) {
+        buf = `${buf} and ${next}`;
+        continue;
+      }
+      const leftLooksNumber = /(?:\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\b)\s*$/i.test(buf);
+      const rightStartsQty = looksLikeQtyStart(next);
+      if (leftLooksNumber && /^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|one|two|three|four|five|six|seven|eight|nine)\b/i.test(next)
+          && !rightStartsQty) {
+        buf = `${buf} and ${next}`;
+      } else {
+        if (buf.trim()) out.push(buf.trim());
+        buf = next;
+      }
+    }
+    if (buf.trim()) out.push(buf.trim());
+    return out.filter(Boolean);
+  }
+
+  /** Split qty-then-food runs: "200 g chicken 100 g rice 2 eggs" (digits only). */
+  function splitOnQtyStarts(chunk) {
+    // Food-first lists ("chicken 200 g …") are handled by splitAfterFoodQty.
+    if (!/^\d/.test(String(chunk || "").trim())) return [chunk];
+    const re = new RegExp(
+      `\\s+(?=(?:\\d+(?:\\.\\d+)?\\s*(?:${MASS_ALT})\\b)|(?:\\d+(?:\\.\\d+)?\\s+(?:${COUNT_ALT})\\b)|(?:\\d+(?:\\.\\d+)?\\s+[a-z]))`,
+      "gi"
+    );
+    const parts = chunk.split(re).map((s) => s.trim()).filter(Boolean);
+    return parts.length ? parts : [chunk];
+  }
+
   /**
-   * Split an utterance into candidate phrase chunks.
-   * Avoid splitting "one hundred and twenty" mid-number.
+   * Food-then-qty runs: "chicken 200 g rice 100 g".
+   * Digit qty only; skip "grams of …".
    */
+  function splitAfterFoodQty(chunk) {
+    if (!/^[a-z]/i.test(chunk)) return [chunk];
+    const re = new RegExp(`\\b(\\d+(?:\\.\\d+)?\\s*(?:${MASS_ALT}))\\b`, "gi");
+    const cuts = [];
+    let m;
+    while ((m = re.exec(chunk))) {
+      const end = m.index + m[0].length;
+      const rest = chunk.slice(end);
+      if (/^\s+of\b/i.test(rest)) continue;
+      if (!/^\s+[a-z]/i.test(rest)) continue;
+      // Only cut when another amount follows (multi-item food-then-qty).
+      if (!/\d+(?:\.\d+)?\s*(?:g|grams?|gm|gms|oz|ounces?)\b/i.test(rest)
+          && !new RegExp(`\\d+(?:\\.\\d+)?\\s+(?:${COUNT_ALT})\\b`, "i").test(rest)) {
+        continue;
+      }
+      cuts.push(end);
+    }
+    if (!cuts.length) return [chunk];
+    const out = [];
+    let start = 0;
+    for (const c of cuts) {
+      const bit = chunk.slice(start, c).trim();
+      if (bit) out.push(bit);
+      start = c;
+    }
+    const tail = chunk.slice(start).trim();
+    if (tail) out.push(tail);
+    return out.length ? out : [chunk];
+  }
+
+  /** Spoken qty-then-food chains: "two hundred grams chicken one hundred grams rice". */
+  function splitSpokenQtyThenFood(chunk) {
+    const re = new RegExp(`^(${SPOKEN_NUM})\\s+(${MASS_ALT})\\s+(.+)$`, "i");
+    const m = chunk.match(re);
+    if (!m) return [chunk];
+    const label = m[3];
+    const nextRe = new RegExp(`\\s(?=${SPOKEN_NUM}\\s+(?:${MASS_ALT})\\b)`, "i");
+    const idx = label.search(nextRe);
+    if (idx < 0) return [chunk];
+    const food1 = label.slice(0, idx).trim();
+    const rest = label.slice(idx).trim();
+    if (!food1) return [chunk];
+    return [`${m[1]} ${m[2]} ${food1}`, ...splitSpokenQtyThenFood(rest)];
+  }
+
   function splitUtterance(text) {
-    const cleaned = preprocess(text);
+    const cleaned = preprocess(text, { keepNewlines: true });
     if (!cleaned) return [];
-    // Newlines and commas are hard splits.
-    const soft = cleaned
+    const hard = cleaned
       .split(/[\n,;]+/)
       .map((s) => s.trim())
       .filter(Boolean);
     const out = [];
-    for (const part of soft) {
-      // Split on " and " only when it looks like a food separator (qty follows or precedes).
-      const bits = part.split(/\s+and\s+/i);
-      if (bits.length === 1) {
-        out.push(part);
-        continue;
-      }
-      let buf = bits[0];
-      for (let i = 1; i < bits.length; i++) {
-        const next = bits[i];
-        const leftEndsHundred = /\bhundred\s*$/i.test(buf);
-        const rightContinuesNumber = /^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|one|two|three|four|five|six|seven|eight|nine)\b/i.test(next);
-        // "one hundred and twenty grams…" — keep the number intact.
-        if (leftEndsHundred && rightContinuesNumber) {
-          buf = `${buf} and ${next}`;
-          continue;
-        }
-        const leftLooksNumber = /(?:\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\b)\s*$/i.test(buf);
-        const rightStartsQty = /^(?:\d|[a-z]+(?:[-\s][a-z]+)?\s+(?:g|gram|grams|oz|ounce|ounces|piece|pieces|chapati|chapatis|roti|rotis)\b)/i.test(next)
-          || /^(?:\d+(?:\.\d+)?\s*(?:g|gram|grams|oz)?\b)/i.test(next)
-          || /^(?:\d+\s+)/i.test(next);
-        if (leftLooksNumber && /^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|one|two|three|four|five|six|seven|eight|nine)\b/i.test(next)
-            && !rightStartsQty) {
-          buf = `${buf} and ${next}`;
-        } else if (rightStartsQty || /^(?:\d)/.test(next)) {
-          out.push(buf.trim());
-          buf = next;
-        } else {
-          out.push(buf.trim());
-          buf = next;
+    for (const part of hard) {
+      for (const soft of softSplitConnectors(part)) {
+        for (const qtyPart of splitOnQtyStarts(soft)) {
+          for (const foodPart of splitAfterFoodQty(qtyPart)) {
+            for (const bit of splitSpokenQtyThenFood(foodPart)) {
+              out.push(bit);
+            }
+          }
         }
       }
-      if (buf.trim()) out.push(buf.trim());
     }
     return out.filter(Boolean);
   }
 
-  /**
-   * Parse one phrase into { spokenLabel, qty, unit, rawText, issue? }.
-   */
   function parseSegment(raw) {
     const text = preprocess(raw);
     const base = { rawText: text, spokenLabel: "", qty: null, unit: null, issue: null };
-    if (!text) {
-      return { ...base, issue: "empty" };
-    }
+    if (!text) return { ...base, issue: "empty" };
 
     // Pattern A: "100g of orange" / "100 g orange" / "100 grams of rice"
-    let m = text.match(/^(\d+(?:\.\d+)?)\s*(g|grams?|gm|gms|oz|ounces?)\s+(?:of\s+)?(.+)$/i);
+    let m = text.match(new RegExp(`^(\\d+(?:\\.\\d+)?)\\s*(${MASS_ALT})\\s+(?:of\\s+)?(.+)$`, "i"));
     if (m) {
       const unit = normalizeUnitToken(m[2]) || "g";
       const label = m[3].trim();
@@ -175,21 +272,14 @@ const Voice = (() => {
       return { rawText: text, spokenLabel: label, qty: Number(m[1]), unit, issue: null };
     }
 
-    // Pattern B: "two chapatis" / "2 chapati" / "2 pieces of tofu"
-    m = text.match(/^(\d+(?:\.\d+)?)\s+(chapatis?|rotis?|pieces?|pcs?|eggs?|bananas?|slices?|bars?|servings?)\s*(?:of\s+)?(.*)$/i);
+    // Pattern B: "2 eggs" / "2 pieces of tofu" / "3 bananas"
+    m = text.match(new RegExp(`^(\\d+(?:\\.\\d+)?)\\s+(${COUNT_ALT})\\s*(?:of\\s+)?(.*)$`, "i"));
     if (m) {
       const unitTok = m[2];
       const rest = (m[3] || "").trim();
-      const unit = normalizeUnitToken(unitTok) || (isCountNoun(unitTok) ? "piece" : "piece");
-      const label = rest || unitTok.replace(/s$/i, "").replace(/es$/i, "");
-      // Prefer keeping "chapati" as label when count noun is the food itself
-      const spokenLabel = rest
-        ? rest
-        : (isCountNoun(unitTok) ? unitTok.replace(/s$/i, "").replace(/chapatie$/i, "chapati") : label);
-      let cleanLabel = spokenLabel;
-      if (/^chapat/i.test(unitTok) && !rest) cleanLabel = "chapati";
-      if (/^roti/i.test(unitTok) && !rest) cleanLabel = "roti";
-      if (/^eggs?$/i.test(unitTok) && !rest) cleanLabel = "egg";
+      const unit = normalizeUnitToken(unitTok) || "piece";
+      let cleanLabel = rest || singularCountLabel(unitTok);
+      if (!rest && isCountNoun(unitTok)) cleanLabel = singularCountLabel(unitTok);
       return {
         rawText: text,
         spokenLabel: cleanLabel,
@@ -200,7 +290,7 @@ const Voice = (() => {
     }
 
     // Pattern C: spoken number + unit + food — "thirty seven grams of rice"
-    m = text.match(/^([a-z]+(?:[-\s][a-z]+){0,4})\s+(g|grams?|gm|gms|oz|ounces?|chapatis?|rotis?|pieces?)\s+(?:of\s+)?(.+)$/i);
+    m = text.match(new RegExp(`^(${SPOKEN_NUM})\\s+(${MASS_ALT}|${COUNT_ALT})\\s+(?:of\\s+)?(.+)$`, "i"));
     if (m) {
       const qty = parseNumberWords(m[1]);
       if (qty != null) {
@@ -208,12 +298,13 @@ const Voice = (() => {
         const label = m[3].trim();
         const unit = normalizeUnitToken(unitTok) || (isCountNoun(unitTok) ? "piece" : "g");
         if (!label) return { ...base, qty, unit, issue: "no-label" };
-        return { rawText: text, spokenLabel: label, qty, unit, issue: null };
+        const spokenLabel = isCountNoun(unitTok) && !label ? singularCountLabel(unitTok) : label;
+        return { rawText: text, spokenLabel: spokenLabel || label, qty, unit, issue: null };
       }
     }
 
-    // Pattern D: "thirty-seven grams rice" without of
-    m = text.match(/^([a-z0-9]+(?:[-\s][a-z0-9]+){0,4})\s+(grams?|g|oz|ounces?)\s+(.+)$/i);
+    // Pattern D: spoken + mass without requiring "of" already covered; keep digit-free mass path
+    m = text.match(new RegExp(`^(${SPOKEN_NUM})\\s+(${MASS_ALT})\\s+(.+)$`, "i"));
     if (m) {
       const qty = parseNumberWords(m[1]);
       if (qty != null) {
@@ -227,7 +318,70 @@ const Voice = (() => {
       }
     }
 
-    // Pattern E: leading digits then food with implied grams if unit missing — "100 orange"
+    // Pattern F: food then qty — "chicken 200 g" / "chicken breast 200 grams"
+    m = text.match(new RegExp(`^(.+?)\\s+(\\d+(?:\\.\\d+)?)\\s*(${MASS_ALT})\\s*$`, "i"));
+    if (m) {
+      const label = m[1].trim();
+      if (label && !/^\d/.test(label)) {
+        return {
+          rawText: text,
+          spokenLabel: label.replace(/^of\s+/i, "").trim(),
+          qty: Number(m[2]),
+          unit: normalizeUnitToken(m[3]) || "g",
+          issue: null,
+        };
+      }
+    }
+
+    // Pattern G: food then spoken qty — "chicken two hundred grams"
+    m = text.match(new RegExp(`^(.+?)\\s+(${SPOKEN_NUM})\\s+(${MASS_ALT})\\s*$`, "i"));
+    if (m) {
+      const qty = parseNumberWords(m[2]);
+      const label = m[1].trim();
+      if (qty != null && label && !/^\d/.test(label)) {
+        return {
+          rawText: text,
+          spokenLabel: label,
+          qty,
+          unit: normalizeUnitToken(m[3]) || "g",
+          issue: null,
+        };
+      }
+    }
+
+    // Pattern H: food then bare count — "eggs 2" / "banana 1"
+    m = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*$/i);
+    if (m) {
+      const label = m[1].trim();
+      const qty = Number(m[2]);
+      if (label && !/^\d/.test(label) && (isCountNoun(label.split(/\s+/).pop()) || isCountNoun(label))) {
+        return {
+          rawText: text,
+          spokenLabel: singularCountLabel(label.split(/\s+/).pop()) || label,
+          qty,
+          unit: "piece",
+          issue: null,
+        };
+      }
+    }
+
+    // Pattern I: "a banana" / "an egg" / "one apple"
+    m = text.match(/^(?:a|an|one)\s+(.+)$/i);
+    if (m) {
+      const label = m[1].trim();
+      const last = label.split(/\s+/).pop();
+      if (isCountNoun(last) || isCountNoun(label)) {
+        return {
+          rawText: text,
+          spokenLabel: singularCountLabel(last),
+          qty: 1,
+          unit: "piece",
+          issue: null,
+        };
+      }
+    }
+
+    // Pattern E: leading digits then food — "100 orange" / "100 of rice"
     m = text.match(/^(\d+(?:\.\d+)?)\s+(.+)$/);
     if (m) {
       const rest = m[2].trim();
@@ -242,11 +396,10 @@ const Voice = (() => {
           issue: null,
         };
       }
-      // Count noun as second token: "2 fresh chapati" unlikely; "2 orange" → qty + label, unit g default? Better no-qty-unit
-      if (isCountNoun(words[words.length - 1]) && words.length === 1) {
+      if (words.length === 1 && isCountNoun(words[0])) {
         return {
           rawText: text,
-          spokenLabel: words[0].replace(/s$/i, ""),
+          spokenLabel: singularCountLabel(words[0]),
           qty: Number(m[1]),
           unit: "piece",
           issue: null,
@@ -261,7 +414,6 @@ const Voice = (() => {
       };
     }
 
-    // Label only — keep visible for confirm UI
     return {
       rawText: text,
       spokenLabel: text,
@@ -275,7 +427,7 @@ const Voice = (() => {
    * @returns {{ ok: boolean, segments: Array, warnings: string[] }}
    */
   function parseUtterance(raw) {
-    const text = preprocess(raw);
+    const text = preprocess(raw, { keepNewlines: true });
     const warnings = [];
     if (!text) {
       return { ok: false, segments: [], warnings: ["Nothing to parse"] };
@@ -295,89 +447,12 @@ const Voice = (() => {
     return { ok: segments.some((s) => s.spokenLabel), segments, warnings };
   }
 
-  // ---------------------------------------------------------------- speech
-
-  function speechSupported() {
-    if (typeof window === "undefined") return false;
-    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-  }
-
-  let _rec = null;
-  let _listening = false;
-
-  /**
-   * Start listening. callbacks: { onPartial(text), onFinal(text), onError(msg), onEnd() }
-   */
-  function startListening(callbacks) {
-    const cb = callbacks || {};
-    if (!speechSupported()) {
-      if (cb.onError) cb.onError("Speech recognition is not available in this browser");
-      return false;
-    }
-    stopListening();
-    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const rec = new Ctor();
-    _rec = rec;
-    _listening = true;
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = (typeof navigator !== "undefined" && navigator.language) || "en-US";
-    let finalText = "";
-    rec.onresult = (event) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const r = event.results[i];
-        const t = r[0] && r[0].transcript ? r[0].transcript : "";
-        if (r.isFinal) finalText = `${finalText} ${t}`.trim();
-        else interim += t;
-      }
-      const shown = `${finalText} ${interim}`.trim();
-      if (cb.onPartial) cb.onPartial(shown);
-      if (finalText && cb.onFinal) cb.onFinal(finalText);
-    };
-    rec.onerror = (e) => {
-      const msg = (e && e.error) ? String(e.error) : "speech-error";
-      if (cb.onError) cb.onError(msg);
-    };
-    rec.onend = () => {
-      _listening = false;
-      _rec = null;
-      if (cb.onEnd) cb.onEnd(finalText);
-    };
-    try {
-      rec.start();
-      return true;
-    } catch (err) {
-      _listening = false;
-      _rec = null;
-      if (cb.onError) cb.onError(String(err && err.message || err));
-      return false;
-    }
-  }
-
-  function stopListening() {
-    if (_rec) {
-      try { _rec.stop(); } catch (_) { /* ignore */ }
-      try { _rec.abort(); } catch (_) { /* ignore */ }
-    }
-    _rec = null;
-    _listening = false;
-  }
-
-  function isListening() {
-    return _listening;
-  }
-
   return {
     preprocess,
     parseNumberWords,
     parseUtterance,
     parseSegment,
     splitUtterance,
-    speechSupported,
-    startListening,
-    stopListening,
-    isListening,
   };
 })();
 

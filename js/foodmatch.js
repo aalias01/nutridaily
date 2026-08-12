@@ -19,7 +19,7 @@ const FoodMatch = (() => {
   // Discrete items often get Serving size from NUTRI import but no Piece field.
   const COUNT_NOUNS = [
     "chapati", "roti", "paratha", "naan", "tortilla", "dosa", "idli",
-    "egg", "banana", "bagel", "wrap", "slice", "bar", "cookie", "samosa",
+    "egg", "banana", "apple", "orange", "bagel", "wrap", "slice", "bar", "cookie", "samosa",
   ];
 
   /**

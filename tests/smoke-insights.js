@@ -333,17 +333,16 @@ async function run(label, days) {
     pasteSheet.querySelector("[data-close='sheet-paste']").click();
     await new Promise((r) => setTimeout(r, 220));
 
-    // Voice multi-entry: paste path → confirm → multi-qty (log intent).
-    ok(!!$("#btn-voice-list") && !!$("#sheet-voice") && !!$("#sheet-voice-confirm"),
-      "voice list entry and confirm sheets are mounted");
+    // List multi-entry on Add: paste path → confirm → multi-qty (log intent).
+    ok(!!$("#btn-voice-find") && !!$("#voice-text") && !!$("#sheet-voice-confirm"),
+      "inline list entry and confirm sheets are mounted");
+    ok(!$("#sheet-voice"), "legacy sheet-voice is removed");
     $("#fab-add").click();
     await new Promise((r) => setTimeout(r, 20));
     {
       const App = window.eval("App");
       App.state.qtyIntent = "log";
-      $("#btn-voice-list").click();
-      await new Promise((r) => setTimeout(r, 20));
-      ok(!$("#sheet-voice").hidden, "List by voice or text opens the voice sheet");
+      ok(!$("#sheet-add").hidden, "FAB opens Add with list box");
       $("#voice-text").value = "100 g orange and 2 chapati";
       $("#btn-voice-find").click();
       await new Promise((r) => setTimeout(r, 40));
@@ -370,16 +369,16 @@ async function run(label, days) {
         ok(true, "voice confirm continue gated until picks/amounts are ready");
         $("#sheet-voice-confirm [data-close='sheet-voice-confirm']").click();
         await new Promise((r) => setTimeout(r, 40));
-        $("#sheet-voice [data-close='sheet-voice']").click();
-        await new Promise((r) => setTimeout(r, 40));
+        if ($("#sheet-add") && !$("#sheet-add").hidden) {
+          $("#sheet-add [data-close='sheet-add']").click();
+          await new Promise((r) => setTimeout(r, 40));
+        }
       }
 
-      // Voice into Planner intent uses Add to plan multi-qty copy.
+      // List into Planner intent uses Add to plan multi-qty copy.
       $("#fab-add").click();
       await new Promise((r) => setTimeout(r, 20));
       App.state.qtyIntent = "plan";
-      $("#btn-voice-list").click();
-      await new Promise((r) => setTimeout(r, 20));
       $("#voice-text").value = "50 g apple";
       $("#btn-voice-find").click();
       await new Promise((r) => setTimeout(r, 40));
@@ -388,7 +387,7 @@ async function run(label, days) {
         if (hit && !hit.classList.contains("on")) hit.click();
       });
       await new Promise((r) => setTimeout(r, 20));
-      ok(App.state.qtyIntent === "plan", "voice sheet preserves plan qtyIntent");
+      ok(App.state.qtyIntent === "plan", "list sheet preserves plan qtyIntent");
       if ($("#btn-voice-confirm-continue") && !$("#btn-voice-confirm-continue").disabled) {
         $("#btn-voice-confirm-continue").click();
         await new Promise((r) => setTimeout(r, 40));
@@ -403,8 +402,10 @@ async function run(label, days) {
         App.state.qtyIntent = "log";
         $("#sheet-voice-confirm [data-close='sheet-voice-confirm']").click();
         await new Promise((r) => setTimeout(r, 20));
-        $("#sheet-voice [data-close='sheet-voice']").click();
-        await new Promise((r) => setTimeout(r, 20));
+        if ($("#sheet-add") && !$("#sheet-add").hidden) {
+          $("#sheet-add [data-close='sheet-add']").click();
+          await new Promise((r) => setTimeout(r, 20));
+        }
         ok(true, "voice plan confirm path exercised");
       }
       if ($("#sheet-gap") && !$("#sheet-gap").hidden) {

@@ -888,7 +888,10 @@ const UI = (() => {
     return { units, unit, pieceG, servG };
   }
 
-  function unitChipHtml(food, units, activeUnit) {
+  function unitChipHtml(food, units, activeUnit, opts) {
+    const o = opts || {};
+    const extraAttrs = o.attrs ? ` ${o.attrs}` : "";
+    const disabled = o.disabled ? " disabled" : "";
     const pieceG = FoodMatch.pieceGrams(food);
     const servG = food && food.units && +food.units.serving > 0 ? +food.units.serving : null;
     const noun = FoodMatch.countNoun(food);
@@ -896,8 +899,8 @@ const UI = (() => {
       let label = u;
       if (u === "serving" && servG) label = `serving (${Math.round(servG)} g)`;
       if (u === "piece" && pieceG) label = `${noun} (${Math.round(pieceG)} g)`;
-      if (u === "batch" && food.batch) label = `batch (${fmt(food.batch.grams)} g)`;
-      return `<button type="button" class="uchip${u === activeUnit ? " active" : ""}" data-unit="${esc(u)}" aria-pressed="${u === activeUnit}">${esc(label)}</button>`;
+      if (u === "batch" && food && food.batch) label = `batch (${fmt(food.batch.grams)} g)`;
+      return `<button type="button" class="uchip${u === activeUnit ? " active" : ""}" data-unit="${esc(u)}" aria-pressed="${u === activeUnit}"${extraAttrs}${disabled}>${esc(label)}</button>`;
     }).join("");
   }
 
@@ -4245,8 +4248,9 @@ const UI = (() => {
   /**
    * Voice confirm list: one card per spoken segment with qty + match hits.
    * @param {Array} sections — [{ id, spokenLabel, qty, unit, issue, dropped, selectedKey, hits:[{key,name,kcal,pendingCatalog}] }]
+   * @param {boolean} [imperial]
    */
-  function renderVoiceConfirm(sections) {
+  function renderVoiceConfirm(sections, imperial) {
     const root = $("#voice-confirm-list");
     if (!root) return;
     const list = Array.isArray(sections) ? sections : [];
@@ -4264,12 +4268,26 @@ const UI = (() => {
       else if (seg.ambiguous && !seg.selectedKey) { status = "Ambiguous — pick one"; statusClass = "is-bad"; }
       else if (seg.selectedKey) { status = "Selected"; statusClass = ""; }
 
-      const units = ["g", "piece", "oz"].concat(
-        (seg.extraUnits || []).filter((u) => u && u !== "g" && u !== "piece" && u !== "oz")
-      );
-      const unitChips = units.map((u) =>
-        `<button type="button" class="uchip${seg.unit === u ? " on" : ""}" data-action="voice-unit" data-seg="${esc(seg.id)}" data-unit="${esc(u)}">${esc(u)}</button>`
-      ).join("");
+      const selectedHit = (seg.hits || []).find((h) => h.key === seg.selectedKey);
+      const food = selectedHit && selectedHit.food;
+      let units;
+      let activeUnit = seg.unit || "g";
+      if (food) {
+        const packed = qtyUnitsForFood(food, !!imperial, activeUnit);
+        units = packed.units;
+        activeUnit = units.includes(activeUnit) ? activeUnit : packed.unit;
+        if (seg.unit !== activeUnit) seg.unit = activeUnit;
+      } else {
+        units = ["g", "piece"];
+        if (imperial) units.push("oz");
+        for (const u of (seg.extraUnits || []).concat(seg.unit ? [seg.unit] : [])) {
+          if (u && u !== "kcal" && !units.includes(u)) units.push(u);
+        }
+      }
+      const unitChips = unitChipHtml(food, units, activeUnit, {
+        attrs: `data-action="voice-unit" data-seg="${esc(seg.id)}"`,
+        disabled: dropped,
+      });
 
       const hits = (seg.hits || []).map((h) => {
         const on = !dropped && seg.selectedKey === h.key;

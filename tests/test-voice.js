@@ -1,9 +1,8 @@
-/* Voice utterance parser unit tests (no DOM / speech required). */
+/* List utterance parser unit tests (no DOM / speech required). */
 const assert = require("assert");
 const path = require("path");
 const fs = require("fs");
 
-// Load FoodMatch first so Voice unit tables resolve in Node.
 const foodmatchPath = path.join(__dirname, "..", "js", "foodmatch.js");
 global.FoodMatch = require(foodmatchPath);
 const Voice = require(path.join(__dirname, "..", "js", "voice.js"));
@@ -68,17 +67,83 @@ ok(Voice.parseNumberWords("one hundred and twenty") === 120, "one hundred and tw
     "does not split inside hundred and twenty", JSON.stringify(parts));
 }
 
-ok(typeof Voice.speechSupported === "function", "speechSupported exported");
-ok(Voice.speechSupported() === false, "speechSupported is false in Node");
+{
+  const r = Voice.parseUtterance("200 g chicken 100 g rice 2 eggs");
+  ok(r.ok && r.segments.length === 3, "no-comma qty-boundary → 3", JSON.stringify(r.segments));
+  ok(r.segments[0].qty === 200 && /chicken/i.test(r.segments[0].spokenLabel), "seg0 chicken 200 g", JSON.stringify(r.segments[0]));
+  ok(r.segments[1].qty === 100 && /rice/i.test(r.segments[1].spokenLabel), "seg1 rice 100 g", JSON.stringify(r.segments[1]));
+  ok(r.segments[2].qty === 2 && r.segments[2].unit === "piece" && /egg/i.test(r.segments[2].spokenLabel),
+    "seg2 2 eggs", JSON.stringify(r.segments[2]));
+}
 
-// Shell lists the new module.
+{
+  const r = Voice.parseUtterance("200g chicken, 100g rice, 2 eggs");
+  ok(r.ok && r.segments.length === 3, "compact comma list → 3", r.segments.length);
+}
+
+{
+  const r = Voice.parseUtterance("200 grams chicken and 100 grams rice");
+  ok(r.ok && r.segments.length === 2, "and-split grams → 2", JSON.stringify(r.segments));
+}
+
+{
+  const r = Voice.parseUtterance("two hundred grams chicken one hundred grams rice");
+  ok(r.ok && r.segments.length === 2, "spoken no-comma → 2", JSON.stringify(r.segments));
+  ok(r.segments[0].qty === 200 && /chicken/i.test(r.segments[0].spokenLabel), "spoken chicken 200", JSON.stringify(r.segments[0]));
+  ok(r.segments[1].qty === 100 && /rice/i.test(r.segments[1].spokenLabel), "spoken rice 100", JSON.stringify(r.segments[1]));
+}
+
+{
+  const r = Voice.parseUtterance("chicken 200 g rice 100 g");
+  ok(r.ok && r.segments.length === 2, "food-then-qty → 2", JSON.stringify(r.segments));
+  ok(/chicken/i.test(r.segments[0].spokenLabel) && r.segments[0].qty === 200 && r.segments[0].unit === "g",
+    "chicken 200 g", JSON.stringify(r.segments[0]));
+  ok(/rice/i.test(r.segments[1].spokenLabel) && r.segments[1].qty === 100, "rice 100 g", JSON.stringify(r.segments[1]));
+}
+
+{
+  const r = Voice.parseUtterance("chicken breast 200 grams and 2 eggs");
+  ok(r.ok && r.segments.length === 2, "food-then-qty + and eggs → 2", JSON.stringify(r.segments));
+  ok(/chicken/i.test(r.segments[0].spokenLabel) && r.segments[0].qty === 200, "chicken breast 200", JSON.stringify(r.segments[0]));
+  ok(r.segments[1].qty === 2 && /egg/i.test(r.segments[1].spokenLabel), "and 2 eggs", JSON.stringify(r.segments[1]));
+}
+
+{
+  const r = Voice.parseUtterance("100 g spinach plus 50 g rice");
+  ok(r.ok && r.segments.length === 2, "plus connector → 2", JSON.stringify(r.segments));
+}
+
+{
+  const r = Voice.parseUtterance("a banana and 2 eggs");
+  ok(r.ok && r.segments.length === 2, "a banana and 2 eggs → 2", JSON.stringify(r.segments));
+  ok(r.segments[0].qty === 1 && r.segments[0].unit === "piece" && /banana/i.test(r.segments[0].spokenLabel),
+    "a banana → 1 piece", JSON.stringify(r.segments[0]));
+}
+
+{
+  const r = Voice.parseUtterance("100 g rice\n50 g apple");
+  ok(r.ok && r.segments.length === 2, "newline-separated → 2", JSON.stringify(r.segments));
+}
+
+{
+  const r = Voice.parseUtterance("78 G spinach");
+  ok(r.ok && r.segments.length === 1 && r.segments[0].qty === 78 && r.segments[0].unit === "g",
+    "STT lone G → grams", JSON.stringify(r.segments[0]));
+}
+
+{
+  const r = Voice.parseUtterance("eggs 2");
+  ok(r.ok && r.segments[0].qty === 2 && r.segments[0].unit === "piece", "eggs 2 → piece", JSON.stringify(r.segments[0]));
+}
+
 {
   const sw = fs.readFileSync(path.join(__dirname, "..", "sw.js"), "utf8");
   ok(/js\/voice\.js/.test(sw), "service worker SHELL includes js/voice.js");
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   ok(/js\/voice\.js/.test(html), "index.html loads js/voice.js");
-  ok(/sheet-voice-confirm/.test(html) && /btn-voice-list/.test(html),
-    "index mounts voice entry + confirm sheets");
+  ok(/sheet-voice-confirm/.test(html) && /btn-voice-find/.test(html) && /add-list-block/.test(html),
+    "index mounts inline list + confirm");
+  ok(!/sheet-voice"/.test(html.replace(/sheet-voice-confirm/g, "")), "sheet-voice list sheet removed");
 }
 
 console.log(`\nvoice: ${pass} passed, ${fail} failed\n`);

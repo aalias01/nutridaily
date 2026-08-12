@@ -1657,7 +1657,6 @@ const App = (() => {
 
   function clearVoiceFlow() {
     state.voiceSegments = [];
-    if (typeof Voice !== "undefined" && Voice.stopListening) Voice.stopListening();
   }
 
   /** Rank personal + catalog hits for a spoken label (FoodMatch.scoreMatch). */
@@ -1714,13 +1713,17 @@ const App = (() => {
   }
 
   function seedVoiceConfirm(rawText) {
+    const warnEl = UI.$("#voice-warnings");
+    if (warnEl) { warnEl.hidden = true; warnEl.textContent = ""; }
     if (typeof Voice === "undefined" || !Voice.parseUtterance) {
-      UI.toast("Voice parsing is unavailable");
+      UI.toast("List parsing is unavailable");
       return false;
     }
     const parsed = Voice.parseUtterance(rawText);
     if (!parsed.ok || !parsed.segments.length) {
-      UI.toast((parsed.warnings && parsed.warnings[0]) || "Could not read that list");
+      const msg = (parsed.warnings && parsed.warnings[0]) || "Could not read that list";
+      UI.toast(msg);
+      if (warnEl) { warnEl.hidden = false; warnEl.textContent = msg; }
       return false;
     }
     state.voiceSegments = parsed.segments.map((seg) => {
@@ -1767,13 +1770,13 @@ const App = (() => {
       UI.toast(parsed.warnings[0]);
     }
     refreshVoiceConfirm();
-    UI.closeSheet("sheet-voice");
+    UI.closeSheet("sheet-add");
     UI.openSheet("sheet-voice-confirm", { noAutofocus: true });
     return true;
   }
 
   function refreshVoiceConfirm() {
-    UI.renderVoiceConfirm(state.voiceSegments);
+    UI.renderVoiceConfirm(state.voiceSegments, !!state.settings.imperial);
     syncVoiceConfirmContinue();
   }
 
@@ -1840,63 +1843,10 @@ const App = (() => {
       };
     }
     clearVoiceFlow();
-    UI.closeSheet("sheet-voice-confirm");
-    openMultiQtySheet();
-  }
-
-  function openVoiceSheet() {
-    // Preserve qtyIntent from FAB (log) or openAddForPlan (plan).
-    if (state.qtyIntent === "gap") state.qtyIntent = "log";
-    clearVoiceFlow();
     const ta = UI.$("#voice-text");
     if (ta) ta.value = "";
-    const warn = UI.$("#voice-warnings");
-    if (warn) { warn.hidden = true; warn.textContent = ""; }
-    const micBtn = UI.$("#btn-voice-mic");
-    const fallback = UI.$("#voice-mic-fallback");
-    const status = UI.$("#voice-mic-status");
-    const supported = typeof Voice !== "undefined" && Voice.speechSupported && Voice.speechSupported();
-    if (micBtn) {
-      micBtn.hidden = !supported;
-      micBtn.textContent = "Start listening";
-    }
-    if (fallback) fallback.hidden = !!supported;
-    if (status) status.textContent = "";
-    UI.closeSheet("sheet-add");
-    UI.openSheet("sheet-voice", { noAutofocus: !supported });
-    if (ta && !supported) setTimeout(() => { try { ta.focus(); } catch (_) {} }, 40);
-  }
-
-  function toggleVoiceMic() {
-    if (typeof Voice === "undefined") return;
-    const micBtn = UI.$("#btn-voice-mic");
-    const status = UI.$("#voice-mic-status");
-    const ta = UI.$("#voice-text");
-    if (Voice.isListening && Voice.isListening()) {
-      Voice.stopListening();
-      if (micBtn) micBtn.textContent = "Start listening";
-      if (status) status.textContent = "";
-      return;
-    }
-    const ok = Voice.startListening({
-      onPartial: (text) => {
-        if (ta) ta.value = text;
-        if (status) status.textContent = "Listening…";
-      },
-      onFinal: (text) => {
-        if (ta) ta.value = text;
-      },
-      onError: (msg) => {
-        if (status) status.textContent = msg === "not-allowed" ? "Mic permission denied" : "Mic error";
-        if (micBtn) micBtn.textContent = "Start listening";
-      },
-      onEnd: () => {
-        if (micBtn) micBtn.textContent = "Start listening";
-        if (status) status.textContent = "";
-      },
-    });
-    if (ok && micBtn) micBtn.textContent = "Stop";
-    if (ok && status) status.textContent = "Listening…";
+    UI.closeSheet("sheet-voice-confirm");
+    openMultiQtySheet();
   }
 
   function toggleMultiFood(key, food, pendingCatalog, prefill) {
@@ -3406,6 +3356,12 @@ const App = (() => {
       state.multiQtyItems = [];
     }
     UI.$("#pick-search").value = (opts && opts.keepSearch) ? (UI.$("#pick-search").value || "") : "";
+    if (!(opts && opts.keepSearch)) {
+      const ta = UI.$("#voice-text");
+      if (ta) ta.value = "";
+      const warn = UI.$("#voice-warnings");
+      if (warn) { warn.hidden = true; warn.textContent = ""; }
+    }
     state.yesterdayKey = yesterdayKey();
     refreshAddPicker();
     UI.openSheet("sheet-add");
@@ -6242,28 +6198,16 @@ const App = (() => {
     if (UI.$("#btn-pick-multi-continue")) {
       UI.$("#btn-pick-multi-continue").addEventListener("click", continueMultiPick);
     }
-    if (UI.$("#btn-voice-list")) {
-      UI.$("#btn-voice-list").addEventListener("click", () => openVoiceSheet());
-    }
-    if (UI.$("#btn-voice-mic")) {
-      UI.$("#btn-voice-mic").addEventListener("click", () => toggleVoiceMic());
-    }
     if (UI.$("#btn-voice-find")) {
       UI.$("#btn-voice-find").addEventListener("click", () => {
-        if (typeof Voice !== "undefined" && Voice.stopListening) Voice.stopListening();
         const ta = UI.$("#voice-text");
         seedVoiceConfirm(ta ? ta.value : "");
-      });
-    }
-    if (UI.$("#btn-voice-cancel")) {
-      UI.$("#btn-voice-cancel").addEventListener("click", () => {
-        clearVoiceFlow();
       });
     }
     if (UI.$("#btn-voice-confirm-back")) {
       UI.$("#btn-voice-confirm-back").addEventListener("click", () => {
         UI.closeSheet("sheet-voice-confirm");
-        UI.openSheet("sheet-voice", { noAutofocus: true });
+        openAddSheet({ keepMulti: true, keepSearch: true });
       });
     }
     if (UI.$("#btn-voice-confirm-continue")) {
@@ -7484,14 +7428,9 @@ const App = (() => {
             openGapSheet({ plan: true });
           }
         }
-        if (sheetId === "sheet-voice") {
-          clearVoiceFlow();
-          // Return to the Add picker with the same log/plan intent.
-          openAddSheet({ keepMulti: true, keepSearch: true });
-        }
         if (sheetId === "sheet-voice-confirm") {
           clearVoiceFlow();
-          UI.openSheet("sheet-voice", { noAutofocus: true });
+          openAddSheet({ keepMulti: true, keepSearch: true });
         }
         if (sheetId === "sheet-multi-qty") {
           const wasPlanner = returnsToPlannerPick();
