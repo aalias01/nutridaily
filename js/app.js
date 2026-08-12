@@ -1626,15 +1626,29 @@ const App = (() => {
 
   function syncPickModeChrome() {
     const multiBar = UI.$("#pick-multi-bar");
-    const singleActs = UI.$("#pick-single-actions");
     if (multiBar) multiBar.hidden = false;
-    if (singleActs) singleActs.hidden = false;
     const n = multiPickKeys().size;
     const cont = UI.$("#btn-pick-multi-continue");
     if (cont) {
       cont.disabled = n < 1;
       cont.textContent = n < 1 ? "Continue with selected" : `Continue with ${n}`;
     }
+  }
+
+  function setPickMoreOpen(open) {
+    const menu = UI.$("#pick-single-actions");
+    const btn = UI.$("#btn-pick-more");
+    if (!menu || !btn) return;
+    menu.hidden = !open;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function syncVoiceListExpand() {
+    const ta = UI.$("#voice-text");
+    if (!ta) return;
+    const keep = document.activeElement === ta || !!(ta.value && String(ta.value).trim());
+    ta.classList.toggle("is-expanded", keep);
+    ta.rows = keep ? 5 : 1;
   }
 
   function refreshAddPicker() {
@@ -3362,6 +3376,8 @@ const App = (() => {
       const warn = UI.$("#voice-warnings");
       if (warn) { warn.hidden = true; warn.textContent = ""; }
     }
+    setPickMoreOpen(false);
+    syncVoiceListExpand();
     state.yesterdayKey = yesterdayKey();
     refreshAddPicker();
     UI.openSheet("sheet-add");
@@ -6198,6 +6214,36 @@ const App = (() => {
     if (UI.$("#btn-pick-multi-continue")) {
       UI.$("#btn-pick-multi-continue").addEventListener("click", continueMultiPick);
     }
+    if (UI.$("#btn-pick-more")) {
+      UI.$("#btn-pick-more").addEventListener("click", (e) => {
+        e.stopPropagation();
+        const menu = UI.$("#pick-single-actions");
+        setPickMoreOpen(!!(menu && menu.hidden));
+      });
+    }
+    if (UI.$("#pick-single-actions")) {
+      UI.$("#pick-single-actions").addEventListener("click", () => {
+        setPickMoreOpen(false);
+      });
+    }
+    document.addEventListener("click", (e) => {
+      const wrap = UI.$(".pick-more-wrap");
+      if (!wrap || wrap.contains(e.target)) return;
+      setPickMoreOpen(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") setPickMoreOpen(false);
+    });
+    if (UI.$("#voice-text")) {
+      UI.$("#voice-text").addEventListener("focus", () => {
+        UI.$("#voice-text").classList.add("is-expanded");
+        UI.$("#voice-text").rows = 5;
+      });
+      UI.$("#voice-text").addEventListener("blur", () => {
+        setTimeout(syncVoiceListExpand, 0);
+      });
+      UI.$("#voice-text").addEventListener("input", syncVoiceListExpand);
+    }
     if (UI.$("#btn-voice-find")) {
       UI.$("#btn-voice-find").addEventListener("click", () => {
         const ta = UI.$("#voice-text");
@@ -7422,6 +7468,7 @@ const App = (() => {
           resetQtyState();
         }
         if (sheetId === "sheet-add") {
+          setPickMoreOpen(false);
           clearMultiPickFlow();
           if (returnsToPlannerPick()) {
             state.qtyIntent = "log";

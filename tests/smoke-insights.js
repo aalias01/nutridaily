@@ -307,8 +307,10 @@ async function run(label, days) {
     ok(!$("#pick-mode-seg"), "add picker has no Single/Multi mode seg");
     ok(!$("#pick-multi-bar").hidden && $("#btn-pick-multi-continue"),
       "add picker shows multi continue bar by default");
-    ok(!$("#pick-single-actions").hidden,
-      "add picker keeps Log once / NUTRI / Import visible in multi");
+    ok(!!$("#btn-pick-more") && $("#pick-single-actions").hidden,
+      "add picker tucks Log once / NUTRI / Import behind More");
+    ok(!!$("#btn-once-food") && !!$("#btn-paste-new") && !!$("#btn-import-shared-add"),
+      "more-menu actions remain mounted");
     ok(addSheet.contains(window.document.activeElement), "Add food moves focus inside its dialog without opening search");
     ok(!addSheet.parentElement.hasAttribute("inert"), "modal sheet ancestor is never inert");
     ok($("#view-today").closest("main").hasAttribute("inert"), "modal makes the background view inert");
@@ -320,6 +322,7 @@ async function run(label, days) {
     // Multi-step sheets keep inactive steps in the DOM. Their controls must
     // not become the apparent end of the modal's keyboard loop.
     $("#fab-add").click();
+    $("#btn-pick-more").click();
     $("#btn-paste-new").click();
     await new Promise((r) => setTimeout(r, 20));
     const pasteSheet = $("#sheet-paste");
