@@ -336,22 +336,22 @@ async function run(label, days) {
     pasteSheet.querySelector("[data-close='sheet-paste']").click();
     await new Promise((r) => setTimeout(r, 220));
 
-    // List multi-entry: Add several foods sheet → confirm → multi-qty (log intent).
+    // List multi-entry: type/dictate sheet → confirm → multi-qty (log intent).
     $("#fab-add").click();
     await new Promise((r) => setTimeout(r, 20));
     ok(!!$("#add-title") && !!$("#sheet-add .sheet-grab"),
       "Add food uses the 3/4 bottom sheet with grab");
-    ok(!!$("#btn-open-add-list") && /Add several foods/i.test($("#btn-open-add-list").textContent || ""),
-      "Add several foods button is mounted at the bottom");
+    ok(!!$("#btn-open-add-list") && /Type or dictate a list/i.test($("#btn-open-add-list").textContent || ""),
+      "Type or dictate a list button is mounted at the bottom");
     ok(!!$("#sheet-add-list") && !!$("#btn-voice-find") && !!$("#voice-text") && !!$("#sheet-voice-confirm"),
-      "several-foods list sheet and confirm are mounted");
+      "list sheet and confirm are mounted");
     {
       const App = window.eval("App");
       App.state.qtyIntent = "log";
       ok(!$("#sheet-add").hidden, "FAB opens Add with list box");
       $("#btn-open-add-list").click();
       await new Promise((r) => setTimeout(r, 20));
-      ok(!$("#sheet-add-list").hidden, "Add several foods opens the list sheet");
+      ok(!$("#sheet-add-list").hidden, "Type or dictate a list opens the list sheet");
       $("#voice-text").value = "100 g orange and 2 chapati";
       $("#btn-voice-find").click();
       await new Promise((r) => setTimeout(r, 40));

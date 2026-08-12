@@ -143,7 +143,7 @@ ok(Voice.parseNumberWords("one hundred and twenty") === 120, "one hundred and tw
   ok(/js\/voice\.js/.test(html), "index.html loads js/voice.js");
   ok(/sheet-voice-confirm/.test(html) && /btn-voice-find/.test(html) && /sheet-add-list/.test(html),
     "index mounts several-foods list + confirm");
-  ok(/btn-open-add-list/.test(html) && /Add several foods/.test(html), "index mounts Add several foods entry");
+  ok(/btn-open-add-list/.test(html) && /Type or dictate a list/.test(html), "index mounts list entry");
   ok(/id="add-title"/.test(html), "index mounts Add food title");
   ok(!/sheet-voice"/.test(html.replace(/sheet-voice-confirm/g, "")), "sheet-voice list sheet removed");
 }
