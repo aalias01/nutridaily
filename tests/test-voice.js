@@ -144,7 +144,7 @@ ok(Voice.parseNumberWords("one hundred and twenty") === 120, "one hundred and tw
   ok(/sheet-voice-confirm/.test(html) && /btn-voice-find/.test(html) && /sheet-add-list/.test(html),
     "index mounts several-foods list + confirm");
   ok(/btn-open-add-list/.test(html) && /Add several foods/.test(html), "index mounts Add several foods entry");
-  ok(/add-close/.test(html) && /add-title/.test(html), "index mounts full-screen Add chrome");
+  ok(/id="add-title"/.test(html), "index mounts Add food title");
   ok(!/sheet-voice"/.test(html.replace(/sheet-voice-confirm/g, "")), "sheet-voice list sheet removed");
 }
 

@@ -339,8 +339,8 @@ async function run(label, days) {
     // List multi-entry: Add several foods sheet → confirm → multi-qty (log intent).
     $("#fab-add").click();
     await new Promise((r) => setTimeout(r, 20));
-    ok(!!$("#add-title") && !!$(".add-close"),
-      "Add food is full-screen with close control");
+    ok(!!$("#add-title") && !!$("#sheet-add .sheet-grab"),
+      "Add food uses the 3/4 bottom sheet with grab");
     ok(!!$("#btn-open-add-list") && /Add several foods/i.test($("#btn-open-add-list").textContent || ""),
       "Add several foods button is mounted at the bottom");
     ok(!!$("#sheet-add-list") && !!$("#btn-voice-find") && !!$("#voice-text") && !!$("#sheet-voice-confirm"),

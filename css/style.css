@@ -428,22 +428,14 @@ body.sheet-open .insight-dock { display: none; }
 .sheet.open .sheet-card { transform: translateY(0); }
 .sheet-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 4px auto 12px; }
 .sheet-list { max-height: 50dvh; overflow-y: auto; margin-bottom: 10px; }
-/* Fixed full-screen Add (Cronometer-style): search + results fill; list is optional. */
+/* Fixed 3/4 Add sheet: search + results fill; secondary actions stay put. */
 #sheet-add .sheet-card {
-  top: 0;
-  bottom: 0;
-  left: 0;
-  right: 0;
   display: flex;
   flex-direction: column;
-  height: 100dvh;
-  max-height: 100dvh;
+  height: 85dvh;
+  max-height: 85dvh;
   overflow: hidden;
-  border-radius: 0;
-  padding: max(8px, env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
-  box-shadow: none;
 }
-#sheet-add .sheet-grab { display: none; }
 #sheet-add .sheet-card > *:not(#pick-list) { flex: 0 0 auto; }
 #sheet-add #pick-list {
   flex: 1 1 auto;
@@ -456,11 +448,15 @@ body.sheet-open .insight-dock { display: none; }
   margin: 0 0 8px;
   flex: 0 0 auto;
 }
+#sheet-add #add-title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+}
 .add-several-btn {
   margin-top: 8px;
 }
 #sheet-add-list .sheet-card {
-  /* Restore prior ~3/4 bottom sheet (tall ≈ 92dvh max). */
   max-height: 85dvh;
 }
 #sheet-add-list .add-list-input {
@@ -480,32 +476,6 @@ body.sheet-open .insight-dock { display: none; }
 }
 #sheet-add-list .add-list-actions {
   margin-top: 8px;
-}
-.add-topbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 10px;
-  min-height: 44px;
-}
-.add-topbar h3 {
-  flex: 1 1 auto;
-  margin: 0;
-  text-align: center;
-  font-size: 17px;
-  font-weight: 700;
-}
-.add-close {
-  flex: 0 0 auto;
-  min-width: 44px;
-  padding: 8px 10px;
-  font-size: 18px;
-  line-height: 1;
-  font-weight: 600;
-}
-.add-topbar-spacer {
-  flex: 0 0 44px;
-  width: 44px;
 }
 .pick-footer-bar {
   display: flex;
