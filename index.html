@@ -420,27 +420,6 @@
         <span class="add-topbar-spacer" aria-hidden="true"></span>
       </header>
       <input id="pick-search" type="search" placeholder="Search banana, eggs, rice…" aria-label="Search foods to log">
-      <details class="add-list-block" id="add-list-details">
-        <summary class="add-list-summary">List with amounts</summary>
-        <div class="add-list-body">
-          <div class="add-list-hint-row">
-            <span class="muted small">Type or use your keyboard mic</span>
-            <details class="add-list-examples">
-              <summary class="muted small">Examples</summary>
-              <ul class="muted small add-list-examples-ul">
-                <li>200 g chicken 100 g rice and 2 eggs</li>
-                <li>200g chicken, 100g rice, 2 eggs</li>
-                <li>two hundred grams chicken one hundred grams rice</li>
-                <li>chicken 200 g rice 100 g</li>
-                <li>One food per line also works</li>
-              </ul>
-            </details>
-          </div>
-          <textarea id="voice-text" class="add-list-input" rows="1" placeholder="200 g chicken 100 g rice and 2 eggs" autocomplete="off" aria-label="List foods with amounts"></textarea>
-          <button id="btn-voice-find" class="btn full" type="button">Find foods</button>
-          <div id="voice-warnings" class="muted small" hidden></div>
-        </div>
-      </details>
       <div id="pick-list" class="sheet-list"></div>
       <div class="pick-footer-bar">
         <div id="pick-multi-bar" class="pick-multi-bar">
@@ -454,6 +433,35 @@
             <button id="btn-import-shared-add" class="pick-more-item" type="button" role="menuitem">Import shared food</button>
           </div>
         </div>
+      </div>
+      <button id="btn-open-add-list" class="btn ghost full add-several-btn" type="button">Add several foods</button>
+    </div>
+  </div>
+
+  <!-- Add several foods — 3/4 sheet: type or keyboard-mic a list -->
+  <div id="sheet-add-list" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="add-list-title">
+    <div class="sheet-backdrop" data-close="sheet-add-list"></div>
+    <div class="sheet-card tall">
+      <div class="sheet-grab"></div>
+      <h3 id="add-list-title">Add several foods</h3>
+      <div class="add-list-hint-row">
+        <span class="muted small">Type or use your keyboard mic</span>
+        <details class="add-list-examples">
+          <summary class="muted small">Examples</summary>
+          <ul class="muted small add-list-examples-ul">
+            <li>200 g chicken 100 g rice and 2 eggs</li>
+            <li>200g chicken, 100g rice, 2 eggs</li>
+            <li>two hundred grams chicken one hundred grams rice</li>
+            <li>chicken 200 g rice 100 g</li>
+            <li>One food per line also works</li>
+          </ul>
+        </details>
+      </div>
+      <textarea id="voice-text" class="add-list-input" rows="5" placeholder="200 g chicken 100 g rice and 2 eggs" autocomplete="off" aria-label="Foods with amounts"></textarea>
+      <div id="voice-warnings" class="muted small" hidden></div>
+      <div class="row end add-list-actions">
+        <button id="btn-add-list-cancel" class="btn ghost" type="button" data-close="sheet-add-list">Cancel</button>
+        <button id="btn-voice-find" class="btn" type="button">Find foods</button>
       </div>
     </div>
   </div>

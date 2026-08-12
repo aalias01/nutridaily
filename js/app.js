@@ -1648,23 +1648,26 @@ const App = (() => {
     if (details && details.open) details.open = false;
   }
 
-  function collapseAddListPanel() {
-    const panel = UI.$("#add-list-details");
-    if (panel) panel.open = false;
+  function openAddListSheet() {
+    if (state.qtyIntent === "gap") state.qtyIntent = "log";
+    setPickMoreOpen(false);
     closeAddListExamples();
-    const ta = UI.$("#voice-text");
-    if (ta) {
-      ta.classList.remove("is-expanded");
-      ta.rows = 1;
-    }
+    const warn = UI.$("#voice-warnings");
+    if (warn) { warn.hidden = true; warn.textContent = ""; }
+    UI.closeSheet("sheet-add");
+    UI.openSheet("sheet-add-list", { noAutofocus: true });
+    const card = UI.$("#sheet-add-list .sheet-card");
+    if (card) card.scrollTop = 0;
+    setTimeout(() => {
+      const ta = UI.$("#voice-text");
+      if (ta) {
+        try { ta.focus(); } catch (_) { /* ignore */ }
+      }
+    }, 40);
   }
 
-  function syncVoiceListExpand() {
-    const ta = UI.$("#voice-text");
-    if (!ta) return;
-    const keep = document.activeElement === ta || !!(ta.value && String(ta.value).trim());
-    ta.classList.toggle("is-expanded", keep);
-    ta.rows = keep ? 5 : 1;
+  function returnToAddFromList() {
+    openAddSheet({ keepMulti: true, keepSearch: true });
   }
 
   function refreshAddPicker() {
@@ -1800,7 +1803,7 @@ const App = (() => {
       UI.toast(parsed.warnings[0]);
     }
     refreshVoiceConfirm();
-    UI.closeSheet("sheet-add");
+    UI.closeSheet("sheet-add-list");
     UI.openSheet("sheet-voice-confirm", { noAutofocus: true });
     return true;
   }
@@ -3394,8 +3397,7 @@ const App = (() => {
       if (warn) { warn.hidden = true; warn.textContent = ""; }
     }
     setPickMoreOpen(false);
-    collapseAddListPanel();
-    syncVoiceListExpand();
+    closeAddListExamples();
     state.yesterdayKey = yesterdayKey();
     refreshAddPicker();
     UI.openSheet("sheet-add");
@@ -6230,11 +6232,13 @@ const App = (() => {
     UI.$("#foods-search").addEventListener("input", refreshFoods);
     UI.$("#pick-search").addEventListener("input", () => refreshAddPicker());
     UI.$("#pick-search").addEventListener("focus", () => {
-      collapseAddListPanel();
       setPickMoreOpen(false);
     });
     if (UI.$("#btn-pick-multi-continue")) {
       UI.$("#btn-pick-multi-continue").addEventListener("click", continueMultiPick);
+    }
+    if (UI.$("#btn-open-add-list")) {
+      UI.$("#btn-open-add-list").addEventListener("click", () => openAddListSheet());
     }
     if (UI.$("#btn-pick-more")) {
       UI.$("#btn-pick-more").addEventListener("click", (e) => {
@@ -6260,18 +6264,6 @@ const App = (() => {
         closeAddListExamples();
       }
     });
-    if (UI.$("#voice-text")) {
-      UI.$("#voice-text").addEventListener("focus", () => {
-        const panel = UI.$("#add-list-details");
-        if (panel) panel.open = true;
-        UI.$("#voice-text").classList.add("is-expanded");
-        UI.$("#voice-text").rows = 5;
-      });
-      UI.$("#voice-text").addEventListener("blur", () => {
-        setTimeout(syncVoiceListExpand, 0);
-      });
-      UI.$("#voice-text").addEventListener("input", syncVoiceListExpand);
-    }
     if (UI.$("#btn-voice-find")) {
       UI.$("#btn-voice-find").addEventListener("click", () => {
         const ta = UI.$("#voice-text");
@@ -6281,7 +6273,7 @@ const App = (() => {
     if (UI.$("#btn-voice-confirm-back")) {
       UI.$("#btn-voice-confirm-back").addEventListener("click", () => {
         UI.closeSheet("sheet-voice-confirm");
-        openAddSheet({ keepMulti: true, keepSearch: true });
+        UI.openSheet("sheet-add-list", { noAutofocus: true });
       });
     }
     if (UI.$("#btn-voice-confirm-continue")) {
@@ -7508,9 +7500,13 @@ const App = (() => {
             openGapSheet({ plan: true });
           }
         }
+        if (sheetId === "sheet-add-list") {
+          closeAddListExamples();
+          returnToAddFromList();
+        }
         if (sheetId === "sheet-voice-confirm") {
           clearVoiceFlow();
-          openAddSheet({ keepMulti: true, keepSearch: true });
+          UI.openSheet("sheet-add-list", { noAutofocus: true });
         }
         if (sheetId === "sheet-multi-qty") {
           const wasPlanner = returnsToPlannerPick();

@@ -336,20 +336,22 @@ async function run(label, days) {
     pasteSheet.querySelector("[data-close='sheet-paste']").click();
     await new Promise((r) => setTimeout(r, 220));
 
-    // List multi-entry on Add: paste path → confirm → multi-qty (log intent).
+    // List multi-entry: Add several foods sheet → confirm → multi-qty (log intent).
     $("#fab-add").click();
     await new Promise((r) => setTimeout(r, 20));
     ok(!!$("#add-title") && !!$(".add-close"),
       "Add food is full-screen with close control");
-    ok(!!$("#btn-voice-find") && !!$("#voice-text") && !!$("#sheet-voice-confirm"),
-      "inline list entry and confirm sheets are mounted");
-    ok(!$("#sheet-voice"), "legacy sheet-voice is removed");
+    ok(!!$("#btn-open-add-list") && /Add several foods/i.test($("#btn-open-add-list").textContent || ""),
+      "Add several foods button is mounted at the bottom");
+    ok(!!$("#sheet-add-list") && !!$("#btn-voice-find") && !!$("#voice-text") && !!$("#sheet-voice-confirm"),
+      "several-foods list sheet and confirm are mounted");
     {
       const App = window.eval("App");
       App.state.qtyIntent = "log";
       ok(!$("#sheet-add").hidden, "FAB opens Add with list box");
-      ok(!$("#add-list-details").open, "List with amounts starts collapsed");
-      $("#add-list-details").open = true;
+      $("#btn-open-add-list").click();
+      await new Promise((r) => setTimeout(r, 20));
+      ok(!$("#sheet-add-list").hidden, "Add several foods opens the list sheet");
       $("#voice-text").value = "100 g orange and 2 chapati";
       $("#btn-voice-find").click();
       await new Promise((r) => setTimeout(r, 40));
@@ -376,6 +378,10 @@ async function run(label, days) {
         ok(true, "voice confirm continue gated until picks/amounts are ready");
         $("#sheet-voice-confirm [data-close='sheet-voice-confirm']").click();
         await new Promise((r) => setTimeout(r, 40));
+        if ($("#sheet-add-list") && !$("#sheet-add-list").hidden) {
+          $("#sheet-add-list [data-close='sheet-add-list']").click();
+          await new Promise((r) => setTimeout(r, 40));
+        }
         if ($("#sheet-add") && !$("#sheet-add").hidden) {
           $("#sheet-add [data-close='sheet-add']").click();
           await new Promise((r) => setTimeout(r, 40));
@@ -386,7 +392,8 @@ async function run(label, days) {
       $("#fab-add").click();
       await new Promise((r) => setTimeout(r, 20));
       App.state.qtyIntent = "plan";
-      $("#add-list-details").open = true;
+      $("#btn-open-add-list").click();
+      await new Promise((r) => setTimeout(r, 20));
       $("#voice-text").value = "50 g apple";
       $("#btn-voice-find").click();
       await new Promise((r) => setTimeout(r, 40));
@@ -401,8 +408,6 @@ async function run(label, days) {
         await new Promise((r) => setTimeout(r, 40));
         ok(/Add to plan/i.test(text("#multi-qty-title")),
           "voice plan intent reaches Add to plan multi-qty");
-        // Avoid multi-qty cancel reopening Planner (qtyIntent=plan) and
-        // leaving a sheet open for later Insights dock keyboard tests.
         App.state.qtyIntent = "log";
         $("#multi-qty-cancel").click();
         await new Promise((r) => setTimeout(r, 40));
@@ -410,6 +415,10 @@ async function run(label, days) {
         App.state.qtyIntent = "log";
         $("#sheet-voice-confirm [data-close='sheet-voice-confirm']").click();
         await new Promise((r) => setTimeout(r, 20));
+        if ($("#sheet-add-list") && !$("#sheet-add-list").hidden) {
+          $("#sheet-add-list [data-close='sheet-add-list']").click();
+          await new Promise((r) => setTimeout(r, 20));
+        }
         if ($("#sheet-add") && !$("#sheet-add").hidden) {
           $("#sheet-add [data-close='sheet-add']").click();
           await new Promise((r) => setTimeout(r, 20));
@@ -419,6 +428,10 @@ async function run(label, days) {
       if ($("#sheet-gap") && !$("#sheet-gap").hidden) {
         const gapClose = $("#sheet-gap [data-close='sheet-gap']");
         if (gapClose) gapClose.click();
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      if ($("#sheet-add-list") && !$("#sheet-add-list").hidden) {
+        $("#sheet-add-list [data-close='sheet-add-list']").click();
         await new Promise((r) => setTimeout(r, 40));
       }
       if ($("#sheet-add") && !$("#sheet-add").hidden) {

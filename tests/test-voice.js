@@ -141,8 +141,9 @@ ok(Voice.parseNumberWords("one hundred and twenty") === 120, "one hundred and tw
   ok(/js\/voice\.js/.test(sw), "service worker SHELL includes js/voice.js");
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   ok(/js\/voice\.js/.test(html), "index.html loads js/voice.js");
-  ok(/sheet-voice-confirm/.test(html) && /btn-voice-find/.test(html) && /add-list-block/.test(html),
-    "index mounts inline list + confirm");
+  ok(/sheet-voice-confirm/.test(html) && /btn-voice-find/.test(html) && /sheet-add-list/.test(html),
+    "index mounts several-foods list + confirm");
+  ok(/btn-open-add-list/.test(html) && /Add several foods/.test(html), "index mounts Add several foods entry");
   ok(/add-close/.test(html) && /add-title/.test(html), "index mounts full-screen Add chrome");
   ok(!/sheet-voice"/.test(html.replace(/sheet-voice-confirm/g, "")), "sheet-voice list sheet removed");
 }

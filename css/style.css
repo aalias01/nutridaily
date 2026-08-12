@@ -456,8 +456,30 @@ body.sheet-open .insight-dock { display: none; }
   margin: 0 0 8px;
   flex: 0 0 auto;
 }
-#sheet-add .add-list-block {
-  margin: 0 0 6px;
+.add-several-btn {
+  margin-top: 8px;
+}
+#sheet-add-list .sheet-card {
+  /* Restore prior ~3/4 bottom sheet (tall ≈ 92dvh max). */
+  max-height: 85dvh;
+}
+#sheet-add-list .add-list-input {
+  width: 100%;
+  min-height: 140px;
+  max-height: 40dvh;
+  resize: vertical;
+  margin: 8px 0;
+  font: inherit;
+  line-height: 1.35;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  overflow-y: auto;
+}
+#sheet-add-list .add-list-actions {
+  margin-top: 8px;
 }
 .add-topbar {
   display: flex;
@@ -547,31 +569,6 @@ body.sheet-open .insight-dock { display: none; }
   background: color-mix(in srgb, var(--control-accent) 12%, var(--card));
   outline: none;
 }
-.add-list-block {
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--bg);
-}
-.add-list-summary {
-  cursor: pointer;
-  list-style: none;
-  font-size: 13px;
-  font-weight: 650;
-  padding: 10px 12px;
-  color: var(--ink);
-}
-.add-list-summary::-webkit-details-marker { display: none; }
-.add-list-block[open] .add-list-summary {
-  border-bottom: 1px solid var(--line);
-}
-.add-list-body { padding: 8px 12px 12px; }
-.add-list-title {
-  margin: 0 0 2px;
-  font-size: 15px;
-  font-weight: 700;
-}
 .add-list-hint-row {
   display: flex;
   flex-wrap: wrap;
@@ -608,31 +605,6 @@ body.sheet-open .insight-dock { display: none; }
   background: var(--card);
   box-shadow: var(--shadow);
 }
-.add-list-block #voice-text,
-.add-list-input {
-  width: 100%;
-  min-height: 40px;
-  max-height: 40px;
-  resize: none;
-  margin-top: 0;
-  font: inherit;
-  line-height: 1.35;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--card);
-  color: var(--ink);
-  overflow: hidden;
-  transition: max-height 0.15s ease;
-}
-.add-list-input.is-expanded,
-.add-list-block #voice-text.is-expanded {
-  min-height: 96px;
-  max-height: 120px;
-  overflow-y: auto;
-  resize: vertical;
-}
-.add-list-block #btn-voice-find { margin-top: 6px; }
 #voice-warnings:not([hidden]) { margin: 6px 0 0; color: var(--warn); }
 .voice-confirm-list {
   display: flex; flex-direction: column; gap: 12px;
