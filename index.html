@@ -107,10 +107,12 @@
     <section id="view-foods" class="view">
       <div class="view-head">
         <h2>My Foods</h2>
-        <button id="btn-add-food" class="btn" type="button">+ Add</button>
+        <div class="view-head-actions">
+          <button id="btn-import-shared" class="btn ghost" type="button">Import shared</button>
+          <button id="btn-add-food" class="btn" type="button">+ Add</button>
+        </div>
       </div>
       <input id="foods-search" type="search" placeholder="Search your foods" aria-label="Search foods">
-      <button id="btn-import-shared" class="btn ghost full" type="button" style="margin: 8px 0 10px">Import shared food</button>
       <div id="foods-list"></div>
     </section>
 
@@ -408,32 +410,37 @@
     </button>
   </nav>
 
-  <!-- Add food picker sheet -->
-  <div id="sheet-add" class="sheet" hidden aria-label="Add food">
+  <!-- Add food — full-screen search (Cronometer-style) -->
+  <div id="sheet-add" class="sheet sheet-full" hidden role="dialog" aria-modal="true" aria-labelledby="add-title">
     <div class="sheet-backdrop" data-close="sheet-add"></div>
     <div class="sheet-card">
-      <div class="sheet-grab"></div>
-      <div class="add-list-block">
-        <h3 class="add-list-title">List with amounts</h3>
-        <div class="add-list-hint-row">
-          <span class="muted small">Type or use your keyboard mic</span>
-          <details class="add-list-examples">
-            <summary class="muted small">Examples</summary>
-            <ul class="muted small add-list-examples-ul">
-              <li>200 g chicken 100 g rice and 2 eggs</li>
-              <li>200g chicken, 100g rice, 2 eggs</li>
-              <li>two hundred grams chicken one hundred grams rice</li>
-              <li>chicken 200 g rice 100 g</li>
-              <li>One food per line also works</li>
-            </ul>
-          </details>
-        </div>
-        <textarea id="voice-text" class="add-list-input" rows="1" placeholder="200 g chicken 100 g rice and 2 eggs" autocomplete="off" aria-label="List foods with amounts"></textarea>
-        <button id="btn-voice-find" class="btn full" type="button">Find foods</button>
-        <div id="voice-warnings" class="muted small" hidden></div>
-      </div>
-      <p class="add-or-search muted small">Or search your foods</p>
+      <header class="add-topbar">
+        <button type="button" class="btn ghost add-close" data-close="sheet-add" aria-label="Close">✕</button>
+        <h3 id="add-title">Add food</h3>
+        <span class="add-topbar-spacer" aria-hidden="true"></span>
+      </header>
       <input id="pick-search" type="search" placeholder="Search banana, eggs, rice…" aria-label="Search foods to log">
+      <details class="add-list-block" id="add-list-details">
+        <summary class="add-list-summary">List with amounts</summary>
+        <div class="add-list-body">
+          <div class="add-list-hint-row">
+            <span class="muted small">Type or use your keyboard mic</span>
+            <details class="add-list-examples">
+              <summary class="muted small">Examples</summary>
+              <ul class="muted small add-list-examples-ul">
+                <li>200 g chicken 100 g rice and 2 eggs</li>
+                <li>200g chicken, 100g rice, 2 eggs</li>
+                <li>two hundred grams chicken one hundred grams rice</li>
+                <li>chicken 200 g rice 100 g</li>
+                <li>One food per line also works</li>
+              </ul>
+            </details>
+          </div>
+          <textarea id="voice-text" class="add-list-input" rows="1" placeholder="200 g chicken 100 g rice and 2 eggs" autocomplete="off" aria-label="List foods with amounts"></textarea>
+          <button id="btn-voice-find" class="btn full" type="button">Find foods</button>
+          <div id="voice-warnings" class="muted small" hidden></div>
+        </div>
+      </details>
       <div id="pick-list" class="sheet-list"></div>
       <div class="pick-footer-bar">
         <div id="pick-multi-bar" class="pick-multi-bar">

@@ -1648,6 +1648,17 @@ const App = (() => {
     if (details && details.open) details.open = false;
   }
 
+  function collapseAddListPanel() {
+    const panel = UI.$("#add-list-details");
+    if (panel) panel.open = false;
+    closeAddListExamples();
+    const ta = UI.$("#voice-text");
+    if (ta) {
+      ta.classList.remove("is-expanded");
+      ta.rows = 1;
+    }
+  }
+
   function syncVoiceListExpand() {
     const ta = UI.$("#voice-text");
     if (!ta) return;
@@ -3383,6 +3394,7 @@ const App = (() => {
       if (warn) { warn.hidden = true; warn.textContent = ""; }
     }
     setPickMoreOpen(false);
+    collapseAddListPanel();
     syncVoiceListExpand();
     state.yesterdayKey = yesterdayKey();
     refreshAddPicker();
@@ -6217,6 +6229,10 @@ const App = (() => {
 
     UI.$("#foods-search").addEventListener("input", refreshFoods);
     UI.$("#pick-search").addEventListener("input", () => refreshAddPicker());
+    UI.$("#pick-search").addEventListener("focus", () => {
+      collapseAddListPanel();
+      setPickMoreOpen(false);
+    });
     if (UI.$("#btn-pick-multi-continue")) {
       UI.$("#btn-pick-multi-continue").addEventListener("click", continueMultiPick);
     }
@@ -6246,6 +6262,8 @@ const App = (() => {
     });
     if (UI.$("#voice-text")) {
       UI.$("#voice-text").addEventListener("focus", () => {
+        const panel = UI.$("#add-list-details");
+        if (panel) panel.open = true;
         UI.$("#voice-text").classList.add("is-expanded");
         UI.$("#voice-text").rows = 5;
       });

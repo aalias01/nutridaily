@@ -337,15 +337,19 @@ async function run(label, days) {
     await new Promise((r) => setTimeout(r, 220));
 
     // List multi-entry on Add: paste path → confirm → multi-qty (log intent).
+    $("#fab-add").click();
+    await new Promise((r) => setTimeout(r, 20));
+    ok(!!$("#add-title") && !!$(".add-close"),
+      "Add food is full-screen with close control");
     ok(!!$("#btn-voice-find") && !!$("#voice-text") && !!$("#sheet-voice-confirm"),
       "inline list entry and confirm sheets are mounted");
     ok(!$("#sheet-voice"), "legacy sheet-voice is removed");
-    $("#fab-add").click();
-    await new Promise((r) => setTimeout(r, 20));
     {
       const App = window.eval("App");
       App.state.qtyIntent = "log";
       ok(!$("#sheet-add").hidden, "FAB opens Add with list box");
+      ok(!$("#add-list-details").open, "List with amounts starts collapsed");
+      $("#add-list-details").open = true;
       $("#voice-text").value = "100 g orange and 2 chapati";
       $("#btn-voice-find").click();
       await new Promise((r) => setTimeout(r, 40));
@@ -382,6 +386,7 @@ async function run(label, days) {
       $("#fab-add").click();
       await new Promise((r) => setTimeout(r, 20));
       App.state.qtyIntent = "plan";
+      $("#add-list-details").open = true;
       $("#voice-text").value = "50 g apple";
       $("#btn-voice-find").click();
       await new Promise((r) => setTimeout(r, 40));

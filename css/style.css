@@ -225,6 +225,10 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 1
 .view.active { display: flex; }
 .view-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
 .view-head h2, h2, h3 { font-size: 16px; margin: 0; }
+.view-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.view-head-actions .btn {
+  padding: 8px 12px; min-height: 40px; font-size: 13px; white-space: nowrap;
+}
 /* Sticky range + category chrome on Insights; keep above in-table sticky theads (P6-T2). */
 #view-insights .view-head {
   position: sticky; top: 0; z-index: 5;
@@ -424,26 +428,70 @@ body.sheet-open .insight-dock { display: none; }
 .sheet.open .sheet-card { transform: translateY(0); }
 .sheet-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 4px auto 12px; }
 .sheet-list { max-height: 50dvh; overflow-y: auto; margin-bottom: 10px; }
-/* Fixed sheet height so typing/search result count doesn't resize #sheet-add. */
+/* Fixed full-screen Add (Cronometer-style): search + results fill; list is optional. */
 #sheet-add .sheet-card {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
   display: flex;
   flex-direction: column;
-  height: 85dvh;
-  max-height: 85dvh;
+  height: 100dvh;
+  max-height: 100dvh;
   overflow: hidden;
+  border-radius: 0;
+  padding: max(8px, env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
+  box-shadow: none;
 }
+#sheet-add .sheet-grab { display: none; }
 #sheet-add .sheet-card > *:not(#pick-list) { flex: 0 0 auto; }
 #sheet-add #pick-list {
   flex: 1 1 auto;
   min-height: 0;
   max-height: none;
+  margin: 6px 0 0;
   overscroll-behavior: contain;
+}
+#sheet-add #pick-search {
+  margin: 0 0 8px;
+  flex: 0 0 auto;
+}
+#sheet-add .add-list-block {
+  margin: 0 0 6px;
+}
+.add-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  min-height: 44px;
+}
+.add-topbar h3 {
+  flex: 1 1 auto;
+  margin: 0;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 700;
+}
+.add-close {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding: 8px 10px;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 600;
+}
+.add-topbar-spacer {
+  flex: 0 0 44px;
+  width: 44px;
 }
 .pick-footer-bar {
   display: flex;
   align-items: stretch;
   gap: 8px;
   margin: 4px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
 }
 .pick-multi-bar {
   margin: 0;
@@ -500,10 +548,25 @@ body.sheet-open .insight-dock { display: none; }
   outline: none;
 }
 .add-list-block {
-  margin: 0 0 8px;
-  padding-bottom: 8px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.add-list-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 650;
+  padding: 10px 12px;
+  color: var(--ink);
+}
+.add-list-summary::-webkit-details-marker { display: none; }
+.add-list-block[open] .add-list-summary {
   border-bottom: 1px solid var(--line);
 }
+.add-list-body { padding: 8px 12px 12px; }
 .add-list-title {
   margin: 0 0 2px;
   font-size: 15px;
@@ -557,23 +620,19 @@ body.sheet-open .insight-dock { display: none; }
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--card);
   color: var(--ink);
   overflow: hidden;
   transition: max-height 0.15s ease;
 }
 .add-list-input.is-expanded,
 .add-list-block #voice-text.is-expanded {
-  min-height: 120px;
-  max-height: 160px;
+  min-height: 96px;
+  max-height: 120px;
   overflow-y: auto;
   resize: vertical;
 }
 .add-list-block #btn-voice-find { margin-top: 6px; }
-.add-or-search {
-  margin: 2px 0 6px;
-  font-weight: 600;
-}
 #voice-warnings:not([hidden]) { margin: 6px 0 0; color: var(--warn); }
 .voice-confirm-list {
   display: flex; flex-direction: column; gap: 12px;
