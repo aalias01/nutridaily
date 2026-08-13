@@ -642,7 +642,7 @@ body.sheet-open .insight-dock { display: none; }
 }
 .voice-hits { display: flex; flex-direction: column; gap: 4px; }
 .voice-hit {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px;
   text-align: left; width: 100%;
   border: 1px solid transparent; border-radius: 10px;
   background: var(--bg); color: var(--ink);
@@ -652,17 +652,23 @@ body.sheet-open .insight-dock { display: none; }
   border-color: var(--control-accent);
   background: color-mix(in srgb, var(--control-accent) 12%, var(--card));
 }
-.voice-hit .r-name { min-width: 0; }
-.voice-hit-trail {
-  display: inline-flex; align-items: center; gap: 6px;
-  flex: 0 0 auto; white-space: nowrap;
-}
-.voice-hit .mini { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .voice-hit .mine-star {
+  flex: 0 0 14px;
+  width: 14px;
+  text-align: center;
   color: var(--accent-ink);
   font-size: 13px;
   line-height: 1;
   font-weight: 700;
+}
+.voice-hit .mine-star-spacer { visibility: hidden; }
+.voice-hit .r-name { flex: 1 1 auto; min-width: 0; }
+.voice-hit .mini {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 .voice-seg-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .pick-section { margin-bottom: 12px; }

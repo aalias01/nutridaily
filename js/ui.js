@@ -4314,13 +4314,11 @@ const UI = (() => {
         const mine = !h.pendingCatalog;
         const star = mine
           ? `<span class="mine-star" title="My food" aria-label="My food">★</span>`
-          : "";
+          : `<span class="mine-star mine-star-spacer" aria-hidden="true"></span>`;
         return `<button type="button" class="voice-hit${on ? " on" : ""}${mine ? " is-mine" : ""}" data-action="voice-pick" data-seg="${esc(seg.id)}" data-key="${esc(h.key)}" ${dropped ? "disabled" : ""}>
+          ${star}
           <span class="r-name">${esc(h.name)}</span>
-          <span class="voice-hit-trail">
-            <span class="mini">${h.kcal != null ? `${fmt(h.kcal)} /100g` : ""}</span>
-            ${star}
-          </span>
+          <span class="mini">${h.kcal != null ? `${fmt(h.kcal)} /100g` : ""}</span>
         </button>`;
       }).join("");
 

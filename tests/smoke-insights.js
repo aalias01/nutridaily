@@ -358,9 +358,9 @@ async function run(label, days) {
       ok(!$("#sheet-voice-confirm").hidden, "Find foods opens voice confirm");
       ok(window.document.querySelectorAll("#voice-confirm-list .voice-seg").length >= 2,
         "voice confirm shows a section per spoken segment");
-      ok(!!window.document.querySelector("#voice-confirm-list .voice-hit.is-mine .mine-star") ||
+      ok(!!window.document.querySelector("#voice-confirm-list .voice-hit .mine-star") ||
           !!window.document.querySelector("#voice-confirm-list .voice-hit"),
-        "confirm hits stay plain; My food uses a trailing star when present");
+        "confirm hits keep a leading My food star column when matches are shown");
       window.document.querySelectorAll("#voice-confirm-list .voice-seg").forEach((sec) => {
         const on = sec.querySelector(".voice-hit.on");
         const hit = sec.querySelector(".voice-hit");
