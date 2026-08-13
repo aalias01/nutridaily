@@ -358,6 +358,8 @@ async function run(label, days) {
       ok(!$("#sheet-voice-confirm").hidden, "Find foods opens voice confirm");
       ok(window.document.querySelectorAll("#voice-confirm-list .voice-seg").length >= 2,
         "voice confirm shows a section per spoken segment");
+      ok(!!window.document.querySelector("#voice-confirm-list .voice-hit.is-mine, #voice-confirm-list .voice-hit.is-catalog"),
+        "confirm hits mark My food vs Catalog for easier picking");
       window.document.querySelectorAll("#voice-confirm-list .voice-seg").forEach((sec) => {
         const on = sec.querySelector(".voice-hit.on");
         const hit = sec.querySelector(".voice-hit");

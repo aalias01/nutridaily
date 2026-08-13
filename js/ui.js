@@ -4311,8 +4311,13 @@ const UI = (() => {
 
       const hits = (seg.hits || []).map((h) => {
         const on = !dropped && seg.selectedKey === h.key;
-        return `<button type="button" class="voice-hit${on ? " on" : ""}" data-action="voice-pick" data-seg="${esc(seg.id)}" data-key="${esc(h.key)}" ${dropped ? "disabled" : ""}>
-          <span class="r-name">${esc(h.name)}${h.pendingCatalog ? ` <span class="mini">catalog</span>` : ""}</span>
+        const mine = !h.pendingCatalog;
+        const kindClass = mine ? " is-mine" : " is-catalog";
+        const badge = mine
+          ? ` <span class="hit-kind tag-mine">My food</span>`
+          : ` <span class="hit-kind tag-catalog">Catalog</span>`;
+        return `<button type="button" class="voice-hit${kindClass}${on ? " on" : ""}" data-action="voice-pick" data-seg="${esc(seg.id)}" data-key="${esc(h.key)}" ${dropped ? "disabled" : ""}>
+          <span class="r-name">${esc(h.name)}${badge}</span>
           <span class="mini">${h.kcal != null ? `${fmt(h.kcal)} /100g` : ""}</span>
         </button>`;
       }).join("");
