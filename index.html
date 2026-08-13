@@ -271,6 +271,42 @@
           </div>
         </details>
 
+        <details class="settings-sec" id="settings-sec-backup" data-settings-sec="backup">
+          <summary class="settings-sec-summary">
+            <span class="settings-sec-title">Backup</span>
+            <span class="settings-sec-status muted small" id="settings-sum-backup">Local only</span>
+          </summary>
+          <div class="settings-sec-body">
+            <p class="muted small drive-blurb">Meals save on this device only until you sign in or export. Sign-in is optional, but without Drive a cleared browser or a new phone cannot restore your log from the cloud. Nothing is sent anywhere except <b>your</b> Google Drive.</p>
+            <p id="drive-sample-note" class="banner warn" hidden>Sample mode: Drive sync is paused. Switch to your own profile to connect.</p>
+            <div class="row">
+              <button id="btn-drive-connect" class="btn ghost" type="button">Sign in with Google</button>
+              <button id="btn-drive-sync" class="btn ghost" type="button" style="display:none">Sync now</button>
+              <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
+            </div>
+            <div id="drive-status" class="muted small"></div>
+            <p id="drive-reconnect-hint" class="muted small" hidden>After reopening the app (especially on iPhone), Drive may pause until you tap <b>Reconnect</b> on the banner or the sync pill. Logging still works on this device meanwhile.</p>
+            <div class="local-backup-block" id="local-backup-block">
+              <p class="muted small local-backup-blurb"><b>Local phone backup</b> downloads a JSON file you can keep in Files or Downloads. Useful when you are not signed in to Drive. While Drive is connected, reminders stay off; you can still download a copy anytime. No extra storage permission beyond the save/share sheet.</p>
+              <p id="local-backup-sample-note" class="muted small" hidden>Sample mode uses demo data only. Local backup reminders apply to your own tracking.</p>
+              <div id="local-backup-status" class="muted small"></div>
+              <div class="row">
+                <button id="btn-local-backup-now" class="btn ghost" type="button">Backup to phone now</button>
+              </div>
+              <div class="row local-backup-pref-row">
+                <button id="btn-local-backup-enable" class="btn ghost" type="button" hidden>Enable local backup reminders</button>
+                <button id="btn-local-backup-disable" class="linkbtn" type="button" hidden>Turn off reminders</button>
+              </div>
+            </div>
+            <details class="dev-details" id="client-id-details">
+              <summary class="muted small">Advanced: override Client ID</summary>
+              <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
+              <div class="muted small" id="client-id-hint">On the live deploy, a Client ID is injected at build time. Paste below only to override (forks / local). Leave empty to use the deploy default.</div>
+              <button id="btn-clear-gclient" class="linkbtn" type="button">Clear override</button>
+            </details>
+          </div>
+        </details>
+
         <details class="settings-sec" id="settings-sec-appearance" data-settings-sec="appearance">
           <summary class="settings-sec-summary">
             <span class="settings-sec-title">Appearance &amp; units</span>
@@ -360,30 +396,6 @@
               <textarea id="set-profile-notes" rows="2" maxlength="500" placeholder="e.g. vegetarian, knee injury, prefer higher carbs"></textarea>
               <p class="muted small" id="profile-age-hint"></p>
             </div>
-          </div>
-        </details>
-
-        <details class="settings-sec" id="settings-sec-backup" data-settings-sec="backup">
-          <summary class="settings-sec-summary">
-            <span class="settings-sec-title">Backup</span>
-            <span class="settings-sec-status muted small" id="settings-sum-backup">Local only</span>
-          </summary>
-          <div class="settings-sec-body">
-            <p class="muted small drive-blurb">Meals save on this device automatically. Sign-in is optional: it keeps a copy in <b>your</b> Google Drive so another phone or a cleared browser cache can restore it. Nothing is sent anywhere except your own Drive.</p>
-            <p id="drive-sample-note" class="banner warn" hidden>Sample mode: Drive sync is paused. Switch to your own profile to connect.</p>
-            <div class="row">
-              <button id="btn-drive-connect" class="btn ghost" type="button">Sign in with Google</button>
-              <button id="btn-drive-sync" class="btn ghost" type="button" style="display:none">Sync now</button>
-              <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
-            </div>
-            <div id="drive-status" class="muted small"></div>
-            <p id="drive-reconnect-hint" class="muted small" hidden>After reopening the app (especially on iPhone), Drive may pause until you tap <b>Reconnect</b> on the banner or the sync pill. Logging still works on this device meanwhile.</p>
-            <details class="dev-details" id="client-id-details">
-              <summary class="muted small">Advanced: override Client ID</summary>
-              <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
-              <div class="muted small" id="client-id-hint">On the live deploy, a Client ID is injected at build time. Paste below only to override (forks / local). Leave empty to use the deploy default.</div>
-              <button id="btn-clear-gclient" class="linkbtn" type="button">Clear override</button>
-            </details>
           </div>
         </details>
 

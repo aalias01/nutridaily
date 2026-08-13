@@ -1943,6 +1943,10 @@ async function runEmpty() {
   ok(!!$("#profile-mode-card") && !!$("#btn-profile-toggle"), "Settings Profile card has a single mode toggle");
   ok(!!$("#settings-sec-profile") && !!$("#settings-sec-appearance") && !!$("#settings-sec-backup"),
     "Settings uses collapsible section details");
+  ok($("#settings-sec-profile").nextElementSibling === $("#settings-sec-backup"),
+    "Backup section appears immediately after Profile");
+  ok(!!$("#local-backup-block") && !!$("#btn-local-backup-now") && !!$("#btn-local-backup-enable"),
+    "Settings → Backup includes local phone backup controls");
   ok($("#settings-sec-profile").open, "Sample first-run keeps Profile section open by default");
   ok($("#btn-profile-toggle").textContent.trim() === "Start my tracking",
     "empty install offers Start my tracking on the toggle");
@@ -1989,6 +1993,19 @@ async function runEmpty() {
   ok(!$("#sync-pill").hidden, "sync pill returns on Real");
   ok(/local only|synced|reconnect|sync/i.test($("#sync-pill").textContent),
     "sync pill shows Drive / local status on Real, not Sample");
+  ok(/not synced/i.test($("#settings-sum-backup").textContent),
+    "Backup summary stresses local-only when Drive is off");
+  $("#btn-local-backup-enable").click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(window.localStorage.getItem("nd_local_backup_pref") === "on" && $("#btn-local-backup-disable").hidden === false,
+    "Enable local backup reminders turns reminders on in Settings");
+  $("#btn-local-backup-disable").click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(window.localStorage.getItem("nd_local_backup_pref") === "off" &&
+      /Settings → Backup|Enable anytime/i.test($("#toast").textContent),
+    "Turning reminders off tells the user they can re-enable in Settings → Backup");
+  $("#btn-local-backup-enable").click();
+  await new Promise((r) => setTimeout(r, 20));
   insightsTab.click();
   await new Promise((r) => setTimeout(r, 60));
   const emptyHeadline = $("#insight-headline").textContent;
@@ -4720,6 +4737,8 @@ async function runImportSecurity() {
     window.HTMLAnchorElement.prototype.click = originalAnchorClick;
   }
   ok(!!exportedBlob, "real export workflow produces a JSON Blob");
+  ok(+window.localStorage.getItem("nd_local_backup_last_at") > 0,
+    "export stamps last local phone backup time");
   const exportedText = await new Promise((resolve, reject) => {
     const reader = new window.FileReader();
     reader.onload = () => resolve(String(reader.result));
@@ -4731,6 +4750,59 @@ async function runImportSecurity() {
     .filter((event) => event.causal)
     .map((event) => ({ id: event.id, causal: event.causal }));
   ok(exportedCausal.length > 0, "real export includes causal metadata for new ledger mutations");
+
+  // Quiet Drive sign-in; clear last backup so the periodic phone-backup banner can show.
+  window.localStorage.setItem("nd_first_seen_at", String(Date.now() - 3 * 86400000));
+  window.localStorage.setItem("nd_signin_banner_seen", String(Date.now()));
+  window.localStorage.setItem("nd_local_backup_pref", "on");
+  window.localStorage.removeItem("nd_local_backup_last_at");
+  window.localStorage.removeItem("nd_local_backup_snooze_day");
+  if (App.state.settings && App.state.settings.targetReview) {
+    delete App.state.settings.targetReview;
+  }
+  App.refreshInfoBanner();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(!$("#info-banner").hidden && $("#info-banner").dataset.kind === "localbackup" &&
+      /Backup now/i.test($("#info-banner").textContent),
+    "periodic local phone backup banner surfaces when reminders are on and due");
+  $("#banner-local-later").click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#info-banner").hidden || $("#info-banner").dataset.kind !== "localbackup",
+    "Later snoozes the local backup banner for today");
+  window.localStorage.removeItem("nd_local_backup_snooze_day");
+  window.localStorage.removeItem("nd_local_backup_pref");
+  window.localStorage.removeItem("nd_local_backup_last_at");
+  App.refreshInfoBanner();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#info-banner").dataset.kind === "localbackup" && !!$("#banner-local-skip"),
+    "undecided local backup offer includes Not needed");
+  $("#banner-local-skip").click();
+  await new Promise((r) => setTimeout(r, 20));
+  ok(window.localStorage.getItem("nd_local_backup_pref") === "off" &&
+      /Settings → Backup|Enable anytime/i.test($("#toast").textContent),
+    "Not needed opts out and points back to Settings → Backup");
+  ok(!$("#btn-local-backup-enable").hidden, "opt-out reveals Enable local backup reminders");
+
+  window.localStorage.setItem("nd_local_backup_pref", "on");
+  window.localStorage.removeItem("nd_local_backup_last_at");
+  window.localStorage.removeItem("nd_local_backup_snooze_day");
+  const originalSyncState = Sync.state;
+  Sync.state = () => ({ enabled: true, status: "ok", email: "user@example.com" });
+  App.refreshInfoBanner();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#info-banner").hidden || $("#info-banner").dataset.kind !== "localbackup",
+    "local phone backup banner does not show while Drive is connected");
+  Sync.state = originalSyncState;
+  App.refreshInfoBanner();
+
+  // Sign-in banner re-arms after the quiet window.
+  window.localStorage.setItem("nd_signin_banner_seen", String(Date.now() - 15 * 86400000));
+  App.refreshInfoBanner();
+  await new Promise((r) => setTimeout(r, 20));
+  ok($("#info-banner").dataset.kind === "signin" && /recommended/i.test($("#info-banner").textContent),
+    "optional Drive sign-in banner re-arms after 14 days");
+  window.localStorage.setItem("nd_signin_banner_seen", String(Date.now()));
+
   await importBackup(window, exportedPayload);
   roundTripFoods = JSON.parse(window.localStorage.getItem("nd_personal_v1"));
   roundTripSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));

@@ -4,8 +4,13 @@ const App = (() => {
   let PERSONAL_KEY = "nd_personal_v1";
   const ONB_KEY = "nd_onboarded_v1";
   const FIRST_SEEN_KEY = "nd_first_seen_at";
-  const SIGNIN_SEEN_KEY = "nd_signin_banner_seen";
+  const SIGNIN_SEEN_KEY = "nd_signin_banner_seen"; // dismiss timestamp (ms); legacy "1" migrates on read
+  const SIGNIN_REARM_MS = 14 * 86400000; // re-offer optional Drive sign-in every 14 days
   const RECONNECT_HIDE_DAY_KEY = "nd_reconnect_hide_day";
+  const LOCAL_BACKUP_PREF_KEY = "nd_local_backup_pref"; // "on" | "off" | unset
+  const LOCAL_BACKUP_LAST_KEY = "nd_local_backup_last_at";
+  const LOCAL_BACKUP_SNOOZE_DAY_KEY = "nd_local_backup_snooze_day";
+  const LOCAL_BACKUP_DUE_MS = 7 * 86400000; // quiet phone-JSON reminder cadence
   const DEFAULT_GOALS = Phases.DEFAULT_GOALS;
   const PRODUCER_LIMITS = Object.freeze({
     text: Object.freeze({ name: 160, displayQty: 160, alias: 160, aliases: 50, ingredient: 500, prep: 5000, notes: 5000, entryNote: 500, raw: 12000, unit: 32, countLabel: 32 }),
@@ -571,12 +576,13 @@ const App = (() => {
     setSettingsSum("#settings-sum-body", bodyBits.length ? bodyBits.join(" · ") : "Not set");
 
     const st = Sync.state();
-    let backup = "Local only";
+    let backup = "Local only · not synced";
     if (sample) backup = "Sample · sync paused";
     else if (st.enabled && st.status === "auth") backup = "Reconnect needed";
     else if (st.enabled && st.email) backup = st.email.split("@")[0];
     else if (st.enabled) backup = "Connected";
     setSettingsSum("#settings-sum-backup", backup);
+    refreshLocalBackupSettingsUi();
 
     setSettingsSum("#settings-sum-data", "Export · Import");
     const feedbackOn = !!(window.Feedback && Feedback.enabled && Feedback.enabled());
@@ -793,7 +799,22 @@ const App = (() => {
     if (share) share.addEventListener("click", () => { shareApp(); });
   }
 
-  // ---------- Info banners (reconnect once/day hide; optional sign-in nudge) ----------
+  // ---------- Info banners (reconnect once/day hide; optional sign-in + local backup) ----------
+  function migrateSigninSeenKey() {
+    const raw = localStorage.getItem(SIGNIN_SEEN_KEY);
+    if (raw === "1") {
+      // Legacy forever-dismiss → start a fresh 14-day quiet window
+      localStorage.setItem(SIGNIN_SEEN_KEY, String(Date.now()));
+      return Date.now();
+    }
+    const n = +raw;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  function markSigninBannerSeen() {
+    localStorage.setItem(SIGNIN_SEEN_KEY, String(Date.now()));
+  }
+
   function shouldShowReconnectBanner() {
     const st = Sync.state();
     if (!st.enabled || st.status !== "auth") return false;
@@ -803,12 +824,92 @@ const App = (() => {
 
   function shouldShowSigninBanner() {
     if (Sync.state().enabled) return false;
-    if (localStorage.getItem(SIGNIN_SEEN_KEY)) return false;
+    const dismissedAt = migrateSigninSeenKey();
+    if (dismissedAt && (Date.now() - dismissedAt) < SIGNIN_REARM_MS) return false;
     if (!activeFoods().length && !Ledger.allEvents().length) return false;
     const first = +(localStorage.getItem(FIRST_SEEN_KEY) || 0);
     if (!first) return false;
     // Daycells-style: wait a day so local-first use isn’t interrupted immediately
     return (Date.now() - first) >= 86400000;
+  }
+
+  function localBackupPref() {
+    const v = localStorage.getItem(LOCAL_BACKUP_PREF_KEY);
+    return v === "on" || v === "off" ? v : null;
+  }
+
+  function localBackupLastAt() {
+    const n = +localStorage.getItem(LOCAL_BACKUP_LAST_KEY);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  function formatBackupWhen(ms) {
+    if (!ms) return "Never";
+    try {
+      return new Date(ms).toLocaleString(undefined, {
+        month: "short", day: "numeric", year: "numeric",
+        hour: "numeric", minute: "2-digit",
+      });
+    } catch (error) {
+      return "Never";
+    }
+  }
+
+  function shouldShowLocalBackupBanner() {
+    // Drive is the durable cloud copy; don't nag for phone JSON while signed in.
+    if (Sync.state().enabled) return false;
+    if (SampleProfile && SampleProfile.isSample && SampleProfile.isSample()) return false;
+    if (localBackupPref() === "off") return false;
+    if (localStorage.getItem(LOCAL_BACKUP_SNOOZE_DAY_KEY) === Ledger.todayKey()) return false;
+    if (!activeFoods().length && !Ledger.allEvents().length) return false;
+    const first = +(localStorage.getItem(FIRST_SEEN_KEY) || 0);
+    if (!first || (Date.now() - first) < 86400000) return false;
+    const last = localBackupLastAt();
+    if (!last) return true;
+    return (Date.now() - last) >= LOCAL_BACKUP_DUE_MS;
+  }
+
+  function setLocalBackupPref(pref, opts) {
+    const options = opts || {};
+    if (pref === "on" || pref === "off") localStorage.setItem(LOCAL_BACKUP_PREF_KEY, pref);
+    else localStorage.removeItem(LOCAL_BACKUP_PREF_KEY);
+    if (pref === "off") localStorage.removeItem(LOCAL_BACKUP_SNOOZE_DAY_KEY);
+    refreshLocalBackupSettingsUi();
+    refreshSettingsSummaries();
+    refreshInfoBanner();
+    if (options.toast) UI.toast(options.toast);
+  }
+
+  function refreshLocalBackupSettingsUi() {
+    const sample = !!(SampleProfile && SampleProfile.isSample && SampleProfile.isSample());
+    const driveOn = !!Sync.state().enabled;
+    const status = UI.$("#local-backup-status");
+    const enableBtn = UI.$("#btn-local-backup-enable");
+    const disableBtn = UI.$("#btn-local-backup-disable");
+    const sampleNote = UI.$("#local-backup-sample-note");
+    const nowBtn = UI.$("#btn-local-backup-now");
+    if (sampleNote) sampleNote.hidden = !sample;
+    if (nowBtn) nowBtn.disabled = !!sample;
+    const pref = localBackupPref();
+    const last = localBackupLastAt();
+    const rem = driveOn ? "Reminders paused while Drive is connected"
+      : pref === "off" ? "Reminders off"
+      : pref === "on" ? "Reminders on"
+      : "Reminders: not set yet";
+    if (status) {
+      status.textContent = sample
+        ? "Switch to your tracking to use local phone backups."
+        : `${rem}. Last phone backup: ${formatBackupWhen(last)}.`;
+    }
+    // Preference toggles matter for local-only use; hide while Drive is on.
+    if (enableBtn) enableBtn.hidden = sample || driveOn || pref === "on";
+    if (disableBtn) disableBtn.hidden = sample || driveOn || pref !== "on";
+  }
+
+  function openBackupSettings() {
+    openSettings();
+    const sec = UI.$("#settings-sec-backup");
+    if (sec) sec.open = true;
   }
 
   function refreshInfoBanner() {
@@ -817,7 +918,9 @@ const App = (() => {
     const targetReview = state.settings && state.settings.targetReview &&
       state.settings.targetReview.required ? state.settings.targetReview : null;
     const kind = targetReview ? "targets" :
-      (shouldShowReconnectBanner() ? "reconnect" : (shouldShowSigninBanner() ? "signin" : null));
+      (shouldShowReconnectBanner() ? "reconnect" :
+        (shouldShowSigninBanner() ? "signin" :
+          (shouldShowLocalBackupBanner() ? "localbackup" : null)));
     if (!kind) {
       el.hidden = true;
       el.innerHTML = "";
@@ -825,33 +928,64 @@ const App = (() => {
       return;
     }
     const title = kind === "targets" ? "Review your nutrition targets" :
-      (kind === "reconnect" ? "Drive sync paused" : "Keep your log safe");
+      (kind === "reconnect" ? "Drive sync paused" :
+        (kind === "signin" ? "Keep your log safe" : "Save a backup on this phone"));
     const body = kind === "targets"
       ? (targetReview.fallback === "generic-default"
         ? "An imported target did not meet the persistent safety checks. It is kept only for audit, and NutriDaily is temporarily using the generic default. Open Settings and save reviewed targets."
         : "An imported current or future target did not meet the persistent safety checks. It is kept only for audit while NutriDaily uses the nearest earlier valid target. Open Settings to review and save a replacement.")
       : (kind === "reconnect"
         ? "Meals still save on this device. Tap Reconnect to resume Google Drive."
-        : "Optional: Sign in with Google in Settings to keep your nutrition log in your Drive if this browser is cleared.");
+        : (kind === "signin"
+          ? "Optional but recommended: Sign in with Google in Settings so your log lives in your Drive if this browser is cleared or you switch phones."
+          : (localBackupLastAt()
+            ? "Optional JSON copy for Files or Downloads. Complements Drive. You can turn reminders off anytime in Settings → Backup."
+            : "Optional JSON copy for Files or Downloads. Complements Drive. Choose Not needed if you prefer Drive-only or manual export.")));
+    const primary = kind === "reconnect" ? '<button type="button" class="btn" id="banner-reconnect">Reconnect</button>'
+      : (kind === "localbackup" ? '<button type="button" class="btn" id="banner-local-backup">Backup now</button>'
+        : '<button type="button" class="btn" id="banner-settings">Settings</button>');
+    const secondary = kind === "targets" ? ""
+      : (kind === "localbackup"
+        ? (localBackupPref() === "on"
+          ? '<button type="button" class="btn ghost" id="banner-local-later">Later</button>'
+          : '<button type="button" class="btn ghost" id="banner-local-skip">Not needed</button>')
+        : '<button type="button" class="btn ghost" id="banner-hide">Hide</button>');
     el.hidden = false;
     el.dataset.kind = kind;
     el.innerHTML = `<div class="info-banner-text"><strong>${title}</strong><span>${body}</span></div>
       <div class="info-banner-actions">
-        ${kind === "reconnect" ? '<button type="button" class="btn" id="banner-reconnect">Reconnect</button>' : '<button type="button" class="btn" id="banner-settings">Settings</button>'}
-        ${kind === "targets" ? "" : '<button type="button" class="btn ghost" id="banner-hide">Hide</button>'}
+        ${primary}
+        ${secondary}
       </div>`;
     document.body.classList.add("has-info-banner");
     const hide = UI.$("#banner-hide");
     if (hide) hide.addEventListener("click", () => {
       if (kind === "reconnect") localStorage.setItem(RECONNECT_HIDE_DAY_KEY, Ledger.todayKey());
-      else localStorage.setItem(SIGNIN_SEEN_KEY, "1");
+      else markSigninBannerSeen();
       refreshInfoBanner();
       refreshSettingsTabNudge();
     });
     const recon = UI.$("#banner-reconnect");
     if (recon) recon.addEventListener("click", () => connectDrive());
     const go = UI.$("#banner-settings");
-    if (go) go.addEventListener("click", () => switchView("settings"));
+    if (go) go.addEventListener("click", () => {
+      openBackupSettings();
+    });
+    const backupNow = UI.$("#banner-local-backup");
+    if (backupNow) backupNow.addEventListener("click", () => {
+      exportData({ preferRemindersOn: true, toast: "Phone backup downloaded" });
+    });
+    const later = UI.$("#banner-local-later");
+    if (later) later.addEventListener("click", () => {
+      localStorage.setItem(LOCAL_BACKUP_SNOOZE_DAY_KEY, Ledger.todayKey());
+      refreshInfoBanner();
+    });
+    const skip = UI.$("#banner-local-skip");
+    if (skip) skip.addEventListener("click", () => {
+      setLocalBackupPref("off", {
+        toast: "Local backups off. Enable anytime in Settings → Backup.",
+      });
+    });
   }
 
   const safeResetEpoch = (value) => {
@@ -4983,7 +5117,7 @@ const App = (() => {
     const tab = document.querySelector('.bottom-tabs .tab[data-view="settings"]');
     if (!tab) return;
     const st = Sync.state();
-    const nudge = !st.enabled && !localStorage.getItem(SIGNIN_SEEN_KEY);
+    const nudge = (!st.enabled && shouldShowSigninBanner()) || shouldShowLocalBackupBanner();
     tab.classList.toggle("tab-nudge", nudge);
   }
 
@@ -5028,7 +5162,7 @@ const App = (() => {
       const email = await Sync.connect();
       if (email == null && !GDrive.cachedToken()) return; // BFF redirect in progress
       localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
-      localStorage.setItem(SIGNIN_SEEN_KEY, "1");
+      markSigninBannerSeen();
       refreshDriveStatus();
       refreshInfoBanner();
       UI.toast("Drive connected");
@@ -5053,7 +5187,8 @@ const App = (() => {
     refreshInfoBanner();
   }
 
-  function exportData() {
+  function exportData(opts) {
+    const options = opts && typeof opts === "object" ? opts : {};
     const blob = new Blob([JSON.stringify({
       version: 3,
       exportedAt: new Date().toISOString(),
@@ -5071,6 +5206,16 @@ const App = (() => {
       URL.revokeObjectURL(a.href);
       a.remove();
     }, 1500);
+    localStorage.setItem(LOCAL_BACKUP_LAST_KEY, String(Date.now()));
+    localStorage.removeItem(LOCAL_BACKUP_SNOOZE_DAY_KEY);
+    if (options.preferRemindersOn && localBackupPref() !== "off") {
+      localStorage.setItem(LOCAL_BACKUP_PREF_KEY, "on");
+    }
+    refreshLocalBackupSettingsUi();
+    refreshSettingsSummaries();
+    refreshInfoBanner();
+    refreshSettingsTabNudge();
+    if (options.toast) UI.toast(options.toast);
   }
 
   const IMPORT_WIDE_OBJECT_PATHS = new Set([
@@ -7986,7 +8131,32 @@ const App = (() => {
       }
     });
 
-    UI.$("#btn-export").addEventListener("click", exportData);
+    UI.$("#btn-export").addEventListener("click", () => exportData());
+    const localBackupNow = UI.$("#btn-local-backup-now");
+    if (localBackupNow) {
+      localBackupNow.addEventListener("click", () => {
+        if (SampleProfile && SampleProfile.isSample()) {
+          UI.toast("Switch to your profile first");
+          openProfileSettings();
+          return;
+        }
+        exportData({ preferRemindersOn: true, toast: "Phone backup downloaded" });
+      });
+    }
+    const localBackupEnable = UI.$("#btn-local-backup-enable");
+    if (localBackupEnable) {
+      localBackupEnable.addEventListener("click", () => {
+        setLocalBackupPref("on", { toast: "Local backup reminders on" });
+      });
+    }
+    const localBackupDisable = UI.$("#btn-local-backup-disable");
+    if (localBackupDisable) {
+      localBackupDisable.addEventListener("click", () => {
+        setLocalBackupPref("off", {
+          toast: "Local backups off. Enable anytime in Settings → Backup.",
+        });
+      });
+    }
     UI.$("#import-file").addEventListener("change", (e) => {
       const f = e.target.files && e.target.files[0];
       if (f) importData(f);
@@ -8051,6 +8221,9 @@ const App = (() => {
             { key: SIGNIN_SEEN_KEY, value: null },
             { key: RECONNECT_HIDE_DAY_KEY, value: null },
             { key: FIRST_SEEN_KEY, value: String(resetAt) },
+            { key: LOCAL_BACKUP_PREF_KEY, value: null },
+            { key: LOCAL_BACKUP_LAST_KEY, value: null },
+            { key: LOCAL_BACKUP_SNOOZE_DAY_KEY, value: null },
           ],
         });
       } catch (error) {
@@ -8249,7 +8422,7 @@ const App = (() => {
           try {
             await Sync.finishConnect();
             localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
-            localStorage.setItem(SIGNIN_SEEN_KEY, "1");
+            markSigninBannerSeen();
             refreshDriveStatus();
             refreshInfoBanner();
             UI.toast("Drive connected");
@@ -8383,7 +8556,7 @@ const App = (() => {
     }
   }
 
-  return { boot, state, reloadActiveProfile, withSampleGuard };
+  return { boot, state, reloadActiveProfile, withSampleGuard, refreshInfoBanner };
 })();
 
 const ACTIVE_TAB_LOCK = "nutridaily-origin-active-tab-v1";

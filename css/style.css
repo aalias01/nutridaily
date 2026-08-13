@@ -1432,6 +1432,9 @@ body.sheet-open .insight-dock { display: none; }
 }
 .installsteps li { margin-bottom: 6px; }
 .drive-blurb { margin: 0 0 8px; line-height: 1.45; }
+.local-backup-block { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.local-backup-blurb { margin: 0 0 8px; line-height: 1.45; }
+.local-backup-pref-row { margin-top: 6px; align-items: center; }
 .about-card h3 { margin: 0 0 6px; font-size: 15px; }
 .about-card a { color: var(--accent-ink); }
 .settings-panel .card-block {
