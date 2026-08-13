@@ -1947,6 +1947,9 @@ async function runEmpty() {
     "Backup section appears immediately after Profile");
   ok(!!$("#local-backup-block") && !!$("#btn-local-backup-now") && !!$("#btn-local-backup-enable"),
     "Settings → Backup includes local phone backup controls");
+  ok(!!$("#settings-sec-backup #import-file") && !$("#settings-sec-data #import-file"),
+    "Import JSON lives under Backup, not Data");
+  ok(!$("#btn-export"), "duplicate Export JSON control is removed from Data");
   ok($("#settings-sec-profile").open, "Sample first-run keeps Profile section open by default");
   ok($("#btn-profile-toggle").textContent.trim() === "Start my tracking",
     "empty install offers Start my tracking on the toggle");
@@ -4732,7 +4735,7 @@ async function runImportSecurity() {
   const originalAnchorClick = window.HTMLAnchorElement.prototype.click;
   window.HTMLAnchorElement.prototype.click = function () {};
   try {
-    $("#btn-export").click();
+    $("#btn-local-backup-now").click();
   } finally {
     window.HTMLAnchorElement.prototype.click = originalAnchorClick;
   }

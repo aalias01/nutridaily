@@ -584,7 +584,7 @@ const App = (() => {
     setSettingsSum("#settings-sum-backup", backup);
     refreshLocalBackupSettingsUi();
 
-    setSettingsSum("#settings-sum-data", "Export · Import");
+    setSettingsSum("#settings-sum-data", "Clear · Reset");
     const feedbackOn = !!(window.Feedback && Feedback.enabled && Feedback.enabled());
     setSettingsSum("#settings-sum-help", feedbackOn ? "Prompt · Feedback · About" : "Prompt · About");
   }
@@ -888,8 +888,15 @@ const App = (() => {
     const disableBtn = UI.$("#btn-local-backup-disable");
     const sampleNote = UI.$("#local-backup-sample-note");
     const nowBtn = UI.$("#btn-local-backup-now");
+    const importBtn = UI.$("#btn-import-json");
     if (sampleNote) sampleNote.hidden = !sample;
     if (nowBtn) nowBtn.disabled = !!sample;
+    if (importBtn) {
+      importBtn.classList.toggle("is-disabled", !!sample);
+      importBtn.setAttribute("aria-disabled", sample ? "true" : "false");
+      importBtn.style.pointerEvents = sample ? "none" : "";
+      importBtn.style.opacity = sample ? "0.5" : "";
+    }
     const pref = localBackupPref();
     const last = localBackupLastAt();
     const rem = driveOn ? "Reminders paused while Drive is connected"
@@ -8131,7 +8138,6 @@ const App = (() => {
       }
     });
 
-    UI.$("#btn-export").addEventListener("click", () => exportData());
     const localBackupNow = UI.$("#btn-local-backup-now");
     if (localBackupNow) {
       localBackupNow.addEventListener("click", () => {
@@ -8157,7 +8163,14 @@ const App = (() => {
         });
       });
     }
-    UI.$("#import-file").addEventListener("change", (e) => {
+    const importFile = UI.$("#import-file");
+    if (importFile) importFile.addEventListener("change", (e) => {
+      if (SampleProfile && SampleProfile.isSample()) {
+        UI.toast("Switch to your profile first");
+        openProfileSettings();
+        e.target.value = "";
+        return;
+      }
       const f = e.target.files && e.target.files[0];
       if (f) importData(f);
       e.target.value = "";

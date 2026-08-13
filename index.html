@@ -287,11 +287,12 @@
             <div id="drive-status" class="muted small"></div>
             <p id="drive-reconnect-hint" class="muted small" hidden>After reopening the app (especially on iPhone), Drive may pause until you tap <b>Reconnect</b> on the banner or the sync pill. Logging still works on this device meanwhile.</p>
             <div class="local-backup-block" id="local-backup-block">
-              <p class="muted small local-backup-blurb"><b>Local phone backup</b> downloads a JSON file you can keep in Files or Downloads. Useful when you are not signed in to Drive. While Drive is connected, reminders stay off; you can still download a copy anytime. No extra storage permission beyond the save/share sheet.</p>
+              <p class="muted small local-backup-blurb"><b>Local phone backup</b> downloads a JSON file you can keep in Files or Downloads. Useful when you are not signed in to Drive. While Drive is connected, reminders stay off; you can still download or import a copy anytime. No extra storage permission beyond the save/share sheet.</p>
               <p id="local-backup-sample-note" class="muted small" hidden>Sample mode uses demo data only. Local backup reminders apply to your own tracking.</p>
               <div id="local-backup-status" class="muted small"></div>
               <div class="row">
                 <button id="btn-local-backup-now" class="btn ghost" type="button">Backup to phone now</button>
+                <label id="btn-import-json" class="btn ghost" for="import-file" style="cursor:pointer">Import JSON<input id="import-file" type="file" accept=".json" hidden></label>
               </div>
               <div class="row local-backup-pref-row">
                 <button id="btn-local-backup-enable" class="btn ghost" type="button" hidden>Enable local backup reminders</button>
@@ -402,15 +403,11 @@
         <details class="settings-sec" id="settings-sec-data" data-settings-sec="data">
           <summary class="settings-sec-summary">
             <span class="settings-sec-title">Data</span>
-            <span class="settings-sec-status muted small" id="settings-sum-data">Export · Import</span>
+            <span class="settings-sec-status muted small" id="settings-sum-data">Clear · Reset</span>
           </summary>
           <div class="settings-sec-body">
-            <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
-            <div class="row">
-              <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
-              <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
-            </div>
-            <p class="muted small" style="margin-top:10px"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, day plans, weight, and goals.</p>
+            <p class="muted small">Destructive actions for this device. To save or restore a JSON file, use <b>Backup</b> above. Clearing site data (or uninstalling) also deletes the local copy unless you signed in with Google or exported first.</p>
+            <p class="muted small"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, day plans, weight, and goals.</p>
             <div class="row">
               <button id="btn-clear" class="btn ghost danger" type="button">Clear logs</button>
               <button id="btn-factory-reset" class="btn ghost danger" type="button">Start fresh</button>
