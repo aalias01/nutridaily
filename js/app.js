@@ -1,7 +1,7 @@
 /* NutriDaily — diary bootstrap, state, event wiring. */
 const App = (() => {
-  const SETTINGS_KEY = "nd_settings_v1";
-  const PERSONAL_KEY = "nd_personal_v1";
+  let SETTINGS_KEY = "nd_settings_v1";
+  let PERSONAL_KEY = "nd_personal_v1";
   const ONB_KEY = "nd_onboarded_v1";
   const FIRST_SEEN_KEY = "nd_first_seen_at";
   const SIGNIN_SEEN_KEY = "nd_signin_banner_seen";
@@ -381,6 +381,168 @@ const App = (() => {
     }
     if (!localStorage.getItem(FIRST_SEEN_KEY)) localStorage.setItem(FIRST_SEEN_KEY, String(Date.now()));
     applyTheme();
+  }
+
+  function applyProfileWorkingKeys(keys) {
+    const k = keys || (SampleProfile && SampleProfile.workingKeys && SampleProfile.workingKeys()) || {
+      settings: "nd_settings_v1",
+      personal: "nd_personal_v1",
+      events: "nd_events_v1",
+    };
+    SETTINGS_KEY = k.settings;
+    PERSONAL_KEY = k.personal;
+    if (typeof Ledger.setEventsKey === "function") Ledger.setEventsKey(k.events);
+  }
+
+  function resetInMemorySettingsShell() {
+    state.settings = {
+      goals: { ...DEFAULT_GOALS },
+      goalsUpdatedAt: 0,
+      imperial: false,
+      weightUnit: "lb",
+      theme: "light",
+      dayGoals: {},
+      dayPlans: {},
+      gapDrafts: {},
+      dayPlanPresets: [],
+      phases: [],
+      weights: {},
+      profile: {},
+    };
+    state.personalFoods = [];
+  }
+
+  function reloadActiveProfile() {
+    if (typeof Ledger._resetCacheForTests === "function") Ledger._resetCacheForTests();
+    resetInMemorySettingsShell();
+    applyProfileWorkingKeys();
+    loadState();
+    refreshAll();
+    refreshSampleChrome();
+    refreshProfileSettingsUi();
+    if (SampleProfile && SampleProfile.isSample()) {
+      SampleProfile.scheduleIntro(showSampleIntro);
+    } else if (SampleProfile) {
+      SampleProfile.clearIntroTimer();
+    }
+  }
+
+  function showSampleWarn(handlers) {
+    const h = handlers || {};
+    const sheet = UI.$("#sheet-sample-warn");
+    if (!sheet) {
+      if (h.onOk) h.onOk();
+      return;
+    }
+    const ok = UI.$("#btn-sample-warn-ok");
+    const go = UI.$("#btn-sample-warn-profile");
+    const onOk = () => {
+      UI.closeSheet("sheet-sample-warn");
+      cleanup();
+      if (h.onOk) h.onOk();
+    };
+    const onGo = () => {
+      UI.closeSheet("sheet-sample-warn");
+      cleanup();
+      if (h.onGoToProfile) h.onGoToProfile();
+      else openProfileSettings();
+    };
+    function cleanup() {
+      if (ok) ok.removeEventListener("click", onOk);
+      if (go) go.removeEventListener("click", onGo);
+    }
+    if (ok) ok.addEventListener("click", onOk);
+    if (go) go.addEventListener("click", onGo);
+    UI.openSheet("sheet-sample-warn");
+  }
+
+  function showSampleIntro() {
+    if (!(SampleProfile && SampleProfile.isSample())) return;
+    const sheet = UI.$("#sheet-sample-intro");
+    if (!sheet) return;
+    const ok = UI.$("#btn-sample-intro-ok");
+    const start = UI.$("#btn-sample-intro-start");
+    const onOk = () => {
+      UI.closeSheet("sheet-sample-intro");
+      cleanup();
+      SampleProfile.markWarnDismissed();
+    };
+    const onStart = () => {
+      UI.closeSheet("sheet-sample-intro");
+      cleanup();
+      SampleProfile.markWarnDismissed();
+      openProfileSettings();
+    };
+    function cleanup() {
+      if (ok) ok.removeEventListener("click", onOk);
+      if (start) start.removeEventListener("click", onStart);
+    }
+    if (ok) ok.addEventListener("click", onOk);
+    if (start) start.addEventListener("click", onStart);
+    UI.openSheet("sheet-sample-intro");
+  }
+
+  function openProfileSettings() {
+    openSettings();
+    const card = UI.$("#profile-mode-card");
+    if (card) {
+      card.classList.add("profile-mode-highlight");
+      try { card.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+      setTimeout(() => card.classList.remove("profile-mode-highlight"), 2400);
+    }
+  }
+
+  function withSampleGuard(action) {
+    if (!(SampleProfile && typeof SampleProfile.guardMutation === "function")) {
+      return typeof action === "function" ? action() : undefined;
+    }
+    return SampleProfile.guardMutation(action, showSampleWarn);
+  }
+
+  function refreshSampleChrome() {
+    const chip = UI.$("#sample-chip");
+    if (chip) {
+      const on = !!(SampleProfile && SampleProfile.isSample());
+      chip.hidden = !on;
+      chip.textContent = "Sample";
+      chip.title = "Exploring sample data — not your real log";
+    }
+    if (SampleProfile && SampleProfile.isSample()) {
+      UI.setSyncPill("local", "sample");
+    }
+  }
+
+  function refreshProfileSettingsUi() {
+    const activeEl = UI.$("#profile-mode-active");
+    const nameEl = UI.$("#set-profile-display-name");
+    const createBtn = UI.$("#btn-profile-create");
+    const switchSample = UI.$("#btn-profile-sample");
+    const switchReal = UI.$("#btn-profile-real");
+    const resetBtn = UI.$("#btn-profile-reset-sample");
+    const sample = SampleProfile && SampleProfile.isSample();
+    const created = SampleProfile && SampleProfile.realCreated();
+    if (activeEl) {
+      activeEl.textContent = sample
+        ? "Active: Sample"
+        : `Active: ${SampleProfile ? SampleProfile.realDisplayName() : "My tracking"}`;
+    }
+    if (nameEl) {
+      nameEl.value = SampleProfile ? SampleProfile.realDisplayName() : "";
+      nameEl.disabled = !created && !!sample;
+    }
+    if (createBtn) createBtn.hidden = !!created;
+    if (switchReal) {
+      switchReal.disabled = !created;
+      switchReal.hidden = !created;
+    }
+    if (switchSample) switchSample.hidden = false;
+    if (resetBtn) resetBtn.hidden = false;
+    const clearBtn = UI.$("#btn-clear");
+    const factoryBtn = UI.$("#btn-factory-reset");
+    if (clearBtn) clearBtn.disabled = !!sample;
+    if (factoryBtn) factoryBtn.disabled = !!sample;
+    const driveBlurb = UI.$("#drive-sample-note");
+    if (driveBlurb) driveBlurb.hidden = !sample;
   }
 
   // ---------- PWA install (Daycells-style, Settings card) ----------
@@ -846,6 +1008,10 @@ const App = (() => {
   }
 
   function saveWeightFromField() {
+    withSampleGuard(() => saveWeightFromFieldUnguarded());
+  }
+
+  function saveWeightFromFieldUnguarded() {
     const raw = UI.$("#day-weight").value.trim();
     const nextSettings = cloneLocalData(state.settings);
     if (!nextSettings.weights || typeof nextSettings.weights !== "object") nextSettings.weights = {};
@@ -3344,6 +3510,10 @@ const App = (() => {
   }
 
   function openAddSheet(opts) {
+    withSampleGuard(() => openAddSheetUnguarded(opts));
+  }
+
+  function openAddSheetUnguarded(opts) {
     state.pickFood = null;
     state.editEntryId = null;
     state.editEntryDay = null;
@@ -4680,6 +4850,8 @@ const App = (() => {
 
   function openSettings() {
     switchView("settings");
+    refreshProfileSettingsUi();
+    refreshDriveStatus();
   }
 
   function refreshSettingsTabNudge() {
@@ -5613,8 +5785,12 @@ const App = (() => {
   }
 
   function beginLocalDataTransaction(extraKeys) {
+    const resetKey = (SampleProfile && SampleProfile.isSample && SampleProfile.isSample())
+      ? SampleProfile.KEYS.sample.reset
+      : "nd_reset_at";
+    const eventsKey = (typeof Ledger.eventsKey === "function") ? Ledger.eventsKey() : "nd_events_v1";
     const keys = [...new Set([
-      "nd_events_v1", PERSONAL_KEY, SETTINGS_KEY, "nd_reset_at", "nd_generation_schema_version",
+      eventsKey, PERSONAL_KEY, SETTINGS_KEY, resetKey, "nd_generation_schema_version",
       ...(extraKeys || []),
     ])];
     const raw = Object.create(null);
@@ -7693,6 +7869,11 @@ const App = (() => {
     const fbBtn = UI.$("#btn-settings-feedback");
     if (fbBtn) fbBtn.addEventListener("click", openFeedback);
     UI.$("#btn-clear").addEventListener("click", () => {
+      if (SampleProfile && SampleProfile.isSample()) {
+        UI.toast("Switch to your profile first, or use Reset Sample");
+        openProfileSettings();
+        return;
+      }
       if (!confirm("Clear foods and meal logs on this device? Phases, weight, and settings stay. If Drive sync is on, the cloud copy of logs/foods will be wiped on the next sync.")) return;
       const nextSettings = cloneLocalData(state.settings);
       nextSettings.dayPlans = {};
@@ -7712,6 +7893,11 @@ const App = (() => {
     });
 
     UI.$("#btn-factory-reset").addEventListener("click", () => {
+      if (SampleProfile && SampleProfile.isSample()) {
+        UI.toast("Switch to your profile first, or use Reset Sample");
+        openProfileSettings();
+        return;
+      }
       if (!confirm("Start completely fresh? This deletes meal logs, foods, phases, day plans, weight history, and resets goals.")) return;
       if (!confirm("Last chance. Export first if you want a backup. This cannot be undone. Continue?")) return;
       const resetAt = Date.now();
@@ -7842,6 +8028,10 @@ const App = (() => {
     });
     Sync.init({
       normalizeRemoteDoc: normalizeRemoteSyncDoc,
+      isSampleActive: () => !!(SampleProfile && SampleProfile.isSample && SampleProfile.isSample()),
+      resetKey: () => (SampleProfile && SampleProfile.isSample && SampleProfile.isSample())
+        ? SampleProfile.KEYS.sample.reset
+        : "nd_reset_at",
       // Sync applies several logical values that share nd_settings_v1. Capture
       // its exact bytes plus App/Ledger memory so any later setter failure can
       // roll the whole remote apply back before the Drive shard is written.
@@ -7960,18 +8150,95 @@ const App = (() => {
       screen: (active && active.dataset.view) || "settings",
       viewDate: state.viewDay || Ledger.todayKey(),
       syncEnabled: !!st.enabled,
-      sampleLoaded: false,
-      version: "nutridaily-v64",
+      sampleLoaded: !!(SampleProfile && SampleProfile.isSample && SampleProfile.isSample()),
+      version: "nutridaily-v65",
       prefillEmail: (st.enabled && st.email) ? st.email : "",
     }, () => {});
   }
 
+  function wireProfileMode() {
+    const createBtn = UI.$("#btn-profile-create");
+    if (createBtn) {
+      createBtn.addEventListener("click", () => {
+        const nameInput = UI.$("#set-profile-display-name");
+        const name = (nameInput && nameInput.value.trim()) || "My tracking";
+        SampleProfile.createReal(name);
+        localStorage.setItem(ONB_KEY, "1");
+        UI.toast("Your tracking profile is ready");
+        refreshSampleChrome();
+        refreshProfileSettingsUi();
+      });
+    }
+    const sampleBtn = UI.$("#btn-profile-sample");
+    if (sampleBtn) {
+      sampleBtn.addEventListener("click", () => {
+        const result = SampleProfile.switchTo("sample");
+        if (!result.ok) UI.toast("Couldn’t open Sample");
+        else UI.toast("Viewing Sample");
+        refreshSampleChrome();
+        refreshProfileSettingsUi();
+      });
+    }
+    const realBtn = UI.$("#btn-profile-real");
+    if (realBtn) {
+      realBtn.addEventListener("click", () => {
+        const result = SampleProfile.switchTo("real");
+        if (!result.ok) {
+          UI.toast("Create your profile first");
+          openProfileSettings();
+          return;
+        }
+        UI.toast("Back to your tracking");
+        refreshSampleChrome();
+        refreshProfileSettingsUi();
+      });
+    }
+    const resetBtn = UI.$("#btn-profile-reset-sample");
+    if (resetBtn) {
+      resetBtn.addEventListener("click", () => {
+        if (!confirm("Reset Sample to the built-in demo log? Your own tracking is not touched.")) return;
+        SampleProfile.resetSample(Ledger.todayKey());
+        if (SampleProfile.isSample()) reloadActiveProfile();
+        else UI.toast("Sample reset");
+        refreshProfileSettingsUi();
+      });
+    }
+    const nameEl = UI.$("#set-profile-display-name");
+    if (nameEl) {
+      nameEl.addEventListener("change", () => {
+        if (!SampleProfile.realCreated()) return;
+        SampleProfile.renameReal(nameEl.value);
+        refreshProfileSettingsUi();
+      });
+    }
+    const chip = UI.$("#sample-chip");
+    if (chip) {
+      chip.addEventListener("click", () => openProfileSettings());
+    }
+  }
+
   function boot() {
     installPersistenceErrorUx();
+    if (typeof SampleProfile !== "undefined" && SampleProfile.bootstrap) {
+      SampleProfile.bootstrap({
+        todayKey: () => Ledger.todayKey(),
+        applyWorkingKeys: applyProfileWorkingKeys,
+        reloadActive: reloadActiveProfile,
+        openProfileSettings,
+      });
+      SampleProfile.init({
+        reloadActive: reloadActiveProfile,
+        openProfileSettings,
+        applyWorkingKeys: applyProfileWorkingKeys,
+      });
+    }
     loadState();
     wire();
+    wireProfileMode();
     refreshFeedbackCard();
     refreshPromptShareButtons();
+    refreshSampleChrome();
+    refreshProfileSettingsUi();
     window.addEventListener("beforeinstallprompt", (ev) => {
       ev.preventDefault();
       deferredInstall = ev;
@@ -7995,14 +8262,19 @@ const App = (() => {
     refreshAll();
     refreshInfoBanner();
     refreshSettingsTabNudge();
+    refreshSampleChrome();
     consumeRecipeHash();
     window.addEventListener("hashchange", () => consumeRecipeHash());
-    if (!localStorage.getItem(ONB_KEY) && !activeFoods().length && !Ledger.allEvents().length) {
+    // Sample first-run replaces the empty "Add your first food" modal.
+    if (SampleProfile && SampleProfile.isSample()) {
+      localStorage.setItem(ONB_KEY, "1");
+      SampleProfile.scheduleIntro(showSampleIntro);
+    } else if (!localStorage.getItem(ONB_KEY) && !activeFoods().length && !Ledger.allEvents().length) {
       UI.showOnboarding(true);
     }
   }
 
-  return { boot, state };
+  return { boot, state, reloadActiveProfile, withSampleGuard };
 })();
 
 const ACTIVE_TAB_LOCK = "nutridaily-origin-active-tab-v1";

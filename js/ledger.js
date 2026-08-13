@@ -5,8 +5,9 @@
  * σ_total = sqrt(Σ (value_i · sd_i)²) — independent errors assumption.
  */
 const Ledger = (() => {
-  const KEY = "nd_events_v1";
+  const DEFAULT_KEY = "nd_events_v1";
   const LEGACY_KEY = "nc_events_v1";
+  let KEY = DEFAULT_KEY;
 
   let store = (() => {
     if (typeof localStorage !== "undefined") return localStorage;
@@ -67,6 +68,18 @@ const Ledger = (() => {
     };
   }
 
+  function eventsKey() { return KEY; }
+
+  /** Point the ledger at Real (`nd_events_v1`) or Sample events storage. */
+  function setEventsKey(next) {
+    const key = String(next || DEFAULT_KEY);
+    if (key === KEY) return KEY;
+    KEY = key;
+    _cache = null;
+    _invalidate();
+    return KEY;
+  }
+
   function _safeGeneration(value) {
     const n = Number(value);
     return Number.isSafeInteger(n) && n >= 0 ? n : 0;
@@ -114,7 +127,8 @@ const Ledger = (() => {
     let raw;
     try {
       raw = store.getItem(KEY);
-      if (raw == null && store.getItem(LEGACY_KEY) != null) {
+      // Legacy NutriChat migrate only for the Real events key.
+      if (raw == null && KEY === DEFAULT_KEY && store.getItem(LEGACY_KEY) != null) {
         raw = store.getItem(LEGACY_KEY);
         // Migration failure must not make a readable legacy ledger look empty.
         // The next actual mutation will retry a durable write and surface a
@@ -997,7 +1011,8 @@ const Ledger = (() => {
     entryMacrosKnown,
     recentDays, recentSummary, portionStats, findEntry, allEvents, loggedDayKeys, hasEverAdded, firstAddAt,
     replayEvents, validateEvents, rootAddEvents, filterEventsByResetEpoch, configureContext,
-    replaceAll, clearAll, _resetCacheForTests, _setStoreForTests,
+    replaceAll, clearAll, eventsKey, setEventsKey, DEFAULT_KEY,
+    _resetCacheForTests, _setStoreForTests,
     CausalError, isCausalError: (e) => !!e && /^ledger-causal-/.test(String(e.code || "")),
     PersistenceError, isPersistenceError: (e) => !!e && e.code === "ledger-persistence-failed", uid,
   };

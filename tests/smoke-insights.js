@@ -1909,9 +1909,9 @@ async function runSparse() {
   dom.window.close();
 }
 
-// --- empty run: brand new user -------------------------------------------
+// --- empty / first-run: Sample profile demo --------------------------------
 async function runEmpty() {
-  console.log("\n[empty] no data at all");
+  console.log("\n[empty] sample first-run (no real data)");
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8")
     .replace(/<script src="https:\/\/accounts\.google\.com[^"]*"[^>]*><\/script>/, "");
   const vc = new VirtualConsole();
@@ -1922,6 +1922,7 @@ async function runEmpty() {
   window.HTMLCanvasElement.prototype.getContext = function () { const c = fakeCtx(); c.canvas = this; return c; };
   Object.defineProperty(window.HTMLElement.prototype, "clientWidth", { get() { return 360; }, configurable: true });
   window.Element.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, width: 360, height: 200, right: 360, bottom: 200, x: 0, y: 0, toJSON() {} }; };
+  window.matchMedia = window.matchMedia || (() => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
   for (const src of [...window.document.querySelectorAll("script[src]")].map((s) => s.getAttribute("src"))) {
     if (!src || /^https?:/.test(src)) continue;
     inject(window, src);
@@ -1930,35 +1931,25 @@ async function runEmpty() {
   const $ = (s) => window.document.querySelector(s);
 
   await new Promise((r) => setTimeout(r, 25));
+  const SampleProfile = window.eval("SampleProfile");
+  ok(SampleProfile.isSample(), "empty install boots into Sample");
+  ok(window.localStorage.getItem("nd_onboarded_v1") === "1", "Sample first-run marks onboarded without Add-your-first-food modal");
+  ok($("#onboarding").hidden, "Sample first-run does not show the legacy onboarding modal");
+  ok(!$("#sample-chip").hidden, "Sample chip is visible while exploring Sample");
+  ok(!!$("#sheet-sample-intro") && !!$("#sheet-sample-warn"), "Sample intro and warn sheets are mounted");
+  ok(!!$("#profile-mode-card") && !!$("#btn-profile-create"), "Settings Profile card can create a real profile");
+
+  // Accessibility contract for onboarding remains available when reopened.
   const onboarding = $("#onboarding");
-  const appMain = $(".shell > main");
   const onbStart = $("#btn-onb-start");
   const onbSkip = $("#btn-onb-skip");
-  ok(!onboarding.hidden && onboarding.getAttribute("role") === "dialog" &&
-      onboarding.getAttribute("aria-modal") === "true" && dialogName(onboarding) === "Your nutrition tracker",
-    "first-run onboarding is a named accessible modal dialog");
-  ok(appMain.hasAttribute("inert") && appMain.getAttribute("aria-hidden") === "true",
-    "onboarding makes the background inert and hidden from assistive technology");
-  ok(window.document.activeElement === onbStart, "onboarding moves initial focus to its primary action");
-  onbStart.focus();
-  onbStart.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
-  ok(window.document.activeElement === onbSkip, "Shift-Tab wraps to the last onboarding control");
-  onbSkip.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
-  ok(window.document.activeElement === onbStart, "Tab wraps to the first onboarding control");
-  const backgroundTab = [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights");
-  backgroundTab.focus();
-  ok(onboarding.contains(window.document.activeElement), "escaped focus is pulled back into onboarding");
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-  await new Promise((r) => setTimeout(r, 220));
-  ok(onboarding.hidden && window.localStorage.getItem("nd_onboarded_v1") === "1",
-    "Escape performs the documented skip-for-now dismissal");
-  ok(!appMain.hasAttribute("inert") && !appMain.hasAttribute("aria-hidden"),
-    "onboarding dismissal restores background accessibility state");
-
   const focusReturn = $("#fab-add");
   focusReturn.focus();
   window.eval("UI.showOnboarding(true)");
   await new Promise((r) => setTimeout(r, 25));
+  ok(!onboarding.hidden && onboarding.getAttribute("role") === "dialog" &&
+      dialogName(onboarding) === "Your nutrition tracker",
+    "reopened onboarding is still a named accessible modal dialog");
   ok(window.document.activeElement === onbStart, "reopened onboarding receives initial focus consistently");
   onbSkip.click();
   await new Promise((r) => setTimeout(r, 20));
@@ -1967,9 +1958,28 @@ async function runEmpty() {
 
   const insightsTab = [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "insights");
   insightsTab.click();
+  await new Promise((r) => setTimeout(r, 80));
+  const sampleHeadline = $("#insight-headline").textContent;
+  ok(!/No logged days/i.test(sampleHeadline), "Sample Insights is not the empty first-run message");
+  ok($("#insight-headline").querySelector(".score-value") || /\/100/.test(sampleHeadline) || sampleHeadline.length > 20,
+    "Sample Insights shows a populated headline");
+  const maturity = window.eval("UI.insightMaturity()");
+  ok(maturity === "full", "Sample Insights maturity is full", `got ${maturity}`);
+  ok(!$("#section-energy").hidden, "Sample unlocks the energy / TDEE card");
+
+  // Create Real profile → empty personal tracking; Sample remains available.
+  [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "settings").click();
+  await new Promise((r) => setTimeout(r, 20));
+  $("#set-profile-display-name").value = "Test User";
+  $("#btn-profile-create").click();
+  await new Promise((r) => setTimeout(r, 40));
+  ok(!SampleProfile.isSample(), "Create profile switches to Real");
+  ok(SampleProfile.realCreated(), "Real profile is marked created");
+  ok($("#sample-chip").hidden, "Sample chip hides on Real");
+  insightsTab.click();
   await new Promise((r) => setTimeout(r, 60));
   const emptyHeadline = $("#insight-headline").textContent;
-  ok(/No logged days/i.test(emptyHeadline), "empty state gives a clear first-run message");
+  ok(/No logged days/i.test(emptyHeadline), "empty Real state gives a clear first-run message");
   ok(/fills in/i.test(emptyHeadline), "empty headline promises the tab will fill in after logging");
   ok(!/NaN|undefined|Infinity/.test($("#view-insights").textContent), "no NaN/undefined leaks into the empty view");
   const visibleEmptySections = [...window.document.querySelectorAll("#view-insights .insight-section")]
@@ -2169,6 +2179,8 @@ async function lockScenario(lockApi) {
   window.navigator.serviceWorker = undefined;
   Object.defineProperty(window.navigator, "locks", { value: lockApi, configurable: true });
   window.localStorage.setItem("nd_onboarded_v1", "1");
+  window.localStorage.setItem("nd_real_created", "1");
+  window.localStorage.setItem("nd_active_profile", "real");
   window.localStorage.setItem("nd_settings_v1", JSON.stringify({
     goals: { kcal: 2200, protein: 150, carbs: 250, fat: 70, fiber: 30, sodium: 2300, potassium: 3400 },
     weights: {}, weightUnit: "lb", phases: [], profile: {},

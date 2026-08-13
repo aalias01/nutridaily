@@ -153,6 +153,17 @@ header {
 .pill.ok { color: var(--accent-ink); border-color: rgba(61, 153, 112, 0.45); }
 .pill.pending { color: #b08a2e; border-color: rgba(201, 154, 58, 0.45); }
 .pill.warn { color: var(--warn); border-color: rgba(208, 112, 60, 0.5); }
+.sample-chip {
+  font-size: 11.5px; padding: 8px 11px; min-height: 44px; border-radius: 999px;
+  border: 1px solid rgba(74, 125, 189, 0.45); background: rgba(74, 125, 189, 0.12);
+  color: var(--info); cursor: pointer; font-weight: 650;
+}
+.sample-chip[hidden] { display: none !important; }
+.profile-mode-card.profile-mode-highlight {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+  transition: outline-color 0.2s ease;
+}
 .dev-details { margin-top: 6px; }
 .dev-details input { margin: 6px 0 4px; }
 

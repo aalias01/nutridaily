@@ -40,6 +40,7 @@
     <div class="head-brand-row">
       <div class="brand">NutriDaily</div>
       <div class="head-right">
+        <button id="sample-chip" class="sample-chip" type="button" hidden title="Exploring sample data">Sample</button>
         <button id="sync-pill" class="pill" title="Cloud backup status" type="button">local only</button>
       </div>
     </div>
@@ -263,8 +264,27 @@
           </span>
         </div>
 
+        <label class="set-label">Profile</label>
+        <div class="card-block profile-mode-card" id="profile-mode-card">
+          <p class="muted small" id="profile-mode-active">Active: Sample</p>
+          <p class="muted small">Sample is a built-in ~90-day demo so Insights, weight, and energy estimate are visible immediately. Your real tracking stays separate. Sample never syncs to Google Drive.</p>
+          <div class="profile-grid">
+            <div>
+              <label class="small muted" for="set-profile-display-name">Display name</label>
+              <input id="set-profile-display-name" type="text" maxlength="60" placeholder="My tracking" autocomplete="nickname">
+            </div>
+          </div>
+          <div class="phase-actions" style="margin-top:10px">
+            <button id="btn-profile-create" class="btn full" type="button">Create my profile</button>
+            <button id="btn-profile-real" class="btn ghost full" type="button" hidden>Switch to my tracking</button>
+            <button id="btn-profile-sample" class="btn ghost full" type="button">View Sample</button>
+            <button id="btn-profile-reset-sample" class="btn ghost full" type="button">Reset Sample</button>
+          </div>
+        </div>
+
         <label class="set-label">Google Drive sync</label>
         <p class="muted small drive-blurb">Meals save on this device automatically. Sign-in is optional: it keeps a copy in <b>your</b> Google Drive so another phone or a cleared browser cache can restore it. Nothing is sent anywhere except your own Drive.</p>
+        <p id="drive-sample-note" class="banner warn" hidden>Sample mode: Drive sync is paused. Switch to your own profile to connect.</p>
         <div class="row">
           <button id="btn-drive-connect" class="btn ghost" type="button">Sign in with Google</button>
           <button id="btn-drive-sync" class="btn ghost" type="button" style="display:none">Sync now</button>
@@ -903,7 +923,7 @@ END</pre>
     </div>
   </div>
 
-  <!-- Onboarding -->
+  <!-- Onboarding (empty Real only — Sample first-run uses sample intro) -->
   <div id="onboarding" class="onboarding" role="dialog" aria-modal="true"
        aria-labelledby="onboarding-title" aria-describedby="onboarding-description" hidden>
     <div class="onb-card">
@@ -916,6 +936,34 @@ END</pre>
       </div>
       <button id="btn-onb-start" class="btn full" type="button">Add your first food</button>
       <button id="btn-onb-skip" class="linkbtn" type="button">Skip for now</button>
+    </div>
+  </div>
+
+  <!-- Sample intro (~30s after first Sample paint) -->
+  <div id="sheet-sample-intro" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-sample-intro"></div>
+    <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sample-intro-title">
+      <div class="sheet-grab"></div>
+      <h3 id="sample-intro-title">You’re viewing Sample</h3>
+      <p class="muted small">This is demo data so you can see Insights, weight trends, and energy estimates right away. Explore freely. When you’re ready, start your own tracking in Settings → Profile.</p>
+      <div class="row end" style="margin-top:10px; gap:8px; flex-wrap:wrap">
+        <button id="btn-sample-intro-ok" class="btn" type="button">Keep exploring</button>
+        <button id="btn-sample-intro-start" class="btn ghost" type="button">Start tracking</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sample mutation warning (10-minute cadence) -->
+  <div id="sheet-sample-warn" class="sheet" hidden>
+    <div class="sheet-backdrop" data-close="sheet-sample-warn"></div>
+    <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sample-warn-title">
+      <div class="sheet-grab"></div>
+      <h3 id="sample-warn-title">This is Sample, not your real log</h3>
+      <p class="muted small">Edits here stay in Sample. Create your profile in Settings → Profile to track for real. You can switch back to Sample anytime.</p>
+      <div class="row end" style="margin-top:10px; gap:8px; flex-wrap:wrap">
+        <button id="btn-sample-warn-ok" class="btn" type="button">OK</button>
+        <button id="btn-sample-warn-profile" class="btn ghost" type="button">Go to Profile</button>
+      </div>
     </div>
   </div>
 
@@ -948,6 +996,8 @@ END</pre>
 <script src="js/gap-prompt.js"></script>
 <script src="js/gdrive.js"></script>
 <script src="js/sync.js"></script>
+<script src="js/sample-seed.js"></script>
+<script src="js/sample-profile.js"></script>
 <script src="js/redact.js"></script>
 <script src="js/feedback.js"></script>
 <script src="js/ui.js"></script>

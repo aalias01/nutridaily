@@ -4,6 +4,8 @@ Log home-cooked dishes by food and grams (or a serving).
 
 **[Live app →](https://nutridaily.vercel.app)**
 
+First open includes a built-in **Sample** profile so Insights, weight trends, and energy estimates are visible before you have a long personal log. Create your own profile in Settings when you are ready; Sample stays available to revisit and never syncs to Drive.
+
 Homemade recipes enter through a **NUTRI import**. I copy a fixed prompt from the app into ChatGPT or Claude, describe the dish, paste the reply back. The app reads a plain-text `NUTRI v1` block, I review macros, and it saves into My Foods (per 100 g). Catalog staples (banana, eggs, rice, and the rest) are Reference USDA-style averages. The app never calls an LLM itself.
 
 ## Logging

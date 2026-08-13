@@ -559,16 +559,30 @@ const Sync = (() => {
     return out;
   }
 
+  function resetStorageKey() {
+    if (deps && typeof deps.resetKey === "function") {
+      const key = deps.resetKey();
+      if (key) return key;
+    }
+    return RESET_KEY;
+  }
+
+  function sampleBlocked() {
+    return !!(deps && typeof deps.isSampleActive === "function" && deps.isSampleActive());
+  }
+
   function getResetAt() {
-    const n = Number(getLocal(RESET_KEY, "read the reset marker") || 0);
+    const n = Number(getLocal(resetStorageKey(), "read the reset marker") || 0);
     return Number.isFinite(n) ? n : 0;
   }
 
   function setResetAt(ts) {
     // Persist the schema marker before the privacy epoch so RESET_KEY remains
     // the final authoritative write in clear/import transactions.
+    // Schema marker stays on the Real key even while Sample is active — Sample
+    // never participates in Drive generations.
     setLocal(GENERATION_SCHEMA_KEY, GENERATION_SCHEMA_VERSION, "save the privacy schema marker");
-    setLocal(RESET_KEY, ts || Date.now(), "save the reset marker");
+    setLocal(resetStorageKey(), ts || Date.now(), "save the reset marker");
   }
 
   function filterMapGeneration(map, epoch) {
@@ -1289,7 +1303,7 @@ const Sync = (() => {
       phases: deps.getPhases ? detached(deps.getPhases()) : undefined,
       weights: deps.getWeights ? detached(deps.getWeights()) : undefined,
       profile: deps.getProfile ? detached(deps.getProfile()) : undefined,
-      resetRaw: getLocal(RESET_KEY, "read the reset marker"),
+      resetRaw: getLocal(resetStorageKey(), "read the reset marker"),
       generationSchemaRaw: getLocal(GENERATION_SCHEMA_KEY, "read the privacy schema marker"),
     };
   }
@@ -1329,8 +1343,8 @@ const Sync = (() => {
       restore(() => deps.setProfile(detached(snapshot.profile)));
     }
     restore(() => {
-      if (snapshot.resetRaw == null) removeLocal(RESET_KEY, "restore the reset marker");
-      else setLocal(RESET_KEY, snapshot.resetRaw, "restore the reset marker");
+      if (snapshot.resetRaw == null) removeLocal(resetStorageKey(), "restore the reset marker");
+      else setLocal(resetStorageKey(), snapshot.resetRaw, "restore the reset marker");
     });
     restore(() => {
       if (snapshot.generationSchemaRaw == null) {
@@ -1426,6 +1440,10 @@ const Sync = (() => {
     if (!activeTabReady()) {
       dirtyPending = true;
       return { ok: false, suspended: true };
+    }
+    if (sampleBlocked()) {
+      setStatus("off");
+      return { ok: false, sample: true };
     }
     if (running) { queued = true; return { ok: false, busy: true }; }
     running = true;
@@ -1535,6 +1553,7 @@ const Sync = (() => {
   /** Debounced push after local mutations. */
   function schedulePush() {
     if (!activeTabReady()) { dirtyPending = true; return; }
+    if (sampleBlocked()) return;
     // An explicit logout wins even if persisting the disabled preference
     // failed. Never race its durable server-cookie retry with silent re-auth.
     if (typeof GDrive.logoutPending === "function" && GDrive.logoutPending()) {
@@ -1595,6 +1614,11 @@ const Sync = (() => {
    * (BFF) or opens GIS popup (fallback). Returns email, or null when a redirect started.
    */
   async function connect() {
+    if (sampleBlocked()) {
+      const err = new Error("Switch to your own profile in Settings before connecting Google Drive.");
+      err.code = "sync-sample-blocked";
+      throw err;
+    }
     try {
       await GDrive.refreshSession();
     } catch (e) {
