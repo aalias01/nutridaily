@@ -4312,13 +4312,15 @@ const UI = (() => {
       const hits = (seg.hits || []).map((h) => {
         const on = !dropped && seg.selectedKey === h.key;
         const mine = !h.pendingCatalog;
-        const kindClass = mine ? " is-mine" : " is-catalog";
-        const badge = mine
-          ? ` <span class="hit-kind tag-mine">My food</span>`
-          : ` <span class="hit-kind tag-catalog">Catalog</span>`;
-        return `<button type="button" class="voice-hit${kindClass}${on ? " on" : ""}" data-action="voice-pick" data-seg="${esc(seg.id)}" data-key="${esc(h.key)}" ${dropped ? "disabled" : ""}>
-          <span class="r-name">${esc(h.name)}${badge}</span>
-          <span class="mini">${h.kcal != null ? `${fmt(h.kcal)} /100g` : ""}</span>
+        const star = mine
+          ? `<span class="mine-star" title="My food" aria-label="My food">★</span>`
+          : "";
+        return `<button type="button" class="voice-hit${on ? " on" : ""}${mine ? " is-mine" : ""}" data-action="voice-pick" data-seg="${esc(seg.id)}" data-key="${esc(h.key)}" ${dropped ? "disabled" : ""}>
+          <span class="r-name">${esc(h.name)}</span>
+          <span class="voice-hit-trail">
+            <span class="mini">${h.kcal != null ? `${fmt(h.kcal)} /100g` : ""}</span>
+            ${star}
+          </span>
         </button>`;
       }).join("");
 
