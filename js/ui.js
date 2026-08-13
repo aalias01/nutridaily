@@ -677,15 +677,11 @@ const UI = (() => {
                 <div class="r-contrib">${esc(fmtMacros(e.macros))}</div>
                 ${mealAmtRow}
                 ${chrome.detailLine || ""}
+                ${e.note ? `<div class="r-note">${esc(e.note)}</div>` : ""}
                 ${editNote ? `<div class="r-edits">${esc(editNote)}</div>` : ""}
               </div>
               <div class="r-expanded-actions">
                 <button type="button" class="linkbtn edit-entry-btn" data-action="edit-entry" data-id="${esc(e.id)}">Edit</button>
-                ${e.source === "once" && Number(e.grams) > 0
-                  ? `<button type="button" class="linkbtn" data-action="promote-once" data-id="${esc(e.id)}">Save to My Foods</button>`
-                  : (e.source === "once" || e.source === "quick"
-                    ? `<button type="button" class="linkbtn" disabled title="Add a portion weight first; a saved food needs to know what 100 g looks like.">Save to My Foods</button>`
-                    : "")}
               </div>
             </div>`
           : "";
@@ -1044,7 +1040,7 @@ const UI = (() => {
   }
 
   function autosizeRevGrowFields() {
-    ["#rev-ingredients", "#rev-prep", "#rev-notes"].forEach((sel) => autosizeRevGrow($(sel)));
+    ["#rev-ingredients", "#rev-prep", "#rev-notes", "#rev-context"].forEach((sel) => autosizeRevGrow($(sel)));
   }
 
   function syncReviewLogAsUI() {
@@ -1143,6 +1139,7 @@ const UI = (() => {
     $("#rev-ingredients").value = ((f.recipe && f.recipe.ingredients) || []).map((i) => i.text).join("\n");
     $("#rev-prep").value = (f.recipe && f.recipe.prep) || "";
     $("#rev-notes").value = (f.recipe && f.recipe.notes) || "";
+    if ($("#rev-context")) $("#rev-context").value = f.context || "";
     autosizeRevGrowFields();
     $("#btn-review-save").disabled = !parsed.canSave && !(opts && opts.forceEnable);
     const err = $("#review-errors");
@@ -1266,6 +1263,7 @@ const UI = (() => {
         prep: $("#rev-prep").value.trim(),
         notes: $("#rev-notes").value.trim(),
       },
+      context: ($("#rev-context") && $("#rev-context").value || "").trim().slice(0, 500),
       confidence: (base && base.confidence) || "medium",
       sd: (base && base.sd) || 0.12,
       raw: (base && base.raw) || "",
@@ -3639,6 +3637,8 @@ const UI = (() => {
     const macrosEl = $("#once-macros");
     const nudge = $("#once-macro-nudge");
     if (nameEl) nameEl.value = entry ? String(entry.name || "") : "";
+    const noteEl = $("#once-note");
+    if (noteEl) noteEl.value = entry && entry.note != null ? String(entry.note) : "";
     fillMealChips("#once-meals", (entry && entry.meal) || o.meal || undefined);
 
     let unit = entry && entry.unit === "oz" ? "oz"
@@ -3727,16 +3727,6 @@ const UI = (() => {
     // Keep Estimate available while editing so Edit → Estimate can amend (not hide it).
     const estimateAi = $("#once-estimate-ai");
     if (estimateAi) estimateAi.hidden = false;
-    const promote = $("#once-promote");
-    if (promote) {
-      const canPromote = !!(entry && entry.source === "once" && Number(entry.grams) > 0 && o.allowRemove);
-      promote.hidden = !canPromote;
-      promote.disabled = !canPromote;
-      promote.title = canPromote
-        ? ""
-        : "Add a portion weight first; a saved food needs to know what 100 g looks like.";
-      promote.dataset.entryId = (entry && entry.id) || "";
-    }
   }
 
   function selectedOnceChip(rootSel, attr) {
@@ -3790,6 +3780,10 @@ const UI = (() => {
 
     if (errors.length) return { ok: false, errors };
 
+    const note = ($("#once-note") && $("#once-note").value || "").trim();
+    if (note.length > 500) errors.push("Note must be 500 characters or fewer");
+    if (errors.length) return { ok: false, errors };
+
     return {
       ok: true,
       errors: [],
@@ -3801,6 +3795,7 @@ const UI = (() => {
         cat: selectedOnceCat(),
         confidence: selectedOnceConfidence(),
         macrosOpened: macrosOpen,
+        note,
         macros: {
           kcal: kcalParsed.value,
           p: p.value || 0,
@@ -3842,6 +3837,7 @@ const UI = (() => {
         cat: selectedOnceCat(),
         confidence: selectedOnceConfidence(),
         macrosOpened: macrosOpen,
+        note: ($("#once-note") && $("#once-note").value || "").trim().slice(0, 500),
         macros: {
           kcal,
           p: numOrNull(p),
@@ -3877,6 +3873,7 @@ const UI = (() => {
     if (m.na != null && Number.isFinite(Number(m.na))) known.push(`Na ${m.na} mg`);
     if (m.k != null && Number.isFinite(Number(m.k))) known.push(`K ${m.k} mg`);
     if (known.length) lines.push(`Known macros: ${known.join(", ")}`);
+    if (d.note) lines.push(`Context: ${d.note}`);
     return lines.join("\n");
   }
 
@@ -3900,6 +3897,7 @@ const UI = (() => {
         unit,
         qty: qty != null ? qty : (unit === "portion" ? 1 : 0),
         grams,
+        note: d.note || "",
         macros: {
           kcal: m.kcal != null ? m.kcal : "",
           p: m.p != null ? m.p : "",

@@ -86,6 +86,7 @@ const NutriParse = (() => {
     "- <ingredient> - <amount in grams>\n" +
     "Prep: <one or two lines: cooking method, oil used, anything that changes the numbers>\n" +
     "Notes: <assumptions — oil absorbed, butter finish, sugar in sauces, and whether this came from a label, menu, or photo>\n" +
+    "Context: <optional situational note — who/where/occasion; omit if none>\n" +
     "Confidence: <high | medium | low>\n" +
     "END\n\n" +
     "Rules:\n" +
@@ -106,6 +107,8 @@ const NutriParse = (() => {
     "  Confidence: high is allowed — copy those label numbers and say so in Notes.\n" +
     "- Where a nutrition label is present, prefer it, use the per-serving column, and state the\n" +
     "  serving size assumed in Notes.\n" +
+    "- Context is for diary memory only (gathering, restaurant, who I ate with). Keep Notes for\n" +
+    "  nutrition assumptions. Omit Context when there is nothing situational to record.\n" +
     "- Before you reply with the block, Atwater-check: 4×P + 4×C + 9×F should land within about 10%\n" +
     "  of the kcal on the same basis. Recompute if it does not.\n" +
     "- Do not invent a food. If nothing follows the slot below — no description and no image —\n" +
@@ -271,6 +274,7 @@ const NutriParse = (() => {
     ingredients: "ingredients",
     prep: "prep", preparation: "prep", method: "prep",
     notes: "notes",
+    context: "context", occasion: "context", situation: "context",
     confidence: "confidence",
   };
 
@@ -629,6 +633,7 @@ const NutriParse = (() => {
 
     const prep = prepParts.join("\n").slice(0, 1000);
     const notes = notesParts.join("\n").slice(0, 1000);
+    const context = String(fields.context || "").trim().slice(0, 500);
     const hasIngredients = ingredientLines.length > 0;
     const weighed = batch.grams != null ? batch.weighed : true;
     if (batch.grams != null && !weighed) warnings.push("Batch weight was estimated — weigh the finished dish next time for tighter numbers.");
@@ -651,6 +656,7 @@ const NutriParse = (() => {
         prep,
         notes,
       },
+      context,
       confidence,
       sd,
       chatgptPer100,

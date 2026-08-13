@@ -4113,7 +4113,7 @@ END`;
   {
     const expectedKeys = [
       "name", "foodId", "cat", "grams", "displayQty", "qty", "unit",
-      "macros", "sd", "meal", "source",
+      "macros", "sd", "meal", "source", "note",
     ].sort();
     const once = Foods.entryFromOnceDraft({
       name: "Pad thai",
@@ -4124,6 +4124,15 @@ END`;
     ok(JSON.stringify(Object.keys(once).sort()) === JSON.stringify(expectedKeys),
       "entryFromOnceDraft returns the full one-off key set (no per100)",
       Object.keys(once).sort().join(","));
+    ok(once.note === "", "missing draft.note becomes empty string");
+    const withNote = Foods.entryFromOnceDraft({
+      name: "Pad thai",
+      note: "  Dinner with family  ",
+      macros: { kcal: 700, p: 30, c: 80, f: 25, fb: 4, na: null, k: null },
+      confidence: "estimated",
+      macrosOpened: true,
+    }, 1, "portion", "dinner");
+    ok(withNote.note === "Dinner with family", "draft.note is trimmed onto the entry");
     ok(!Object.prototype.hasOwnProperty.call(once, "per100") && once.source === "once" && once.foodId === null,
       "one-off has source once, foodId null, and no per100 key");
     ok(once.macros.na === null && once.macros.k === null,

@@ -8,7 +8,7 @@ const App = (() => {
   const RECONNECT_HIDE_DAY_KEY = "nd_reconnect_hide_day";
   const DEFAULT_GOALS = Phases.DEFAULT_GOALS;
   const PRODUCER_LIMITS = Object.freeze({
-    text: Object.freeze({ name: 160, displayQty: 160, alias: 160, aliases: 50, ingredient: 500, prep: 5000, notes: 5000, raw: 12000, unit: 32, countLabel: 32 }),
+    text: Object.freeze({ name: 160, displayQty: 160, alias: 160, aliases: 50, ingredient: 500, prep: 5000, notes: 5000, entryNote: 500, raw: 12000, unit: 32, countLabel: 32 }),
     amount: 1e9,
     batchServings: 1e7,
     sd: 10,
@@ -38,7 +38,6 @@ const App = (() => {
     reviewParsed: null,
     updateFoodId: null,
     saveAsNew: false,
-    promotingOnce: false, // Save to My Foods from a weighed once — hide Log once
     editFoodDirect: false, // opened review without NUTRI import step
     foodSaveIntent: "library", // "library" | "log" | "estimate" — paste prompt + review primary
     onceDraftPending: null, // lenient Log once snapshot while Estimate paste is open
@@ -98,6 +97,9 @@ const App = (() => {
         !producerNumber(e.qty, { min: 0, max: PRODUCER_LIMITS.amount })) return "Amount is outside the supported range";
     if (!producerNumber(e.sd, { min: 0, max: PRODUCER_LIMITS.sd })) return "Uncertainty is outside the supported range";
     if (!producerText(String(e.unit || ""), PRODUCER_LIMITS.text.unit)) return "Unit label is too long";
+    if (e.note != null && !producerText(String(e.note), PRODUCER_LIMITS.text.entryNote)) {
+      return "Note must be 500 characters or fewer";
+    }
     if (!IMPORT_MEALS.has(e.meal || "snack")) return "Meal is invalid";
     for (const key of ["kcal", "p", "c", "f", "fb", "na", "k"]) {
       const nullable = key === "na" || key === "k";
@@ -1282,6 +1284,7 @@ const App = (() => {
       unit: entry.unit,
       per100: entry.per100,
       foodVersion: entry.foodVersion,
+      note: entry.note != null ? String(entry.note) : "",
     };
   }
 
@@ -3199,7 +3202,7 @@ const App = (() => {
         UI.setOnceErrors(["Calories for that portion are required"]);
         return;
       }
-      // Keep portion mass when the user entered g/oz so Save to My Foods can work later.
+      // Keep portion mass when the user entered g/oz (display / edit shell).
       // unit:"kcal" + qty:kcal preserves the legacy Quick identity for badges / edit shell.
       let grams = 0;
       let displayQty = `${kcal} kcal`;
@@ -3239,6 +3242,7 @@ const App = (() => {
           foodId: null,
           qty: kcal,
           unit: "kcal",
+          note: String(read.draft.note || "").trim(),
         };
       }
     } else {
@@ -3279,70 +3283,6 @@ const App = (() => {
     clearOnceEstimatePending();
     refreshDay();
     UI.toast("Logged");
-  }
-
-  /**
-   * Promote a source:once entry into My Foods via the review sheet.
-   * Requires grams > 0 (hard precondition — no inventing per100 from thin air).
-   * Does not back-link foodId onto the historical entry (§10 Correction B).
-   */
-  function promoteOnce(entry) {
-    if (!entry || entry.source !== "once" || !(Number(entry.grams) > 0)) return;
-    const grams = Number(entry.grams);
-    const scale = 100 / grams;
-    const m = entry.macros || {};
-    const round1 = (n) => Math.round(Number(n) * 10) / 10;
-    const per100 = {
-      kcal: round1((Number(m.kcal) || 0) * scale),
-      p: round1((Number(m.p) || 0) * scale),
-      c: round1((Number(m.c) || 0) * scale),
-      f: round1((Number(m.f) || 0) * scale),
-      fb: round1((Number(m.fb) || 0) * scale),
-      na: m.na == null || m.na === "" ? null : round1(Number(m.na) * scale),
-      k: m.k == null || m.k === "" ? null : round1(Number(m.k) * scale),
-    };
-    if (per100.na != null && !Number.isFinite(per100.na)) per100.na = null;
-    if (per100.k != null && !Number.isFinite(per100.k)) per100.k = null;
-    state.updateFoodId = null;
-    state.saveAsNew = true;
-    state.promotingOnce = true;
-    // Promote is library-create only — clear any ledger edit arm so Log once cannot amend.
-    state.editEntryId = null;
-    state.editEntryDay = null;
-    state.editFoodDirect = true;
-    state.foodSaveIntent = "library";
-    state.reviewParsed = {
-      canSave: true,
-      food: {
-        name: entry.name,
-        aliases: [],
-        cat: entry.cat || "dish",
-        per100,
-        units: {},
-        logAs: "grams",
-        batch: null,
-        recipe: {
-          ingredients: [],
-          prep: "",
-          notes: "Promoted from a one-off log.",
-        },
-        confidence: "low",
-        sd: Math.max(Number(entry.sd) || 0.25, 0.2),
-        raw: "",
-      },
-      warnings: [],
-      rejects: [],
-    };
-    UI.closeSheet("sheet-once");
-    UI.closeSheet("sheet-add");
-    UI.openSheet("sheet-paste");
-    UI.showReview(state.reviewParsed, {
-      forceEnable: true,
-      title: "Save to My Foods",
-      duplicate: Foods.findByName(state.personalFoods, entry.name) || null,
-      suppressUpdateDup: true,
-    });
-    validateReviewSave();
   }
 
   function jumpToToday() {
@@ -3607,7 +3547,6 @@ const App = (() => {
 
     state.updateFoodId = target.id;
     state.saveAsNew = false;
-    state.promotingOnce = false;
     state.editFoodDirect = true;
     state.reviewParsed = {
       canSave: true,
@@ -3851,7 +3790,6 @@ const App = (() => {
   function openPaste(opts) {
     state.updateFoodId = (opts && opts.updateId) || null;
     state.saveAsNew = false;
-    state.promotingOnce = false;
     state.editFoodDirect = false;
     state.reviewParsed = null;
     const intent = opts && opts.intent;
@@ -3953,7 +3891,6 @@ const App = (() => {
   /** L3: dismiss paste without leaking estimate intent into a later homemade open. */
   function resetPasteIntent() {
     state.foodSaveIntent = "library";
-    state.promotingOnce = false;
     state.estimateSeedText = "";
   }
 
@@ -4116,9 +4053,9 @@ const App = (() => {
     UI.$("#btn-review-save").disabled = reasons.length > 0;
     const logOnce = UI.$("#btn-review-log-once");
     if (logOnce) {
-      // Hidden while updating a library food, or while promoting a one-off to My Foods.
+      // Hidden while updating a library food.
       // Do not key off saveAsNew alone — "Save as separate" also sets it and still allows Log once.
-      const hideLogOnce = !!state.updateFoodId || !!state.promotingOnce;
+      const hideLogOnce = !!state.updateFoodId;
       logOnce.hidden = hideLogOnce;
       logOnce.disabled = hideLogOnce || reasons.length > 0;
     }
@@ -4129,12 +4066,12 @@ const App = (() => {
   /**
    * Log the review draft as a one-off (source:once) without writing My Foods.
    * Always 1 portion of the imported Totals (batch-scaled from per100 when Batch
-   * is set). Mass is kept on entry.grams for promote/plausibility only — display
+   * is set). Mass is kept on entry.grams for plausibility only — display
    * stays "1 portion", not an editable grams multiplier.
    * When editing a ledger entry (Estimate-from-edit), amend that id — do not add a duplicate.
    */
   function logOnceFromReview() {
-    if (state.updateFoodId || state.promotingOnce) return;
+    if (state.updateFoodId) return;
     if (!validateReviewSave()) { UI.toast("Fix the highlighted fields"); return; }
     const draft = UI.readReviewDraft(state.reviewParsed && state.reviewParsed.food);
     const batchG = Number(draft.batch && draft.batch.grams);
@@ -4161,8 +4098,9 @@ const App = (() => {
       macros,
       confidence: onceConfidenceFromReview(draft.confidence),
       macrosOpened: true,
+      note: draft.context || "",
     }, 1, "portion", meal);
-    // Keep estimated/batch mass for promote + plausibility; unit stays portion.
+    // Keep estimated/batch mass for plausibility; unit stays portion.
     if (Number.isFinite(massGrams) && massGrams > 0) {
       entry.grams = Math.round(massGrams);
     }
@@ -4184,7 +4122,6 @@ const App = (() => {
     state.editEntryDay = null;
     state.updateFoodId = null;
     state.saveAsNew = false;
-    state.promotingOnce = false;
     state.editFoodDirect = false;
     state.foodSaveIntent = "library";
     state.reviewParsed = null;
@@ -4253,7 +4190,6 @@ const App = (() => {
     UI.toast(updateId ? "Food updated" : "Food saved");
     state.updateFoodId = null;
     state.saveAsNew = false;
-    state.promotingOnce = false;
     state.editFoodDirect = false;
     state.foodSaveIntent = "library";
     clearOnceEstimatePending();
@@ -5003,6 +4939,8 @@ const App = (() => {
     for (const [key, max] of [["source", 40], ["cat", 40], ["unit", 32]]) {
       if (raw[key] != null) out[key] = importedString(raw[key], `${label}.${key}`, { max });
     }
+    if (raw.note != null) out.note = importedString(raw.note, `${label}.note`, { max: 500, trim: false });
+    else if (full) out.note = "";
     if (raw.foodId != null) out.foodId = importedString(raw.foodId, `${label}.foodId`, { max: 160 });
     else if (full) out.foodId = null;
     return out;
@@ -7030,14 +6968,6 @@ const App = (() => {
       resetQtyState();
       removeEntryWithUndo(day, id);
     });
-    if (UI.$("#once-promote")) {
-      UI.$("#once-promote").addEventListener("click", () => {
-        if (!state.editEntryId) return;
-        const entry = Ledger.entriesFor(editDay()).find((e) => e.id === state.editEntryId);
-        if (!entry) return;
-        promoteOnce(entry);
-      });
-    }
 
     UI.$("#qty-input").addEventListener("input", () => state.pickFood && UI.updateQtyPreview(state.pickFood));
     UI.$("#qty-units").addEventListener("click", (e) => {
@@ -7183,7 +7113,7 @@ const App = (() => {
     ["#rev-name", "#rev-kcal", "#rev-p", "#rev-c", "#rev-f", "#rev-fb", "#rev-na", "#rev-k"].forEach((sel) => {
       UI.$(sel).addEventListener("input", validateReviewSave);
     });
-    ["#rev-ingredients", "#rev-prep", "#rev-notes"].forEach((sel) => {
+    ["#rev-ingredients", "#rev-prep", "#rev-notes", "#rev-context"].forEach((sel) => {
       const el = UI.$(sel);
       if (!el) return;
       el.addEventListener("input", () => UI.autosizeRevGrowFields());
@@ -7572,10 +7502,6 @@ const App = (() => {
         const day = actionEl.dataset.day || state.viewDay;
         if (!Ledger.entriesFor(day).some((x) => x.id === id)) return;
         removeEntryWithUndo(day, id);
-      } else if (action === "promote-once") {
-        const entry = Ledger.entriesFor(state.viewDay).find((x) => x.id === id);
-        if (!entry) return;
-        promoteOnce(entry);
       } else if (action === "repeat-yesterday") {
         const entry = Ledger.entriesFor(state.yesterdayKey || yesterdayKey()).find((x) => x.id === id);
         if (!entry) return;

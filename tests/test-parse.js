@@ -479,9 +479,36 @@ Confidence: medium
     "ESTIMATE_PROMPT invites evidence, questions, confidence cap, and an open slot");
   ok(/restaurant or packaged item lists full nutrition|Confidence: high is allowed/i.test(NutriParse.ESTIMATE_PROMPT),
     "ESTIMATE_PROMPT allows Confidence: high for labeled restaurant / packaged nutrition");
+  ok(/Context: <optional situational note/i.test(NutriParse.ESTIMATE_PROMPT),
+    "ESTIMATE_PROMPT includes optional Context for gathering / occasion notes");
   ok(/No commentary before or after/i.test(NutriParse.PROMPT) &&
       !/clarifying questions/i.test(NutriParse.PROMPT),
     "strict PROMPT stays one-shot (estimate rules not mixed in)");
+
+  {
+    const withContext = NutriParse.parse(`\`\`\`
+NUTRI v1
+Name: Gathering pad thai
+Category: dish
+Batch: 400 g total, 1 servings
+Totals: 850 kcal | P 32 | C 90 | F 28 | Fiber 6 | Sodium 900 | Potassium 400
+Per 100 g: 212.5 kcal | P 8 | C 22.5 | F 7 | Fiber 1.5 | Sodium 225 | Potassium 100
+Log as: grams
+Ingredients:
+- rice noodles - 200
+Prep: stir-fried
+Notes: oil absorbed estimated
+Context: Dinner with the Smith family at Thai House
+Confidence: medium
+END
+\`\`\``);
+    const picked = NutriParse.pickPasteResult(withContext);
+    ok(picked && picked.food && picked.food.context === "Dinner with the Smith family at Thai House",
+      "parser maps Context into food.context",
+      picked && picked.food && picked.food.context);
+    ok(picked && picked.food && /oil absorbed/i.test(picked.food.recipe && picked.food.recipe.notes || ""),
+      "Notes stay nutrition assumptions separate from Context");
+  }
 
   // L1: prose must not open an extractBlocks match (avoids spurious untitled block).
   const estSelf = NutriParse.parse(NutriParse.ESTIMATE_PROMPT);

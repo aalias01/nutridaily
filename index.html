@@ -502,13 +502,14 @@ one food per line also works" autocomplete="off" aria-label="Foods with amounts"
       <div id="once-cats" class="unit-chips" role="group" aria-label="Category"></div>
       <label class="small muted">How sure are you?</label>
       <div id="once-confidence" class="unit-chips" role="group" aria-label="Confidence"></div>
+      <label class="small muted" for="once-note">Note (optional)</label>
+      <textarea id="once-note" rows="2" maxlength="500" placeholder="e.g. Dinner with the Smiths at Thai House"></textarea>
       <p id="once-errors" class="banner warn" hidden></p>
       <button id="once-estimate-ai" class="btn ghost full" type="button">Estimate with AI</button>
       <button id="once-save" class="btn full" type="button">Save</button>
       <div class="row qty-secondary">
         <button id="once-cancel" class="btn ghost" type="button">Cancel</button>
       </div>
-      <button id="once-promote" class="linkbtn" type="button" hidden>Save to My Foods</button>
       <button id="once-remove" class="linkbtn danger" type="button" hidden>Remove this log entry</button>
     </div>
   </div>
@@ -849,7 +850,8 @@ END</pre>
         </details>
         <label>Ingredients (one per line)<textarea id="rev-ingredients" class="rev-grow" rows="3" data-min-rows="3" data-max-rows="8"></textarea></label>
         <label>Prep<textarea id="rev-prep" class="rev-grow" rows="2" data-min-rows="2" data-max-rows="6"></textarea></label>
-        <label>Notes<textarea id="rev-notes" class="rev-grow" rows="2" data-min-rows="2" data-max-rows="6"></textarea></label>
+        <label>Notes <span class="muted small">assumptions</span><textarea id="rev-notes" class="rev-grow" rows="2" data-min-rows="2" data-max-rows="6"></textarea></label>
+        <label>Context <span class="muted small">optional · who / where / occasion</span><textarea id="rev-context" class="rev-grow" rows="2" data-min-rows="2" data-max-rows="4" maxlength="500" placeholder="e.g. Dinner with the Smith family at Thai House"></textarea></label>
         <details id="rev-ai-refine" class="rev-ai-refine" hidden>
           <summary>
             <span class="rev-ai-refine-title">Improve with AI</span>

@@ -201,7 +201,7 @@ const Foods = (() => {
    * One-off (source:"once") ledger snapshot from a portion-first draft.
    * Never writes `per100` — see ONE-OFF-FOODS-PLAN §5.2 / Ledger once-per100 guard.
    *
-   * @param {object} draft { name, cat?, macros:{kcal,p,c,f,fb,na?,k?}, confidence?, macrosOpened? }
+   * @param {object} draft { name, cat?, macros:{kcal,p,c,f,fb,na?,k?}, confidence?, macrosOpened?, note? }
    * @param {number} qty
    * @param {"g"|"oz"|"portion"} unit
    * @param {string} [meal]
@@ -258,6 +258,8 @@ const Foods = (() => {
       sd,
       meal: meal || inferMeal(),
       source: "once",
+      // Always set so amends clear a prior note (Object.assign would keep old keys).
+      note: String(d.note || "").trim(),
     };
   }
 

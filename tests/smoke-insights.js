@@ -3995,112 +3995,60 @@ async function runImportSecurity() {
     App.state.viewDay = today;
   }
 
-  // Step 8 — Promote a weighed one-off to My Foods without rewriting history or a same-name food.
+  // Step 8 — One-offs stay disposable: no Save to My Foods; optional note on expand.
   {
     const UI = window.eval("UI");
-    const Foods = window.eval("Foods");
-    const promoteDay = "2019-08-01";
-    App.state.viewDay = promoteDay;
+    const noteDay = "2019-08-01";
+    App.state.viewDay = noteDay;
     [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
-
-    // grams:0 → disabled control.
-    Ledger.addEntry(promoteDay, {
-      name: "Unknown mass bowl",
-      foodId: null, cat: "dish", grams: 0, displayQty: "1 portion", qty: 1, unit: "portion",
-      macros: { kcal: 600, p: 20, c: 70, f: 18, fb: 4, na: null, k: null },
-      sd: 0.25, meal: "dinner", source: "once",
-    });
-    const zeroG = Ledger.entriesFor(promoteDay).find((e) => e.name === "Unknown mass bowl");
-    UI.renderDayLog(promoteDay, Ledger.entriesFor(promoteDay));
-    $(`#day-log [data-action='toggle-entry'][data-id='${zeroG.id}']`).click();
-    const disabledBtn = [...$("#day-log").querySelectorAll("button.linkbtn")]
-      .find((b) => /Save to My Foods/.test(b.textContent) && b.disabled);
-    ok(!$(`#day-log [data-action='promote-once'][data-id='${zeroG.id}']`) && !!disabledBtn,
-      "grams:0 one-off shows Save to My Foods disabled (no inventing per100)");
-
-    // Library same-name fixture for the banner path.
-    const foodsBeforeLib = App.state.personalFoods.length;
-    const padThaiLib = Foods.createFromDraft({
-      name: "Pad thai", cat: "dish",
-      per100: { kcal: 150, p: 8, c: 20, f: 4, fb: 1, na: 200, k: 100 },
-      units: {}, logAs: "grams",
-      recipe: { ingredients: [], prep: "", notes: "fixture library pad thai" },
-      confidence: "medium", sd: 0.12, raw: "",
-    });
-    padThaiLib.id = "lib-pad-thai-promote";
-    padThaiLib.version = 3;
-    padThaiLib.history = [];
-    padThaiLib.resetEpoch = Sync.getResetAt();
-    App.state.personalFoods = App.state.personalFoods.concat([padThaiLib]);
-    window.localStorage.setItem("nd_personal_v1", JSON.stringify(App.state.personalFoods));
-
-    Ledger.addEntry(promoteDay, {
-      name: "Pad thai",
-      foodId: null, cat: "dish", grams: 250, displayQty: "250 g", qty: 250, unit: "g",
-      macros: { kcal: 500, p: 25, c: 60, f: 15, fb: 5, na: null, k: 400 },
-      sd: 0.25, meal: "lunch", source: "once",
-    });
-    const weighed = Ledger.entriesFor(promoteDay).find((e) => e.source === "once" && e.grams === 250 && e.name === "Pad thai");
-    const libBefore = JSON.parse(JSON.stringify(App.state.personalFoods.find((f) => f.id === "lib-pad-thai-promote")));
-    UI.renderDayLog(promoteDay, Ledger.entriesFor(promoteDay));
-    $(`#day-log [data-action='toggle-entry'][data-id='${weighed.id}']`).click();
-    $(`#day-log [data-action='promote-once'][data-id='${weighed.id}']`).click();
-    ok(App.state.saveAsNew === true && !App.state.updateFoodId,
-      "promote arms saveAsNew and clears updateFoodId");
-    ok(!$("#review-dup").hidden && !$("#review-dup [data-action='update-dup']"),
-      "same-name library food shows a notice without Update that one");
-    ok($("#rev-na").value === "" && Number($("#rev-k").value) === 160,
-      "unknown sodium stays blank; potassium scales 400→160 per 100 g");
-
-    // Capture length immediately before Save — includes the fixture library food.
-    const foodsBeforeSave = App.state.personalFoods.length;
-    ok(!$("#btn-review-save").disabled, "promote review is saveable");
-    $("#btn-review-save").click();
-    await new Promise((r) => setTimeout(r, 40));
-    const libAfter = App.state.personalFoods.find((f) => f.id === "lib-pad-thai-promote");
-    ok(libAfter && libAfter.version === libBefore.version &&
-        JSON.stringify(libAfter.per100) === JSON.stringify(libBefore.per100),
-      "promote does not mutate the same-named library food");
-    const created = App.state.personalFoods.filter((f) =>
-      !f.deleted && f.id !== "lib-pad-thai-promote" &&
-      String(f.name || "").toLowerCase() === "pad thai");
-    ok(created.length >= 1 && created.some((f) => f.per100 && Math.abs(Number(f.per100.kcal) - 200) < 0.6 && f.per100.na == null),
-      "promote creates a scaled Pad thai with unknown sodium kept null",
-      `count=${created.length}; toast=${($("#toast") && $("#toast").textContent) || ""}`);
-    ok(App.state.personalFoods.length === foodsBeforeSave + 1,
-      "promote adds exactly one My Foods row");
-    const sourceStill = Ledger.entriesFor(promoteDay).find((e) => e.id === weighed.id);
-    ok(sourceStill && sourceStill.foodId == null && sourceStill.source === "once",
-      "promotion does not back-link foodId onto the historical entry");
-
-    Ledger.addEntry(promoteDay, {
-      name: "Tiny dense bite",
-      foodId: null, cat: "snack", grams: 5, displayQty: "5 g", qty: 5, unit: "g",
-      macros: { kcal: 80, p: 1, c: 1, f: 8, fb: 0, na: null, k: null },
-      sd: 0.25, meal: "snack", source: "once",
-    });
-    const tiny = Ledger.entriesFor(promoteDay).find((e) => e.name === "Tiny dense bite");
-    const foodsMid = App.state.personalFoods.length;
-    [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
-    App.state.viewDay = promoteDay;
     UI.closeAllSheets();
-    await new Promise((r) => setTimeout(r, 220));
-    UI.renderDayLog(promoteDay, Ledger.entriesFor(promoteDay));
-    const tinyToggle = $(`#day-log [data-action='toggle-entry'][data-id='${tiny.id}']`);
-    ok(!!tinyToggle, "fixture: tiny dense one-off is on the day log");
-    if (tinyToggle) tinyToggle.click();
-    const tinyPromote = $(`#day-log [data-action='promote-once'][data-id='${tiny.id}']`);
-    ok(!!tinyPromote, "fixture: tiny dense one-off exposes Save to My Foods");
-    if (tinyPromote) tinyPromote.click();
-    ok($("#btn-review-save").disabled && /kcal per 100 g looks impossibly high/i.test($("#review-errors").textContent || ""),
-      "derived per100 out of bounds is refused by validateReviewSave");
-    ok(App.state.personalFoods.length === foodsMid, "refused promote writes nothing to My Foods");
-    UI.closeSheet("sheet-paste");
+    await new Promise((r) => setTimeout(r, 80));
+
+    $("#fab-add").click();
+    $("#btn-once-food").click();
+    $("#once-name").value = "Pad thai — gathering";
+    $("#once-kcal").value = "850";
+    const portionChip = $("#once-units [data-unit='portion']");
+    if (portionChip) portionChip.click();
+    $("#once-qty").value = "1";
+    if ($("#once-macros")) $("#once-macros").open = true;
+    $("#once-p").value = "32";
+    $("#once-c").value = "90";
+    $("#once-f").value = "28";
+    $("#once-fb").value = "6";
+    if ($("#once-note")) $("#once-note").value = "Dinner with the Smith family at Thai House";
+    $("#once-save").click();
+    const noted = Ledger.entriesFor(noteDay).find((e) => e.name === "Pad thai — gathering");
+    ok(noted && noted.source === "once" && noted.note === "Dinner with the Smith family at Thai House",
+      "Log once saves optional note on the ledger entry");
+    ok(!$("#once-promote"), "Log once sheet has no Save to My Foods control");
+
+    UI.renderDayLog(noteDay, Ledger.entriesFor(noteDay));
+    $(`#day-log [data-action='toggle-entry'][data-id='${noted.id}']`).click();
+    ok(!$(`#day-log [data-action='promote-once']`),
+      "expanded one-off has no promote action");
+    const noteEl = $("#day-log .r-note");
+    ok(!!noteEl && /Smith family/.test(noteEl.textContent || ""),
+      "expanded one-off shows the context note");
+
+    // Edit clears / amends note.
+    App.state.editEntryId = noted.id;
+    App.state.editEntryDay = noteDay;
+    UI.fillOnceSheet({ from: noted, allowRemove: true, imperial: false });
+    UI.openSheet("sheet-once");
+    ok($("#once-note").value === "Dinner with the Smith family at Thai House",
+      "edit prefills the note field");
+    $("#once-note").value = "";
+    $("#once-save").click();
+    const cleared = Ledger.entriesFor(noteDay).find((e) => e.id === noted.id);
+    ok(cleared && cleared.note === "",
+      "amend with blank note clears the prior note");
+
     App.state.viewDay = today;
-    await new Promise((r) => setTimeout(r, 220));
+    await new Promise((r) => setTimeout(r, 80));
   }
 
-  // H1–H3 — Steps 7–10 review merge-blockers (promote Log once; grams on kcal-only; zero-macro once edit).
+  // H2–H3 — Steps 7–10 merge-blockers (grams on kcal-only; zero-macro once edit).
   {
     const UI = window.eval("UI");
     const fixDay = "2019-08-02";
@@ -4109,7 +4057,7 @@ async function runImportSecurity() {
     UI.closeAllSheets();
     await new Promise((r) => setTimeout(r, 80));
 
-    // H2: macros-closed + grams keeps mass on source:quick (promote path still possible later).
+    // H2: macros-closed + grams keeps mass on source:quick.
     $("#fab-add").click();
     $("#btn-once-food").click();
     $("#once-name").value = "Airport bowl 350g";
@@ -4130,7 +4078,7 @@ async function runImportSecurity() {
       name: "Weighed zero macros",
       foodId: null, cat: "dish", grams: 300, displayQty: "300 g", qty: 300, unit: "g",
       macros: { kcal: 400, p: 0, c: 0, f: 0, fb: 0, na: null, k: null },
-      sd: 0.25, meal: "lunch", source: "once",
+      sd: 0.25, meal: "lunch", source: "once", note: "",
     });
     const h3 = Ledger.entriesFor(fixDay).find((e) => e.name === "Weighed zero macros");
     App.state.editEntryId = h3.id;
@@ -4146,36 +4094,6 @@ async function runImportSecurity() {
       "H3: no-op Save keeps source:once and grams",
       h3After && JSON.stringify({ source: h3After.source, grams: h3After.grams, unit: h3After.unit }));
 
-    // H1: promote clears edit arm; Log once is hidden and cannot rewrite the ledger row.
-    Ledger.addEntry(fixDay, {
-      name: "Promote guard bowl",
-      foodId: null, cat: "dish", grams: 250, displayQty: "250 g", qty: 250, unit: "g",
-      macros: { kcal: 500, p: 25, c: 60, f: 15, fb: 5, na: null, k: 400 },
-      sd: 0.25, meal: "dinner", source: "once",
-    });
-    const h1 = Ledger.entriesFor(fixDay).find((e) => e.name === "Promote guard bowl");
-    App.state.editEntryId = h1.id;
-    App.state.editEntryDay = fixDay;
-    App.state.viewDay = fixDay;
-    UI.renderDayLog(fixDay, Ledger.entriesFor(fixDay));
-    $(`#day-log [data-action='toggle-entry'][data-id='${h1.id}']`).click();
-    $(`#day-log [data-action='promote-once'][data-id='${h1.id}']`).click();
-    ok(App.state.saveAsNew === true && App.state.promotingOnce === true && !App.state.editEntryId,
-      "H1: promote arms saveAsNew/promotingOnce and clears editEntryId");
-    const logOnceBtn = $("#btn-review-log-once");
-    ok(!!logOnceBtn && logOnceBtn.hidden,
-      "H1: Log once is hidden on the Save to My Foods (promote) sheet");
-    // Even if a caller forced the button visible, the handler must no-op.
-    logOnceBtn.hidden = false;
-    logOnceBtn.disabled = false;
-    logOnceBtn.click();
-    const h1After = Ledger.entriesFor(fixDay).find((e) => e.id === h1.id);
-    ok(h1After && h1After.grams === 250 && h1After.macros.kcal === 500 && h1After.source === "once",
-      "H1: Log once during promote does not rewrite the historical once entry",
-      h1After && JSON.stringify({ grams: h1After.grams, kcal: h1After.macros && h1After.macros.kcal, source: h1After.source }));
-    UI.closeSheet("sheet-paste");
-    App.state.saveAsNew = false;
-    App.state.promotingOnce = false;
     App.state.editEntryId = null;
     App.state.editEntryDay = null;
     App.state.viewDay = today;
@@ -4519,6 +4437,7 @@ async function runImportSecurity() {
     if (App.state.reviewParsed && App.state.reviewParsed.food) {
       App.state.reviewParsed.food.confidence = "low";
     }
+    if ($("#rev-context")) $("#rev-context").value = "Dinner with the Smith family at Thai House";
     $("#rev-name").dispatchEvent(new window.Event("input", { bubbles: true }));
     ok(!$("#btn-review-log-once").disabled &&
         $("#btn-review-log-once").classList.contains("btn") &&
@@ -4531,6 +4450,8 @@ async function runImportSecurity() {
     const estEntry = Ledger.entriesFor(estDay).find((e) => e.name === "Restaurant Bowl" && e.source === "once");
     ok(estEntry && estEntry.sd === 0.40 && !Object.prototype.hasOwnProperty.call(estEntry, "per100"),
       "Log once from estimate seeds low confidence as rough (sd 0.40) with no per100");
+    ok(estEntry && estEntry.note === "Dinner with the Smith family at Thai House",
+      "Log once from estimate copies Context into entry.note");
     UI.closeSheet("sheet-paste");
     App.state.viewDay = today;
     await new Promise((r) => setTimeout(r, 220));
