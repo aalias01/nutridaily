@@ -541,11 +541,7 @@ const App = (() => {
 
   function refreshSettingsSummaries() {
     const sample = !!(SampleProfile && SampleProfile.isSample && SampleProfile.isSample());
-    const profileLabel = sample
-      ? "Sample"
-      : (SampleProfile && SampleProfile.realDisplayName
-        ? SampleProfile.realDisplayName()
-        : "My tracking");
+    const profileLabel = sample ? "Sample" : "My tracking";
     setSettingsSum("#settings-sum-profile", profileLabel);
 
     const theme = state.settings.theme || "light";
@@ -643,28 +639,25 @@ const App = (() => {
 
   function refreshProfileSettingsUi() {
     const activeEl = UI.$("#profile-mode-active");
-    const nameEl = UI.$("#set-profile-display-name");
-    const createBtn = UI.$("#btn-profile-create");
-    const switchSample = UI.$("#btn-profile-sample");
-    const switchReal = UI.$("#btn-profile-real");
+    const toggleBtn = UI.$("#btn-profile-toggle");
     const resetBtn = UI.$("#btn-profile-reset-sample");
     const sample = SampleProfile && SampleProfile.isSample();
     const created = SampleProfile && SampleProfile.realCreated();
     if (activeEl) {
-      activeEl.textContent = sample
-        ? "Active: Sample"
-        : `Active: ${SampleProfile ? SampleProfile.realDisplayName() : "My tracking"}`;
+      activeEl.textContent = sample ? "Active: Sample" : "Active: My tracking";
     }
-    if (nameEl) {
-      nameEl.value = SampleProfile ? SampleProfile.realDisplayName() : "";
-      nameEl.disabled = !created && !!sample;
+    if (toggleBtn) {
+      if (!created) {
+        toggleBtn.textContent = "Start my tracking";
+        toggleBtn.dataset.profileAction = "create";
+      } else if (sample) {
+        toggleBtn.textContent = "Switch to my tracking";
+        toggleBtn.dataset.profileAction = "real";
+      } else {
+        toggleBtn.textContent = "View Sample";
+        toggleBtn.dataset.profileAction = "sample";
+      }
     }
-    if (createBtn) createBtn.hidden = !!created;
-    if (switchReal) {
-      switchReal.disabled = !created;
-      switchReal.hidden = !created;
-    }
-    if (switchSample) switchSample.hidden = false;
     if (resetBtn) resetBtn.hidden = false;
     const clearBtn = UI.$("#btn-clear");
     const factoryBtn = UI.$("#btn-factory-reset");
@@ -8292,38 +8285,26 @@ const App = (() => {
   }
 
   function wireProfileMode() {
-    const createBtn = UI.$("#btn-profile-create");
-    if (createBtn) {
-      createBtn.addEventListener("click", () => {
-        const nameInput = UI.$("#set-profile-display-name");
-        const name = (nameInput && nameInput.value.trim()) || "My tracking";
-        SampleProfile.createReal(name);
-        localStorage.setItem(ONB_KEY, "1");
-        UI.toast("Your tracking profile is ready");
-        refreshSampleChrome();
-        refreshProfileSettingsUi();
-      });
-    }
-    const sampleBtn = UI.$("#btn-profile-sample");
-    if (sampleBtn) {
-      sampleBtn.addEventListener("click", () => {
-        const result = SampleProfile.switchTo("sample");
-        if (!result.ok) UI.toast("Couldn’t open Sample");
-        else UI.toast("Viewing Sample");
-        refreshSampleChrome();
-        refreshProfileSettingsUi();
-      });
-    }
-    const realBtn = UI.$("#btn-profile-real");
-    if (realBtn) {
-      realBtn.addEventListener("click", () => {
-        const result = SampleProfile.switchTo("real");
-        if (!result.ok) {
-          UI.toast("Create your profile first");
-          openProfileSettings();
-          return;
+    const toggleBtn = UI.$("#btn-profile-toggle");
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", () => {
+        const action = toggleBtn.dataset.profileAction || "create";
+        if (action === "create") {
+          SampleProfile.createReal("My tracking");
+          localStorage.setItem(ONB_KEY, "1");
+          UI.toast("Your tracking profile is ready");
+        } else if (action === "real") {
+          const result = SampleProfile.switchTo("real");
+          if (!result.ok) {
+            UI.toast("Start your tracking first");
+            return;
+          }
+          UI.toast("Back to your tracking");
+        } else if (action === "sample") {
+          const result = SampleProfile.switchTo("sample");
+          if (!result.ok) UI.toast("Couldn’t open Sample");
+          else UI.toast("Viewing Sample");
         }
-        UI.toast("Back to your tracking");
         refreshSampleChrome();
         refreshProfileSettingsUi();
       });
@@ -8335,14 +8316,6 @@ const App = (() => {
         SampleProfile.resetSample(Ledger.todayKey());
         if (SampleProfile.isSample()) reloadActiveProfile();
         else UI.toast("Sample reset");
-        refreshProfileSettingsUi();
-      });
-    }
-    const nameEl = UI.$("#set-profile-display-name");
-    if (nameEl) {
-      nameEl.addEventListener("change", () => {
-        if (!SampleProfile.realCreated()) return;
-        SampleProfile.renameReal(nameEl.value);
         refreshProfileSettingsUi();
       });
     }

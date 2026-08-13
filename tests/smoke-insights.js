@@ -1940,10 +1940,12 @@ async function runEmpty() {
   ok(!/sample/i.test($("#sync-pill").textContent) || $("#sync-pill").hidden,
     "sync pill does not show a second Sample label");
   ok(!!$("#sheet-sample-intro") && !!$("#sheet-sample-warn"), "Sample intro and warn sheets are mounted");
-  ok(!!$("#profile-mode-card") && !!$("#btn-profile-create"), "Settings Profile card can create a real profile");
+  ok(!!$("#profile-mode-card") && !!$("#btn-profile-toggle"), "Settings Profile card has a single mode toggle");
   ok(!!$("#settings-sec-profile") && !!$("#settings-sec-appearance") && !!$("#settings-sec-backup"),
     "Settings uses collapsible section details");
   ok($("#settings-sec-profile").open, "Sample first-run keeps Profile section open by default");
+  ok($("#btn-profile-toggle").textContent.trim() === "Start my tracking",
+    "empty install offers Start my tracking on the toggle");
 
   // Accessibility contract for onboarding remains available when reopened.
   const onboarding = $("#onboarding");
@@ -1973,15 +1975,17 @@ async function runEmpty() {
   ok(maturity === "full", "Sample Insights maturity is full", `got ${maturity}`);
   ok(!$("#section-energy").hidden, "Sample unlocks the energy / TDEE card");
 
-  // Create Real profile → empty personal tracking; Sample remains available.
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "settings").click();
   await new Promise((r) => setTimeout(r, 20));
-  $("#set-profile-display-name").value = "Test User";
-  $("#btn-profile-create").click();
+  ok($("#btn-profile-toggle").textContent.trim() === "Start my tracking",
+    "empty install offers Start my tracking on the toggle");
+  $("#btn-profile-toggle").click();
   await new Promise((r) => setTimeout(r, 40));
-  ok(!SampleProfile.isSample(), "Create profile switches to Real");
+  ok(!SampleProfile.isSample(), "Start my tracking switches to Real");
   ok(SampleProfile.realCreated(), "Real profile is marked created");
   ok($("#sample-chip").hidden, "Sample chip hides on Real");
+  ok($("#btn-profile-toggle").textContent.trim() === "View Sample",
+    "on Real the toggle offers View Sample");
   ok(!$("#sync-pill").hidden, "sync pill returns on Real");
   ok(/local only|synced|reconnect|sync/i.test($("#sync-pill").textContent),
     "sync pill shows Drive / local status on Real, not Sample");
