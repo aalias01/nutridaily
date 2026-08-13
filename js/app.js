@@ -608,17 +608,37 @@ const App = (() => {
     return SampleProfile.guardMutation(action, showSampleWarn);
   }
 
+  function refreshSyncPillFromState() {
+    const st = Sync.state();
+    if (!st.enabled) {
+      UI.setSyncPill("local", "local only");
+      return;
+    }
+    if (st.status === "auth") UI.setSyncPill("warn", "reconnect");
+    else if (st.status === "pending" || st.status === "syncing") {
+      UI.setSyncPill("pending", st.status === "syncing" ? "syncing…" : "syncing…");
+    } else if (st.status === "error" || st.status === "warn") {
+      UI.setSyncPill("warn", "sync issue");
+    } else if (st.status === "ok") {
+      UI.setSyncPill("ok", st.email ? st.email.split("@")[0] : "synced");
+    } else {
+      UI.setSyncPill("local", "local only");
+    }
+  }
+
   function refreshSampleChrome() {
+    const sample = !!(SampleProfile && SampleProfile.isSample());
     const chip = UI.$("#sample-chip");
     if (chip) {
-      const on = !!(SampleProfile && SampleProfile.isSample());
-      chip.hidden = !on;
+      chip.hidden = !sample;
       chip.textContent = "Sample";
       chip.title = "Exploring sample data — not your real log";
     }
-    if (SampleProfile && SampleProfile.isSample()) {
-      UI.setSyncPill("local", "sample");
-    }
+    const pill = UI.$("#sync-pill");
+    if (pill) pill.hidden = sample;
+    // Sample never Drive-syncs — hide the sync pill so it does not duplicate Sample.
+    // On Real, restore the pill's normal Drive / local-only status.
+    if (!sample) refreshSyncPillFromState();
   }
 
   function refreshProfileSettingsUi() {
@@ -8202,13 +8222,15 @@ const App = (() => {
         saveSettings({ inbound: true });
       },
       onStatus: (s, detail) => {
-        if (s === "ok") {
-          localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
-          UI.setSyncPill("ok", Sync.state().email ? Sync.state().email.split("@")[0] : "synced");
-        } else if (s === "pending" || s === "syncing") UI.setSyncPill("pending", detail || "syncing…");
-        else if (s === "auth") UI.setSyncPill("warn", "reconnect");
-        else if (s === "error" || s === "warn") UI.setSyncPill("warn", detail || "sync issue");
-        else UI.setSyncPill("local", "local only");
+        if (s === "ok") localStorage.removeItem(RECONNECT_HIDE_DAY_KEY);
+        if (!(SampleProfile && SampleProfile.isSample && SampleProfile.isSample())) {
+          if (s === "ok") {
+            UI.setSyncPill("ok", Sync.state().email ? Sync.state().email.split("@")[0] : "synced");
+          } else if (s === "pending" || s === "syncing") UI.setSyncPill("pending", detail || "syncing…");
+          else if (s === "auth") UI.setSyncPill("warn", "reconnect");
+          else if (s === "error" || s === "warn") UI.setSyncPill("warn", detail || "sync issue");
+          else UI.setSyncPill("local", "local only");
+        }
         refreshInfoBanner();
         refreshSettingsTabNudge();
         if (isSettingsView()) refreshDriveStatus();

@@ -1936,6 +1936,9 @@ async function runEmpty() {
   ok(window.localStorage.getItem("nd_onboarded_v1") === "1", "Sample first-run marks onboarded without Add-your-first-food modal");
   ok($("#onboarding").hidden, "Sample first-run does not show the legacy onboarding modal");
   ok(!$("#sample-chip").hidden, "Sample chip is visible while exploring Sample");
+  ok($("#sync-pill").hidden, "sync pill is hidden in Sample so Sample is not double-labeled");
+  ok(!/sample/i.test($("#sync-pill").textContent) || $("#sync-pill").hidden,
+    "sync pill does not show a second Sample label");
   ok(!!$("#sheet-sample-intro") && !!$("#sheet-sample-warn"), "Sample intro and warn sheets are mounted");
   ok(!!$("#profile-mode-card") && !!$("#btn-profile-create"), "Settings Profile card can create a real profile");
   ok(!!$("#settings-sec-profile") && !!$("#settings-sec-appearance") && !!$("#settings-sec-backup"),
@@ -1979,6 +1982,9 @@ async function runEmpty() {
   ok(!SampleProfile.isSample(), "Create profile switches to Real");
   ok(SampleProfile.realCreated(), "Real profile is marked created");
   ok($("#sample-chip").hidden, "Sample chip hides on Real");
+  ok(!$("#sync-pill").hidden, "sync pill returns on Real");
+  ok(/local only|synced|reconnect|sync/i.test($("#sync-pill").textContent),
+    "sync pill shows Drive / local status on Real, not Sample");
   insightsTab.click();
   await new Promise((r) => setTimeout(r, 60));
   const emptyHeadline = $("#insight-headline").textContent;
