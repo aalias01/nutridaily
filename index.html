@@ -254,145 +254,192 @@
       <div class="settings-panel">
         <div id="install-card" class="installcard card-block"></div>
 
-        <label class="set-label">Appearance</label>
-        <div class="set-row theme-row">
-          <span class="muted small">Mode</span>
-          <span class="seg" id="theme-seg">
-            <button type="button" data-theme-opt="auto">auto</button>
-            <button type="button" data-theme-opt="light">light</button>
-            <button type="button" data-theme-opt="dark">dark</button>
-          </span>
-        </div>
-
-        <label class="set-label">Profile</label>
-        <div class="card-block profile-mode-card" id="profile-mode-card">
-          <p class="muted small" id="profile-mode-active">Active: Sample</p>
-          <p class="muted small">Sample is a built-in ~90-day demo so Insights, weight, and energy estimate are visible immediately. Your real tracking stays separate. Sample never syncs to Google Drive.</p>
-          <div class="profile-grid">
-            <div>
-              <label class="small muted" for="set-profile-display-name">Display name</label>
-              <input id="set-profile-display-name" type="text" maxlength="60" placeholder="My tracking" autocomplete="nickname">
+        <details class="settings-sec" id="settings-sec-profile" data-settings-sec="profile">
+          <summary class="settings-sec-summary">
+            <span class="settings-sec-title">Profile</span>
+            <span class="settings-sec-status muted small" id="settings-sum-profile">Sample</span>
+          </summary>
+          <div class="settings-sec-body">
+            <div class="card-block profile-mode-card" id="profile-mode-card">
+              <p class="muted small" id="profile-mode-active">Active: Sample</p>
+              <p class="muted small">Sample is a built-in ~90-day demo so Insights, weight, and energy estimate are visible immediately. Your real tracking stays separate. Sample never syncs to Google Drive.</p>
+              <div class="profile-grid">
+                <div>
+                  <label class="small muted" for="set-profile-display-name">Display name</label>
+                  <input id="set-profile-display-name" type="text" maxlength="60" placeholder="My tracking" autocomplete="nickname">
+                </div>
+              </div>
+              <div class="phase-actions" style="margin-top:10px">
+                <button id="btn-profile-create" class="btn full" type="button">Create my profile</button>
+                <button id="btn-profile-real" class="btn ghost full" type="button" hidden>Switch to my tracking</button>
+                <button id="btn-profile-sample" class="btn ghost full" type="button">View Sample</button>
+                <button id="btn-profile-reset-sample" class="btn ghost full" type="button">Reset Sample</button>
+              </div>
             </div>
           </div>
-          <div class="phase-actions" style="margin-top:10px">
-            <button id="btn-profile-create" class="btn full" type="button">Create my profile</button>
-            <button id="btn-profile-real" class="btn ghost full" type="button" hidden>Switch to my tracking</button>
-            <button id="btn-profile-sample" class="btn ghost full" type="button">View Sample</button>
-            <button id="btn-profile-reset-sample" class="btn ghost full" type="button">Reset Sample</button>
-          </div>
-        </div>
-
-        <label class="set-label">Google Drive sync</label>
-        <p class="muted small drive-blurb">Meals save on this device automatically. Sign-in is optional: it keeps a copy in <b>your</b> Google Drive so another phone or a cleared browser cache can restore it. Nothing is sent anywhere except your own Drive.</p>
-        <p id="drive-sample-note" class="banner warn" hidden>Sample mode: Drive sync is paused. Switch to your own profile to connect.</p>
-        <div class="row">
-          <button id="btn-drive-connect" class="btn ghost" type="button">Sign in with Google</button>
-          <button id="btn-drive-sync" class="btn ghost" type="button" style="display:none">Sync now</button>
-          <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
-        </div>
-        <div id="drive-status" class="muted small"></div>
-        <p id="drive-reconnect-hint" class="muted small" hidden>After reopening the app (especially on iPhone), Drive may pause until you tap <b>Reconnect</b> on the banner or the sync pill. Logging still works on this device meanwhile.</p>
-        <details class="dev-details" id="client-id-details">
-          <summary class="muted small">Advanced: override Client ID</summary>
-          <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
-          <div class="muted small" id="client-id-hint">On the live deploy, a Client ID is injected at build time. Paste below only to override (forks / local). Leave empty to use the deploy default.</div>
-          <button id="btn-clear-gclient" class="linkbtn" type="button">Clear override</button>
         </details>
 
-        <label class="set-label">Active phase</label>
-        <div class="card-block phase-card">
-          <div class="phase-title-row">
-            <strong id="phase-current-label">Maintain v1.0</strong>
-            <button id="btn-phase-history" class="linkbtn" type="button">Target history</button>
+        <details class="settings-sec" id="settings-sec-appearance" data-settings-sec="appearance">
+          <summary class="settings-sec-summary">
+            <span class="settings-sec-title">Appearance &amp; units</span>
+            <span class="settings-sec-status muted small" id="settings-sum-appearance">Light · lb</span>
+          </summary>
+          <div class="settings-sec-body">
+            <div class="set-row theme-row">
+              <span class="muted small">Mode</span>
+              <span class="seg" id="theme-seg">
+                <button type="button" data-theme-opt="auto">auto</button>
+                <button type="button" data-theme-opt="light">light</button>
+                <button type="button" data-theme-opt="dark">dark</button>
+              </span>
+            </div>
+            <div class="set-row theme-row">
+              <span class="muted small">Body weight</span>
+              <span class="seg" id="weight-unit-seg">
+                <button type="button" data-weight-unit="lb">lb</button>
+                <button type="button" data-weight-unit="kg">kg</button>
+              </span>
+            </div>
+            <label class="check-row"><input id="set-imperial" type="checkbox"> Show ounces when logging food</label>
           </div>
-          <p id="target-review-warning" class="banner warn" hidden></p>
-          <p class="muted small" id="phase-summary"></p>
-          <p class="muted small" id="phase-save-hint">Change targets to bump this phase’s version, or switch kind to start a new phase. After food is logged today, changes start tomorrow.</p>
-          <div class="phase-actions">
-            <button id="btn-change-targets" class="btn full" type="button">Change targets…</button>
-            <button id="btn-ai-targets" class="btn ghost full" type="button">Get AI targets…</button>
-          </div>
-        </div>
-
-        <label class="set-label">Body profile</label>
-        <div class="card-block profile-card">
-          <p class="muted small">Used for AI target recommendations for adults. Automated targets are unavailable under 18; use a pediatric clinician or registered dietitian. Age is calculated from date of birth. Stored on this device (and Drive if you sync). Only included when you copy an AI targets prompt.</p>
-          <div class="profile-grid">
-            <div>
-              <label class="small muted" for="set-dob">Date of birth</label>
-              <input id="set-dob" type="date" autocomplete="bday">
-            </div>
-            <div>
-              <label class="small muted" for="set-sex">Sex</label>
-              <select id="set-sex" aria-label="Sex">
-                <option value="">Choose…</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="other">Other / prefer not to say</option>
-              </select>
-            </div>
-            <div>
-              <label class="small muted" for="set-height">Height (cm)</label>
-              <input id="set-height" type="number" min="90" max="250" step="0.1" placeholder="e.g. 175">
-            </div>
-            <div>
-              <label class="small muted" for="set-activity">Activity</label>
-              <select id="set-activity" aria-label="Activity level">
-                <option value="">Choose…</option>
-                <option value="sedentary">Sedentary</option>
-                <option value="light">Light (1–3 days/week)</option>
-                <option value="moderate">Moderate (3–5 days/week)</option>
-                <option value="active">Active (6–7 days/week)</option>
-                <option value="very_active">Very active</option>
-              </select>
-            </div>
-          </div>
-          <label class="small muted" for="set-profile-notes">Notes (optional)</label>
-          <textarea id="set-profile-notes" rows="2" maxlength="500" placeholder="e.g. vegetarian, knee injury, prefer higher carbs"></textarea>
-          <p class="muted small" id="profile-age-hint"></p>
-        </div>
-
-        <label class="set-label">Units</label>
-        <div class="set-row theme-row">
-          <span class="muted small">Body weight</span>
-          <span class="seg" id="weight-unit-seg">
-            <button type="button" data-weight-unit="lb">lb</button>
-            <button type="button" data-weight-unit="kg">kg</button>
-          </span>
-        </div>
-        <label class="check-row"><input id="set-imperial" type="checkbox"> Show ounces when logging food</label>
-
-        <label class="set-label">AI estimate prompt</label>
-        <p class="muted small">For restaurant / photo guesses. Homemade dishes use a stricter one-shot prompt from Add → Homemade dish.</p>
-        <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy estimate prompt</button>
-        <button id="btn-settings-share-prompt" class="btn ghost full" type="button" hidden>Share to AI</button>
-        <details id="settings-prompt-fallback" class="example-details" hidden>
-          <summary class="muted small">Select prompt manually</summary>
-          <textarea id="settings-prompt-fallback-text" rows="6" readonly></textarea>
         </details>
 
-        <label class="set-label">Data</label>
-        <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
-        <div class="row">
-          <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
-          <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
-        </div>
-        <p class="muted small" style="margin-top:10px"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, day plans, weight, and goals.</p>
-        <div class="row">
-          <button id="btn-clear" class="btn ghost danger" type="button">Clear logs</button>
-          <button id="btn-factory-reset" class="btn ghost danger" type="button">Start fresh</button>
-        </div>
+        <details class="settings-sec" id="settings-sec-targets" data-settings-sec="targets">
+          <summary class="settings-sec-summary">
+            <span class="settings-sec-title">Targets</span>
+            <span class="settings-sec-status muted small" id="settings-sum-targets">Maintain v1.0</span>
+          </summary>
+          <div class="settings-sec-body">
+            <div class="card-block phase-card">
+              <div class="phase-title-row">
+                <strong id="phase-current-label">Maintain v1.0</strong>
+                <button id="btn-phase-history" class="linkbtn" type="button">Target history</button>
+              </div>
+              <p id="target-review-warning" class="banner warn" hidden></p>
+              <p class="muted small" id="phase-summary"></p>
+              <p class="muted small" id="phase-save-hint">Change targets to bump this phase’s version, or switch kind to start a new phase. After food is logged today, changes start tomorrow.</p>
+              <div class="phase-actions">
+                <button id="btn-change-targets" class="btn full" type="button">Change targets…</button>
+                <button id="btn-ai-targets" class="btn ghost full" type="button">Get AI targets…</button>
+              </div>
+            </div>
+          </div>
+        </details>
 
-        <div class="card-block about-card" id="feedback-card" hidden>
-          <h3>Feedback</h3>
-          <p class="muted small">Share a bug, idea, or something confusing. Optional screenshot; you can cover personal details before sending.</p>
-          <button type="button" class="btn" id="btn-settings-feedback">Send feedback</button>
-        </div>
+        <details class="settings-sec" id="settings-sec-body" data-settings-sec="body">
+          <summary class="settings-sec-summary">
+            <span class="settings-sec-title">Body</span>
+            <span class="settings-sec-status muted small" id="settings-sum-body">Not set</span>
+          </summary>
+          <div class="settings-sec-body">
+            <div class="card-block profile-card">
+              <p class="muted small">Used for AI target recommendations for adults. Automated targets are unavailable under 18; use a pediatric clinician or registered dietitian. Age is calculated from date of birth. Stored on this device (and Drive if you sync). Only included when you copy an AI targets prompt.</p>
+              <div class="profile-grid">
+                <div>
+                  <label class="small muted" for="set-dob">Date of birth</label>
+                  <input id="set-dob" type="date" autocomplete="bday">
+                </div>
+                <div>
+                  <label class="small muted" for="set-sex">Sex</label>
+                  <select id="set-sex" aria-label="Sex">
+                    <option value="">Choose…</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other / prefer not to say</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="small muted" for="set-height">Height (cm)</label>
+                  <input id="set-height" type="number" min="90" max="250" step="0.1" placeholder="e.g. 175">
+                </div>
+                <div>
+                  <label class="small muted" for="set-activity">Activity</label>
+                  <select id="set-activity" aria-label="Activity level">
+                    <option value="">Choose…</option>
+                    <option value="sedentary">Sedentary</option>
+                    <option value="light">Light (1–3 days/week)</option>
+                    <option value="moderate">Moderate (3–5 days/week)</option>
+                    <option value="active">Active (6–7 days/week)</option>
+                    <option value="very_active">Very active</option>
+                  </select>
+                </div>
+              </div>
+              <label class="small muted" for="set-profile-notes">Notes (optional)</label>
+              <textarea id="set-profile-notes" rows="2" maxlength="500" placeholder="e.g. vegetarian, knee injury, prefer higher carbs"></textarea>
+              <p class="muted small" id="profile-age-hint"></p>
+            </div>
+          </div>
+        </details>
 
-        <div class="card-block about-card">
-          <h3>About NutriDaily</h3>
-          <p class="muted small">Personal nutrition tracker. Common foods use USDA-style reference averages; homemade dishes come from a NUTRI import you review. Log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
-        </div>
+        <details class="settings-sec" id="settings-sec-backup" data-settings-sec="backup">
+          <summary class="settings-sec-summary">
+            <span class="settings-sec-title">Backup</span>
+            <span class="settings-sec-status muted small" id="settings-sum-backup">Local only</span>
+          </summary>
+          <div class="settings-sec-body">
+            <p class="muted small drive-blurb">Meals save on this device automatically. Sign-in is optional: it keeps a copy in <b>your</b> Google Drive so another phone or a cleared browser cache can restore it. Nothing is sent anywhere except your own Drive.</p>
+            <p id="drive-sample-note" class="banner warn" hidden>Sample mode: Drive sync is paused. Switch to your own profile to connect.</p>
+            <div class="row">
+              <button id="btn-drive-connect" class="btn ghost" type="button">Sign in with Google</button>
+              <button id="btn-drive-sync" class="btn ghost" type="button" style="display:none">Sync now</button>
+              <button id="btn-drive-disconnect" class="btn ghost" type="button" style="display:none">Disconnect</button>
+            </div>
+            <div id="drive-status" class="muted small"></div>
+            <p id="drive-reconnect-hint" class="muted small" hidden>After reopening the app (especially on iPhone), Drive may pause until you tap <b>Reconnect</b> on the banner or the sync pill. Logging still works on this device meanwhile.</p>
+            <details class="dev-details" id="client-id-details">
+              <summary class="muted small">Advanced: override Client ID</summary>
+              <input id="set-gclient" type="text" placeholder="xxxxxxxx.apps.googleusercontent.com">
+              <div class="muted small" id="client-id-hint">On the live deploy, a Client ID is injected at build time. Paste below only to override (forks / local). Leave empty to use the deploy default.</div>
+              <button id="btn-clear-gclient" class="linkbtn" type="button">Clear override</button>
+            </details>
+          </div>
+        </details>
+
+        <details class="settings-sec" id="settings-sec-data" data-settings-sec="data">
+          <summary class="settings-sec-summary">
+            <span class="settings-sec-title">Data</span>
+            <span class="settings-sec-status muted small" id="settings-sum-data">Export · Import</span>
+          </summary>
+          <div class="settings-sec-body">
+            <p class="muted small">This browser holds the working copy. Export a JSON backup anytime. Clearing site data (or uninstalling) deletes the local copy unless you signed in with Google or exported first.</p>
+            <div class="row">
+              <button id="btn-export" class="btn ghost" type="button">Export JSON</button>
+              <label class="btn ghost" for="import-file" style="cursor:pointer">Import<input id="import-file" type="file" accept=".json" hidden></label>
+            </div>
+            <p class="muted small" style="margin-top:10px"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, day plans, weight, and goals.</p>
+            <div class="row">
+              <button id="btn-clear" class="btn ghost danger" type="button">Clear logs</button>
+              <button id="btn-factory-reset" class="btn ghost danger" type="button">Start fresh</button>
+            </div>
+          </div>
+        </details>
+
+        <details class="settings-sec" id="settings-sec-help" data-settings-sec="help">
+          <summary class="settings-sec-summary">
+            <span class="settings-sec-title">Help</span>
+            <span class="settings-sec-status muted small" id="settings-sum-help">Prompt · About</span>
+          </summary>
+          <div class="settings-sec-body">
+            <p class="muted small">For restaurant / photo guesses. Homemade dishes use a stricter one-shot prompt from Add → Homemade dish.</p>
+            <button id="btn-settings-copy-prompt" class="btn ghost full" type="button">Copy estimate prompt</button>
+            <button id="btn-settings-share-prompt" class="btn ghost full" type="button" hidden>Share to AI</button>
+            <details id="settings-prompt-fallback" class="example-details" hidden>
+              <summary class="muted small">Select prompt manually</summary>
+              <textarea id="settings-prompt-fallback-text" rows="6" readonly></textarea>
+            </details>
+
+            <div class="card-block about-card" id="feedback-card" hidden>
+              <h3>Feedback</h3>
+              <p class="muted small">Share a bug, idea, or something confusing. Optional screenshot; you can cover personal details before sending.</p>
+              <button type="button" class="btn" id="btn-settings-feedback">Send feedback</button>
+            </div>
+
+            <div class="card-block about-card">
+              <h3>About NutriDaily</h3>
+              <p class="muted small">Personal nutrition tracker. Common foods use USDA-style reference averages; homemade dishes come from a NUTRI import you review. Log by grams, keep an event ledger on device. Optional Google Drive sync. Open source on <a href="https://github.com/aalias01/nutridaily" target="_blank" rel="noopener">GitHub</a>. Live: <a href="https://nutridaily.vercel.app" target="_blank" rel="noopener">nutridaily.vercel.app</a>.</p>
+            </div>
+          </div>
+        </details>
       </div>
     </section>
   </main>

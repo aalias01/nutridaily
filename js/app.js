@@ -482,13 +482,122 @@ const App = (() => {
     UI.openSheet("sheet-sample-intro");
   }
 
+  const SETTINGS_OPEN_KEY = "nutridaily.settingsOpen";
+
+  function settingsOpenState() {
+    try {
+      const raw = sessionStorage.getItem(SETTINGS_OPEN_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function persistSettingsOpenState() {
+    const out = {};
+    UI.$$(".settings-sec[data-settings-sec]").forEach((el) => {
+      out[el.dataset.settingsSec] = !!el.open;
+    });
+    try { sessionStorage.setItem(SETTINGS_OPEN_KEY, JSON.stringify(out)); }
+    catch (e) {}
+  }
+
+  function defaultSettingsOpenMap() {
+    const sample = !!(SampleProfile && SampleProfile.isSample && SampleProfile.isSample());
+    const created = !!(SampleProfile && SampleProfile.realCreated && SampleProfile.realCreated());
+    return {
+      profile: sample || !created,
+      appearance: false,
+      targets: false,
+      body: false,
+      backup: false,
+      data: false,
+      help: false,
+    };
+  }
+
+  function applySettingsOpenState(forceDefaults) {
+    const stored = forceDefaults ? null : settingsOpenState();
+    const map = Object.assign({}, defaultSettingsOpenMap(), stored || {});
+    UI.$$(".settings-sec[data-settings-sec]").forEach((el) => {
+      const key = el.dataset.settingsSec;
+      el.open = map[key] === true;
+    });
+  }
+
+  function wireSettingsAccordion() {
+    UI.$$(".settings-sec[data-settings-sec]").forEach((el) => {
+      el.addEventListener("toggle", () => persistSettingsOpenState());
+    });
+    applySettingsOpenState(false);
+  }
+
+  function setSettingsSum(id, text) {
+    const el = UI.$(id);
+    if (el) el.textContent = text || "";
+  }
+
+  function refreshSettingsSummaries() {
+    const sample = !!(SampleProfile && SampleProfile.isSample && SampleProfile.isSample());
+    const profileLabel = sample
+      ? "Sample"
+      : (SampleProfile && SampleProfile.realDisplayName
+        ? SampleProfile.realDisplayName()
+        : "My tracking");
+    setSettingsSum("#settings-sum-profile", profileLabel);
+
+    const theme = state.settings.theme || "light";
+    const wu = bodyWeightUnit();
+    setSettingsSum("#settings-sum-appearance", `${theme} · ${wu}`);
+
+    const today = Ledger.todayKey();
+    const phase = Phases.phaseForDay(state.settings.phases, today) || Phases.activePhase(state.settings.phases);
+    const targetReview = state.settings.targetReview && state.settings.targetReview.required
+      ? state.settings.targetReview : null;
+    const targetsLabel = targetReview && targetReview.fallback === "generic-default"
+      ? "Review required"
+      : (phase ? Phases.labelForDay(phase, today) : "No phase");
+    setSettingsSum("#settings-sum-targets", targetsLabel);
+
+    const profile = Phases.ensureProfile(state.settings);
+    const age = Phases.ageFromDob(profile.dob, today);
+    const sexBit = profile.sex === "male" ? "M"
+      : profile.sex === "female" ? "F"
+      : profile.sex === "other" ? "—"
+      : "";
+    const heightBit = profile.heightCm != null ? `${Math.round(profile.heightCm)} cm` : "";
+    const bodyBits = [];
+    if (age != null) bodyBits.push(`${age}y`);
+    if (sexBit) bodyBits.push(sexBit);
+    if (heightBit) bodyBits.push(heightBit);
+    setSettingsSum("#settings-sum-body", bodyBits.length ? bodyBits.join(" · ") : "Not set");
+
+    const st = Sync.state();
+    let backup = "Local only";
+    if (sample) backup = "Sample · sync paused";
+    else if (st.enabled && st.status === "auth") backup = "Reconnect needed";
+    else if (st.enabled && st.email) backup = st.email.split("@")[0];
+    else if (st.enabled) backup = "Connected";
+    setSettingsSum("#settings-sum-backup", backup);
+
+    setSettingsSum("#settings-sum-data", "Export · Import");
+    const feedbackOn = !!(window.Feedback && Feedback.enabled && Feedback.enabled());
+    setSettingsSum("#settings-sum-help", feedbackOn ? "Prompt · Feedback · About" : "Prompt · About");
+  }
+
   function openProfileSettings() {
     openSettings();
+    const sec = UI.$("#settings-sec-profile");
+    if (sec) sec.open = true;
+    persistSettingsOpenState();
     const card = UI.$("#profile-mode-card");
-    if (card) {
-      card.classList.add("profile-mode-highlight");
-      try { card.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
-      setTimeout(() => card.classList.remove("profile-mode-highlight"), 2400);
+    const highlight = sec || card;
+    if (highlight) {
+      highlight.classList.add("profile-mode-highlight");
+      try { highlight.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+      setTimeout(() => highlight.classList.remove("profile-mode-highlight"), 2400);
     }
   }
 
@@ -543,6 +652,7 @@ const App = (() => {
     if (factoryBtn) factoryBtn.disabled = !!sample;
     const driveBlurb = UI.$("#drive-sample-note");
     if (driveBlurb) driveBlurb.hidden = !sample;
+    refreshSettingsSummaries();
   }
 
   // ---------- PWA install (Daycells-style, Settings card) ----------
@@ -4593,6 +4703,7 @@ const App = (() => {
         ? "Using the deploy default Client ID. Paste below only to override."
         : "No deploy Client ID yet. Paste a Web Client ID here, or set GOOGLE_CLIENT_ID on Vercel.";
     if (!baked && !override) UI.$("#client-id-details").open = true;
+    refreshSettingsSummaries();
   }
 
   function persistProfile(profile) {
@@ -4852,6 +4963,7 @@ const App = (() => {
     switchView("settings");
     refreshProfileSettingsUi();
     refreshDriveStatus();
+    refreshSettingsSummaries();
   }
 
   function refreshSettingsTabNudge() {
@@ -4887,6 +4999,7 @@ const App = (() => {
       disconnect.style.display = "none";
       if (hint) hint.hidden = true;
     }
+    refreshSettingsSummaries();
   }
 
   function authErrMsg(e, fallback) {
@@ -8234,6 +8347,7 @@ const App = (() => {
     }
     loadState();
     wire();
+    wireSettingsAccordion();
     wireProfileMode();
     refreshFeedbackCard();
     refreshPromptShareButtons();

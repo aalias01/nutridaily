@@ -1938,6 +1938,9 @@ async function runEmpty() {
   ok(!$("#sample-chip").hidden, "Sample chip is visible while exploring Sample");
   ok(!!$("#sheet-sample-intro") && !!$("#sheet-sample-warn"), "Sample intro and warn sheets are mounted");
   ok(!!$("#profile-mode-card") && !!$("#btn-profile-create"), "Settings Profile card can create a real profile");
+  ok(!!$("#settings-sec-profile") && !!$("#settings-sec-appearance") && !!$("#settings-sec-backup"),
+    "Settings uses collapsible section details");
+  ok($("#settings-sec-profile").open, "Sample first-run keeps Profile section open by default");
 
   // Accessibility contract for onboarding remains available when reopened.
   const onboarding = $("#onboarding");
