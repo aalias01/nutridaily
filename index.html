@@ -54,7 +54,7 @@
         <button id="btn-day-next" class="iconbtn" type="button" aria-label="Next day">›</button>
       </div>
       <div class="day-actions">
-        <button type="button" class="day-action-btn day-goals-btn" id="btn-day-goals" title="Plan a reduced-energy day or declare a fast">Day plan</button>
+        <button type="button" class="day-action-btn day-goals-btn" id="btn-day-goals" title="Set calorie intent, declare a fast, or mark the day incomplete">Day status</button>
         <button type="button" class="day-action-btn hud-planner-btn" id="btn-close-gap">Planner</button>
         <button type="button" class="day-action-btn hud-planner-btn gap-plan-chip" id="btn-gap-plan" hidden>Plan: 0 left</button>
       </div>
@@ -407,7 +407,7 @@
           </summary>
           <div class="settings-sec-body">
             <p class="muted small">Destructive actions for this device. To save or restore a JSON file, use <b>Backup</b> above. Clearing site data (or uninstalling) also deletes the local copy unless you signed in with Google or exported first.</p>
-            <p class="muted small"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, day plans, weight, and goals.</p>
+            <p class="muted small"><b>Clear logs</b> removes foods and meal history only. <b>Start fresh</b> also resets phases, day status, weight, and goals.</p>
             <div class="row">
               <button id="btn-clear" class="btn ghost danger" type="button">Clear logs</button>
               <button id="btn-factory-reset" class="btn ghost danger" type="button">Start fresh</button>
@@ -747,22 +747,22 @@ one food per line also works" autocomplete="off" aria-label="Foods with amounts"
     </div>
   </div>
 
-  <!-- Day intent: Normal / Reduced / Fast (frozen before first add on reduced) -->
+  <!-- Day status: Normal / Reduced / Fast + Mark incomplete (wire: dayGoals) -->
   <div id="sheet-day-goals" class="sheet" hidden>
     <div class="sheet-backdrop" data-close="sheet-day-goals"></div>
     <div class="sheet-card">
       <div class="sheet-grab"></div>
-      <h3 id="day-goals-title">Today&apos;s plan</h3>
-      <p class="muted small" id="day-goals-blurb">Plan this day before logging. You can revise a reduced plan or declare a fast while the day window is open.</p>
+      <h3 id="day-goals-title">Day status</h3>
+      <p class="muted small" id="day-goals-blurb">Set this day’s calorie intent, declare a fast, or mark it incomplete. You can revise while the day window is open.</p>
       <p class="muted small" id="dg-window-note">Eating in a window — 16:8, or Ramadan — is a normal day. Don&apos;t mark it.</p>
-      <div class="phase-kind-seg seg" id="dg-intent-seg" role="group" aria-label="Day intent">
+      <div class="phase-kind-seg seg" id="dg-intent-seg" role="group" aria-label="Day calorie intent">
         <button type="button" data-dg-intent="normal" class="on" aria-pressed="true">Normal</button>
         <button type="button" data-dg-intent="reduced" aria-pressed="false">Reduced</button>
         <button type="button" data-dg-intent="fast" aria-pressed="false">Fast</button>
       </div>
 
       <div id="dg-panel-normal" hidden>
-        <p class="muted small">No calorie plan for this day. Existing plans can be cleared below.</p>
+        <p class="muted small">No calorie override for this day. Existing overrides can be cleared below.</p>
       </div>
 
       <div id="dg-panel-reduced">
@@ -777,7 +777,7 @@ one food per line also works" autocomplete="off" aria-label="Foods with amounts"
         <p class="muted small" id="dg-fast-copy"></p>
         <label class="check-row small" for="dg-fast-ack">
           <input id="dg-fast-ack" type="checkbox">
-          <span>I understand this is a zero-calorie day plan</span>
+          <span>I understand this is a zero-calorie fast day</span>
         </label>
         <p class="muted small">Very-low-calorie and fasting plans require clinician supervision. This app does not give medical advice.</p>
       </div>
@@ -792,13 +792,13 @@ one food per line also works" autocomplete="off" aria-label="Foods with amounts"
           <span class="small muted">Presets</span>
           <button type="button" class="linkbtn" id="dg-preset-save">Save as preset</button>
         </div>
-        <div id="dg-preset-chips" class="unit-chips" role="group" aria-label="Day plan presets"></div>
+        <div id="dg-preset-chips" class="unit-chips" role="group" aria-label="Day status presets"></div>
         <p class="muted small" id="dg-preset-hint">Tap to apply · × removes</p>
       </div>
 
       <div class="row end">
-        <button id="dg-clear" class="btn ghost" type="button">Clear plan</button>
-        <button id="dg-save" class="btn" type="button">Save plan</button>
+        <button id="dg-clear" class="btn ghost" type="button">Clear</button>
+        <button id="dg-save" class="btn" type="button">Save</button>
       </div>
     </div>
   </div>

@@ -1515,7 +1515,7 @@ const Analytics = (() => {
         // integrity alarms. Only a plan set after logging began escalates.
         tone: bumps.declaredLate ? "watch" : "info",
         priority: 0,
-        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used a day plan, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted calorie target.${late}${unlogged}${legacy}`,
+        text: `${bumps.total} day${bumps.total === 1 ? "" : "s"} used a day status calorie override, so ${bumps.total === 1 ? "it is" : "they are"} scored against the adjusted calorie target.${late}${unlogged}${legacy}`,
       });
     }
     if (bumps.fasts) {

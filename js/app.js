@@ -261,7 +261,7 @@ const App = (() => {
         : (reducedWin.reason || fastWin.reason || "");
     const ov = dayGoalOverride(state.viewDay);
     // Short chrome labels for the header action row; detail lives in title.
-    let label = "Day plan";
+    let label = "Day status";
     if (isFast) label = "Fast";
     else if (hasPlan) label = "Planned";
     const incompleteMark = !!(ov && ov.incomplete === true);
@@ -293,12 +293,12 @@ const App = (() => {
     if (isFast) detailBits.push("Declared fast for this day");
     else if (hasPlan) detailBits.push(`Planned calories · ${Math.round(resolved.kcal)} kcal`);
     else if (incompleteMark) detailBits.push("This day is marked incomplete — diary stays, averages skip it");
-    else detailBits.push("Plan a reduced-energy day or declare a fast");
+    else detailBits.push("Set calorie intent, declare a fast, or mark incomplete");
     if (incompleteMark && (hasPlan || isFast)) detailBits.push("incomplete");
     if (late) detailBits.push("late");
     if (locked && (hasPlan || isFast)) detailBits.push("locked");
     const idleTitle = detailBits.join(" · ");
-    const lockTitle = lockReason || reducedWin.reason || fastWin.reason || "This day plan cannot be changed right now.";
+    const lockTitle = lockReason || reducedWin.reason || fastWin.reason || "This day’s status cannot be changed right now.";
     btn.title = locked && (hasPlan || isFast)
       ? (late ? `${lateTitle} ${idleTitle}. ${lockTitle}` : `${idleTitle}. ${lockTitle}`)
       : (late ? `${lateTitle} ${idleTitle}` : idleTitle);
@@ -6847,7 +6847,7 @@ const App = (() => {
       if (win.ok) return true;
       UI.closeSheet("sheet-day-goals");
       refreshDayGoalsLink();
-      UI.toast(win.reason || "This day plan cannot be changed right now.");
+      UI.toast(win.reason || "This day’s status cannot be changed right now.");
       return false;
     };
     const canAuthorAnyIntent = () =>
@@ -7100,15 +7100,15 @@ const App = (() => {
           return Ledger.todayKey(d);
         })();
         titleEl.textContent = state.viewDay === today
-          ? "Today's plan"
+          ? "Today’s status"
           : state.viewDay === dayAfter(today)
-            ? "Tomorrow's plan"
+            ? "Tomorrow’s status"
             : state.viewDay === yday
-              ? "Yesterday's plan"
-              : `Plan for ${state.viewDay}`;
+              ? "Yesterday’s status"
+              : `Status for ${state.viewDay}`;
       }
       UI.$("#day-goals-blurb").textContent =
-        `Phase${phaseBit}: ${phaseBase.kcal} kcal. You can revise a reduced plan or declare a fast for this day while the day window is open.`;
+        `Phase${phaseBit}: ${phaseBase.kcal} kcal. Set calorie intent, declare a fast, or mark incomplete while the day window is open.`;
       const ack = UI.$("#dg-fast-ack");
       if (ack) ack.checked = false;
       if (isFast) {
@@ -7295,7 +7295,7 @@ const App = (() => {
         Sync.schedulePush();
         UI.closeSheet("sheet-day-goals");
         refreshDay();
-        UI.toast("Day plan cleared");
+        UI.toast("Day status cleared");
         return;
       }
 
@@ -7353,7 +7353,7 @@ const App = (() => {
       Sync.schedulePush();
       UI.closeSheet("sheet-day-goals");
       refreshDay();
-      UI.toast(targetKcal != null && targetKcal !== phaseBase.kcal ? "Planned calories saved" : "Day plan cleared");
+      UI.toast(targetKcal != null && targetKcal !== phaseBase.kcal ? "Planned calories saved" : "Day status cleared");
     });
     UI.$("#dg-clear").addEventListener("click", () => {
       const g = Phases.goalsForDay(state.viewDay, state.settings);
@@ -7369,7 +7369,7 @@ const App = (() => {
       } else if (!hasReduced && !isFast) {
         // No calorie plan — Clear does not wipe Mark incomplete by itself.
         UI.closeSheet("sheet-day-goals");
-        UI.toast("No day plan to clear");
+        UI.toast("No day status to clear");
         return;
       }
       const nextSettings = cloneLocalData(state.settings);
@@ -7380,7 +7380,7 @@ const App = (() => {
       Sync.schedulePush();
       UI.closeSheet("sheet-day-goals");
       refreshDay();
-      UI.toast("Day plan cleared");
+      UI.toast("Day status cleared");
     });
     if (UI.$("#btn-hud-fasting-log")) {
       UI.$("#btn-hud-fasting-log").addEventListener("click", () => {
@@ -8207,7 +8207,7 @@ const App = (() => {
         openProfileSettings();
         return;
       }
-      if (!confirm("Start completely fresh? This deletes meal logs, foods, phases, day plans, weight history, and resets goals.")) return;
+      if (!confirm("Start completely fresh? This deletes meal logs, foods, phases, day status, weight history, and resets goals.")) return;
       if (!confirm("Last chance. Export first if you want a backup. This cannot be undone. Continue?")) return;
       const resetAt = Date.now();
       const today = Ledger.todayKey();

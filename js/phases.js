@@ -130,8 +130,8 @@ const Phases = (() => {
       ok = todayKey >= prev && todayKey <= targetDay;
       if (!ok) {
         reason = todayKey < prev
-          ? "Day plans can only be set from the day before or on the day itself."
-          : "Day plans can only be set for this day before it ends.";
+          ? "Day status can only be set from the day before or on the day itself."
+          : "Day status can only be set for this day before it ends.";
       }
     }
     const plannedAt = o.plannedAt != null ? o.plannedAt : Date.now();

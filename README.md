@@ -20,9 +20,9 @@ Ways in:
 
 When known, each food carries calories, protein, carbs, fat, fiber, sodium, and potassium. Today shows daily goals and rings. Weight has a smoothed trend and weekly rate next to the entry field, so one heavy morning does not read as a heavy week. Appearance is light, dark, or auto. Installable to the home screen from Settings.
 
-## Day plan, Fast, incomplete days
+## Day status, Fast, incomplete days
 
-Before the first food of the day I can keep the phase target, set an absolute calorie target (200–6,000 kcal), or declare a zero-calorie **Fast** (today, or plan tomorrow from today). Up to five presets, reapplied one day at a time. Nothing auto-schedules future days. Targets below 1,200 kcal show a clinician-supervision warning. Day plans move calories (and the carbs/fat that follow them); protein, fiber, sodium, and potassium floors and ceilings stay put.
+Before the first food of the day I can keep the phase target, set an absolute calorie target (200–6,000 kcal), or declare a zero-calorie **Fast** (today, or set tomorrow from today). The same **Day status** sheet also covers **Mark incomplete**. Up to five presets, reapplied one day at a time. Nothing auto-schedules future days. Targets below 1,200 kcal show a clinician-supervision warning. Calorie overrides move calories (and the carbs/fat that follow them); protein, fiber, sodium, and potassium floors and ceilings stay put.
 
 **Mark incomplete** keeps the diary visible and drops that day from Insights averages and TDEE until I clear the mark. Declared fasts and reduced plans are stamped by me, not inferred from how little I ate.
 
@@ -38,7 +38,7 @@ Computed on device from my own log.
 
 When there is enough history: a 0–100 headline (logging consistency, target hit rate, protein), intake bars with a hit band and rolling mean for the nutrient on the dock, weight with an EMA trend and weekly rate, adaptive TDEE from intake versus what weight actually did (or plain copy about what is missing), adherence by nutrient, macro and meal composition, and a phase comparison when a prior phase exists.
 
-Flags stay up when trust should drop: days that look unfinished, Log once / calories-only days, days marked incomplete, day-plan calorie days. A thin log stays quiet instead of printing empty confident cards. Estimates from logged data, not medical advice.
+Flags stay up when trust should drop: days that look unfinished, Log once / calories-only days, days marked incomplete, day-status calorie overrides. A thin log stays quiet instead of printing empty confident cards. Estimates from logged data, not medical advice.
 
 ## How it's built
 

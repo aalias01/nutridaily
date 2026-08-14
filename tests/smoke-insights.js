@@ -1093,7 +1093,7 @@ async function run(label, days) {
 
 
   // --- new analytics surfaces --------------------------------------------
-  ok(/day plan/i.test(text("#insight-observations")), "planned calorie adjustments are disclosed");
+  ok(/day status/i.test(text("#insight-observations")), "planned calorie adjustments are disclosed");
   ok(!/after the day ended/i.test(text("#insight-observations")), "planned-only fixture is not described as retroactive");
   ok(window.document.querySelectorAll(".hm-planned").length >= 1, "adjusted calorie days are marked on the heatmap");
 
@@ -2101,7 +2101,7 @@ async function runEmpty() {
   ok(after.protein === before.protein && after.sodium === before.sodium && after.potassium === before.potassium,
     "energy adjustment does not change protein, sodium, or potassium targets");
   ok(!/late/i.test($("#btn-day-goals").title) && $("#btn-day-goals").textContent === "Planned",
-    "on-time day plan keeps short Planned chrome without a late title");
+    "on-time day status keeps short Planned chrome without a late title");
 
   const firstAdd = Ledger.addEntry(todayKey, {
     name: "First log", displayQty: "100 kcal", grams: 0, meal: "snack",
@@ -2136,8 +2136,8 @@ async function runEmpty() {
   $("#btn-day-goals").click();
   await new Promise((r) => setTimeout(r, 20));
   ok($("#sheet-day-goals").classList.contains("open"),
-    "logged day still opens Day plan for edits and Mark incomplete");
-  ok(!!$("#dg-incomplete"), "Day plan sheet exposes Mark incomplete after food is logged");
+    "logged day still opens Day status for edits and Mark incomplete");
+  ok(!!$("#dg-incomplete"), "Day status sheet exposes Mark incomplete after food is logged");
   const revisedTarget = target - 50;
   $("#dg-kcal").value = String(revisedTarget);
   $("#dg-save").click();
@@ -2163,7 +2163,7 @@ async function runEmpty() {
   [...window.document.querySelectorAll(".tab")].find((t) => t.dataset.view === "today").click();
   await new Promise((r) => setTimeout(r, 20));
   ok(Ledger.entriesFor(todayKey).length === 0 && $("#btn-day-goals").textContent === "Planned",
-    "deleting the last visible entry keeps the day plan available");
+    "deleting the last visible entry keeps the day status available");
 
   $("#btn-day-prev").click();
   $("#btn-day-goals").click();
@@ -3571,7 +3571,7 @@ async function runImportSecurity() {
   ok(/^Imported/.test($("#toast").textContent.trim()),
     "active preset seed imports before delete UI coverage", $("#toast").textContent.trim());
   $("#btn-day-goals").click();
-  ok(!$("#sheet-day-goals").hidden, "day plan sheet opens for preset delete coverage");
+  ok(!$("#sheet-day-goals").hidden, "day status sheet opens for preset delete coverage");
   const fastSeg = $("#dg-intent-seg [data-dg-intent='fast']");
   if (fastSeg) fastSeg.click();
   ok($("#dg-presets") && !$("#dg-presets").hidden,
@@ -4251,7 +4251,7 @@ async function runImportSecurity() {
     $("#btn-day-goals").click();
     await new Promise((r) => setTimeout(r, 40));
     ok(!$("#sheet-day-goals").hidden && !!$("#dg-incomplete"),
-      "Phase 4: Day plan sheet exposes Mark incomplete");
+      "Phase 4: Day status sheet exposes Mark incomplete");
     $("#dg-incomplete").checked = true;
     $("#dg-incomplete").dispatchEvent(new window.Event("change", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 60));

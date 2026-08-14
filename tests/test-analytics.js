@@ -973,7 +973,7 @@ console.log("\n[20] Bump audit");
   const obs = Analytics.observations(days, { todayKey: END });
   const bumpObs = obs.find((o) => o.id === "bumps");
   ok(!!bumpObs, "bumps surface as an observation");
-  ok(/day plan/.test(bumpObs.text), "audit wording calls it a day plan");
+  ok(/day status/.test(bumpObs.text), "audit wording calls it day status");
   ok(bumpObs.tone === "watch", "a declaredLate bump raises the tone");
   ok(bumpObs.priority === 0 && bumpObs.panel == null,
     "bumps is an honesty note: highest priority, no jump panel");
@@ -2176,8 +2176,8 @@ console.log("\n[43] Day-intent: dayPlanAudit separates fasts from energy adjustm
 
   const obs = Analytics.observations(days, {});
   const bumpObs = obs.find((o) => o.id === "bumps");
-  ok(bumpObs && bumpObs.text.indexOf("2") === -1 || !/2 days? used a day plan/.test((bumpObs || {}).text || ""),
-    "the bumps observation does not call a fast a day plan", (bumpObs || {}).text);
+  ok(bumpObs && bumpObs.text.indexOf("2") === -1 || !/2 days? used a day status/.test((bumpObs || {}).text || ""),
+    "the bumps observation does not call a fast a day status calorie override", (bumpObs || {}).text);
   const fastObs = obs.find((o) => o.id === "fasts");
   ok(!!fastObs, "a separate fasts observation is surfaced");
   ok(/2 declared fasts/.test(fastObs.text), "the fasts observation names the count", fastObs.text);
