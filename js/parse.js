@@ -68,9 +68,10 @@ const NutriParse = (() => {
     "a photo of the plate, the menu item, packaging, a nutrition label, or a receipt.\n\n" +
     "Ask me up to 3 clarifying questions first if the answer would materially change the estimate\n" +
     "(portion size, cooking fat, fried vs grilled, sauce). Then, when you have enough to work from,\n" +
-    "reply with exactly ONE block in the format below in your final message. Other messages in the chat\n" +
-    "may be free-form; I only need the block once at the end.\n\n" +
-    "Format (final message only):\n\n" +
+    "reply with exactly ONE fenced code block (markdown triple backticks) and nothing else in your\n" +
+    "final message, in exactly this format. Other messages in the chat may be free-form; I only need\n" +
+    "the fenced code block once at the end.\n\n" +
+    "Format (final message only — wrap the whole reply in one ``` … ``` fence):\n\n" +
     "NUTRI v1\n" +
     "Name: <short dish name>\n" +
     "Aliases: <other names I might search for, comma separated>\n" +
@@ -109,10 +110,11 @@ const NutriParse = (() => {
     "  serving size assumed in Notes.\n" +
     "- Context is for diary memory only (gathering, restaurant, who I ate with). Keep Notes for\n" +
     "  nutrition assumptions. Omit Context when there is nothing situational to record.\n" +
-    "- Before you reply with the block, Atwater-check: 4×P + 4×C + 9×F should land within about 10%\n" +
-    "  of the kcal on the same basis. Recompute if it does not.\n" +
+    "- Before you reply with the fenced code block, Atwater-check: 4×P + 4×C + 9×F should land within\n" +
+    "  about 10% of the kcal on the same basis. Recompute if it does not.\n" +
+    "- No commentary before or after the fenced code block in the final message.\n" +
     "- Do not invent a food. If nothing follows the slot below — no description and no image —\n" +
-    "  ask what I ate instead of emitting the format block.\n\n" +
+    "  ask what I ate instead of emitting the fenced code block.\n\n" +
     "What I ate (attach photos or the nutrition label in this same message):\n";
 
   function updatePrompt(raw) {

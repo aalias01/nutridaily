@@ -477,6 +477,9 @@ Confidence: medium
 
   ok(/Attach whatever|clarifying questions|must not be high|What I ate \(attach/i.test(NutriParse.ESTIMATE_PROMPT),
     "ESTIMATE_PROMPT invites evidence, questions, confidence cap, and an open slot");
+  ok(/ONE fenced code block|markdown triple backticks|wrap the whole reply in one/i.test(NutriParse.ESTIMATE_PROMPT) &&
+      /No commentary before or after the fenced code block/i.test(NutriParse.ESTIMATE_PROMPT),
+    "ESTIMATE_PROMPT requires one fenced code block in the final reply (not bare prose)");
   ok(/restaurant or packaged item lists full nutrition|Confidence: high is allowed/i.test(NutriParse.ESTIMATE_PROMPT),
     "ESTIMATE_PROMPT allows Confidence: high for labeled restaurant / packaged nutrition");
   ok(/Context: <optional situational note/i.test(NutriParse.ESTIMATE_PROMPT),
