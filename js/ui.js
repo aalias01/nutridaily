@@ -4269,10 +4269,12 @@ const UI = (() => {
    * Voice confirm list: one card per spoken segment with qty + match hits.
    * @param {Array} sections — [{ id, spokenLabel, qty, unit, issue, dropped, selectedKey, hits:[{key,name,kcal,pendingCatalog}] }]
    * @param {boolean} [imperial]
+   * @param {{ hideQty?: boolean }} [opts] — Planner AI fill: names only, amounts come from the prompt.
    */
-  function renderVoiceConfirm(sections, imperial) {
+  function renderVoiceConfirm(sections, imperial, opts) {
     const root = $("#voice-confirm-list");
     if (!root) return;
+    const hideQty = !!(opts && opts.hideQty);
     const list = Array.isArray(sections) ? sections : [];
     if (!list.length) {
       root.innerHTML = `<p class="muted small">No foods found in that list.</p>`;
@@ -4283,31 +4285,38 @@ const UI = (() => {
       let status = "Pick a match";
       let statusClass = "";
       if (dropped) { status = "Dropped"; statusClass = ""; }
-      else if (seg.issue === "no-qty") { status = "Add an amount"; statusClass = "is-bad"; }
+      else if (!hideQty && seg.issue === "no-qty") { status = "Add an amount"; statusClass = "is-bad"; }
       else if (!seg.hits || !seg.hits.length) { status = "No match — search or drop"; statusClass = "is-bad"; }
       else if (seg.ambiguous && !seg.selectedKey) { status = "Ambiguous — pick one"; statusClass = "is-bad"; }
       else if (seg.selectedKey) { status = "Selected"; statusClass = ""; }
 
       const selectedHit = (seg.hits || []).find((h) => h.key === seg.selectedKey);
       const food = selectedHit && selectedHit.food;
-      let units;
-      let activeUnit = seg.unit || "g";
-      if (food) {
-        const packed = qtyUnitsForFood(food, !!imperial, activeUnit);
-        units = packed.units;
-        activeUnit = units.includes(activeUnit) ? activeUnit : packed.unit;
-        if (seg.unit !== activeUnit) seg.unit = activeUnit;
-      } else {
-        units = ["g", "piece"];
-        if (imperial) units.push("oz");
-        for (const u of (seg.extraUnits || []).concat(seg.unit ? [seg.unit] : [])) {
-          if (u && u !== "kcal" && !units.includes(u)) units.push(u);
+      let qtyRow = "";
+      if (!hideQty) {
+        let units;
+        let activeUnit = seg.unit || "g";
+        if (food) {
+          const packed = qtyUnitsForFood(food, !!imperial, activeUnit);
+          units = packed.units;
+          activeUnit = units.includes(activeUnit) ? activeUnit : packed.unit;
+          if (seg.unit !== activeUnit) seg.unit = activeUnit;
+        } else {
+          units = ["g", "piece"];
+          if (imperial) units.push("oz");
+          for (const u of (seg.extraUnits || []).concat(seg.unit ? [seg.unit] : [])) {
+            if (u && u !== "kcal" && !units.includes(u)) units.push(u);
+          }
         }
+        const unitChips = unitChipHtml(food, units, activeUnit, {
+          attrs: `data-action="voice-unit" data-seg="${esc(seg.id)}"`,
+          disabled: dropped,
+        });
+        qtyRow = `<div class="voice-seg-qty-row">
+          <input type="text" inputmode="decimal" value="${seg.qty != null && Number.isFinite(Number(seg.qty)) ? esc(String(seg.qty)) : ""}" data-action="voice-qty" data-seg="${esc(seg.id)}" aria-label="Amount for ${esc(seg.spokenLabel || "food")}" ${dropped ? "disabled" : ""}>
+          <span class="unit-chips" role="group" aria-label="Unit">${unitChips}</span>
+        </div>`;
       }
-      const unitChips = unitChipHtml(food, units, activeUnit, {
-        attrs: `data-action="voice-unit" data-seg="${esc(seg.id)}"`,
-        disabled: dropped,
-      });
 
       const hits = (seg.hits || []).map((h) => {
         const on = !dropped && seg.selectedKey === h.key;
@@ -4327,10 +4336,7 @@ const UI = (() => {
           <span class="voice-seg-label">${esc(seg.spokenLabel || seg.rawText || "Food")}</span>
           <span class="voice-seg-status ${statusClass}">${esc(status)}</span>
         </div>
-        <div class="voice-seg-qty-row">
-          <input type="text" inputmode="decimal" value="${seg.qty != null && Number.isFinite(Number(seg.qty)) ? esc(String(seg.qty)) : ""}" data-action="voice-qty" data-seg="${esc(seg.id)}" aria-label="Amount for ${esc(seg.spokenLabel || "food")}" ${dropped ? "disabled" : ""}>
-          <span class="unit-chips" role="group" aria-label="Unit">${unitChips}</span>
-        </div>
+        ${qtyRow}
         <div class="voice-hits">${hits || `<p class="muted small">No library hits for “${esc(seg.spokenLabel || "")}”.</p>`}</div>
         <div class="voice-seg-actions">
           <button type="button" class="linkbtn" data-action="voice-drop" data-seg="${esc(seg.id)}">${dropped ? "Keep line" : "Drop line"}</button>

@@ -2260,6 +2260,8 @@ console.log("\n[11] GAP AI close-the-gap prompt parse");
   ok(/warn.*ceiling|over ceiling/i.test(prompt), "sodium overshoot must be warned");
   ok(/WHOLE day|already logged.*PLUS/i.test(prompt), "Projected is end-of-day totals");
   ok(/protein meets the floor AND projected sodium/i.test(prompt), "Reachable tied to protein + sodium only");
+  ok(/ONE fenced code block|markdown triple backticks/i.test(prompt) && /```/.test(prompt),
+    "gap prompt asks for one fenced code block like NUTRI / PHASE");
   ok(/Option: 1/.test(prompt) && /3 plan OPTIONS/i.test(prompt), "prompt asks for multiple options");
   ok(/All selected/i.test(prompt) && /EVERY candidate/i.test(prompt), "option 1 must include every selected food");
   ok(/Protect protein/i.test(prompt) && /Lowest sodium/i.test(prompt), "option labels prioritize protein / lowest sodium");

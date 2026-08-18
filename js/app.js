@@ -1920,6 +1920,67 @@ const App = (() => {
     return state.qtyIntent === "plan" || state.qtyIntent === "gap";
   }
 
+  function isGapAiPick() {
+    return state.qtyIntent === "gap";
+  }
+
+  function voiceNeedsAmount() {
+    return state.qtyIntent !== "gap";
+  }
+
+  const ADD_LIST_PLACEHOLDER_LOG = `200 g chicken 100 g rice and 2 eggs
+200g chicken, 100g rice, 2 eggs
+chicken 200 g rice 100 g
+two hundred grams chicken one hundred grams rice
+one food per line also works`;
+  const ADD_LIST_PLACEHOLDER_GAP = `chicken, rice, eggs
+one food per line also works
+amounts are optional`;
+
+  function syncAddSheetChrome() {
+    const title = UI.$("#add-title");
+    const search = UI.$("#pick-search");
+    if (state.qtyIntent === "gap") {
+      if (title) title.textContent = "Pick foods for AI";
+      if (search) {
+        search.setAttribute("aria-label", "Search foods to fill remaining");
+      }
+    } else if (state.qtyIntent === "plan") {
+      if (title) title.textContent = "Add to plan";
+      if (search) search.setAttribute("aria-label", "Search foods to add to plan");
+    } else {
+      if (title) title.textContent = "Add food";
+      if (search) search.setAttribute("aria-label", "Search foods to log");
+    }
+  }
+
+  function syncAddListChrome() {
+    const hint = UI.$("#add-list-hint");
+    const ta = UI.$("#voice-text");
+    if (state.qtyIntent === "gap") {
+      if (hint) hint.textContent = "Names are enough. Pick matches next; the AI prompt will size portions.";
+      if (ta) {
+        ta.placeholder = ADD_LIST_PLACEHOLDER_GAP;
+        ta.setAttribute("aria-label", "Foods to fill remaining");
+      }
+    } else {
+      if (hint) hint.textContent = "Any of these styles work:";
+      if (ta) {
+        ta.placeholder = ADD_LIST_PLACEHOLDER_LOG;
+        ta.setAttribute("aria-label", "Foods with amounts");
+      }
+    }
+  }
+
+  function syncVoiceConfirmChrome() {
+    const hint = UI.$("#voice-confirm-hint");
+    if (hint) {
+      hint.textContent = isGapAiPick()
+        ? "Pick a match for each food. Amounts come from the AI prompt next. Drop anything that does not belong."
+        : "Pick a match for each line. Drop anything that does not belong.";
+    }
+  }
+
   const GAP_INTRO_SEEN_KEY = "nutridaily.gapIntroSeen";
 
   function gapIntroSeen() {
@@ -2077,8 +2138,8 @@ const App = (() => {
   }
 
   function openAddListSheet() {
-    if (state.qtyIntent === "gap") state.qtyIntent = "log";
     setPickMoreOpen(false);
+    syncAddListChrome();
     const warn = UI.$("#voice-warnings");
     if (warn) { warn.hidden = true; warn.textContent = ""; }
     UI.closeSheet("sheet-add");
@@ -2257,7 +2318,10 @@ const App = (() => {
       };
     });
     if (parsed.warnings && parsed.warnings.length) {
-      UI.toast(parsed.warnings[0]);
+      const msgs = voiceNeedsAmount()
+        ? parsed.warnings
+        : parsed.warnings.filter((w) => !/^No amount for /.test(w));
+      if (msgs[0]) UI.toast(msgs[0]);
     }
     refreshVoiceConfirm();
     UI.closeSheet("sheet-add-list");
@@ -2266,16 +2330,22 @@ const App = (() => {
   }
 
   function refreshVoiceConfirm() {
-    UI.renderVoiceConfirm(state.voiceSegments, !!state.settings.imperial);
+    syncVoiceConfirmChrome();
+    UI.renderVoiceConfirm(state.voiceSegments, !!state.settings.imperial, {
+      hideQty: !voiceNeedsAmount(),
+    });
     syncVoiceConfirmContinue();
   }
 
   function syncVoiceConfirmContinue() {
     const btn = UI.$("#btn-voice-confirm-continue");
     if (!btn) return;
+    btn.textContent = isGapAiPick() ? "Continue to prompt" : "Continue";
     const kept = (state.voiceSegments || []).filter((s) => !s.dropped);
+    const needQty = voiceNeedsAmount();
     const ready = kept.length > 0 && kept.every((s) => {
       if (!s.selectedKey) return false;
+      if (!needQty) return true;
       const qty = Number(s.qty);
       return Number.isFinite(qty) && qty > 0;
     });
@@ -2297,13 +2367,31 @@ const App = (() => {
         UI.toast(`Pick a match for “${s.spokenLabel}”`);
         return;
       }
-      if (!(Number.isFinite(Number(s.qty)) && Number(s.qty) > 0)) {
+      if (voiceNeedsAmount() && !(Number.isFinite(Number(s.qty)) && Number(s.qty) > 0)) {
         UI.toast(`Add an amount for “${s.spokenLabel}”`);
         return;
       }
     }
-    // Never leak gap AI intent into voice commits.
-    if (state.qtyIntent === "gap") state.qtyIntent = "log";
+    if (isGapAiPick()) {
+      state.multiPick = {};
+      for (const s of kept) {
+        const hit = (s.hits || []).find((h) => h.key === s.selectedKey);
+        if (!hit || !hit.food) {
+          UI.toast(`Missing food for “${s.spokenLabel}”`);
+          return;
+        }
+        state.multiPick[hit.key] = {
+          food: hit.food,
+          pendingCatalog: !!hit.pendingCatalog,
+        };
+      }
+      clearVoiceFlow();
+      const ta = UI.$("#voice-text");
+      if (ta) ta.value = "";
+      UI.closeSheet("sheet-voice-confirm");
+      continueMultiPick();
+      return;
+    }
     const meal = Foods.inferMeal();
     const items = [];
     for (const s of kept) {
@@ -3796,6 +3884,7 @@ const App = (() => {
     }
     setPickMoreOpen(false);
     state.yesterdayKey = yesterdayKey();
+    syncAddSheetChrome();
     refreshAddPicker();
     UI.openSheet("sheet-add");
   }
@@ -7119,9 +7208,9 @@ const App = (() => {
         setDayIntentSeg("reduced");
         UI.$("#dg-kcal").value = String(Math.round(g.kcal));
       } else {
-        // Empty day: land on Reduced when that window is open; otherwise Normal
-        // so Mark incomplete is one clear surface without pretending a plan edit.
-        setDayIntentSeg(guardDayIntent("reduced").ok ? "reduced" : (guardDayIntent("fast").ok ? "fast" : "normal"));
+        // No calorie plan: always land on Normal. Reduced / Fast are opt-in
+        // tabs so opening the sheet does not focus Planned target / keyboard.
+        setDayIntentSeg("normal");
         UI.$("#dg-kcal").value = "";
       }
       const incompleteEl = UI.$("#dg-incomplete");
@@ -7131,7 +7220,7 @@ const App = (() => {
       }
       refreshDayPlanPreview();
       refreshPresetChips();
-      UI.openSheet("sheet-day-goals");
+      UI.openSheet("sheet-day-goals", { noAutofocus: true });
     };
     UI.$("#btn-day-goals").addEventListener("click", openDayGoalsSheet);
     if (UI.$("#dg-incomplete")) {

@@ -132,6 +132,12 @@ ok(Voice.parseNumberWords("one hundred and twenty") === 120, "one hundred and tw
 }
 
 {
+  const r = Voice.parseUtterance("apple, banana, rice");
+  ok(r.ok && r.segments.length === 3 && r.segments.every((s) => s.issue === "no-qty"),
+    "name-only comma list keeps 3 no-qty segments", JSON.stringify(r.segments));
+}
+
+{
   const r = Voice.parseUtterance("eggs 2");
   ok(r.ok && r.segments[0].qty === 2 && r.segments[0].unit === "piece", "eggs 2 → piece", JSON.stringify(r.segments[0]));
 }
@@ -144,6 +150,8 @@ ok(Voice.parseNumberWords("one hundred and twenty") === 120, "one hundred and tw
   ok(/sheet-voice-confirm/.test(html) && /btn-voice-find/.test(html) && /sheet-add-list/.test(html),
     "index mounts several-foods list + confirm");
   ok(/btn-open-add-list/.test(html) && /Type or dictate a list/.test(html), "index mounts list entry");
+  ok(/id="add-list-hint"/.test(html) && /id="voice-confirm-hint"/.test(html),
+    "index mounts list and confirm hints for gap vs log copy");
   ok(/id="add-title"/.test(html), "index mounts Add food title");
   ok(!/sheet-voice"/.test(html.replace(/sheet-voice-confirm/g, "")), "sheet-voice list sheet removed");
 }

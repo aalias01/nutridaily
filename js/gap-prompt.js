@@ -274,8 +274,8 @@ const GapPrompt = (() => {
       "  If the full set cannot hit targets cleanly, still include every food, set Reachable appropriately, and explain in Note.\n" +
       "  I will refine in chat (or deselect in the app) if I want fewer foods — do not silently drop foods from Option 1.\n" +
       "- Options 2–3 MAY omit Item lines for foods that strategy should skip (do not write 0 g).\n" +
-      "- Plain numbers only (no commas in numbers). Reply with exactly one GAP v1 … END block containing three Option sections. Do not emit any other block type.\n\n" +
-      "Reply exactly in this format:\n\n" +
+      "- Plain numbers only (no commas in numbers). Reply with exactly ONE fenced code block (markdown triple backticks) and nothing else, containing one GAP v1 … END block with three Option sections. Do not emit any other block type.\n\n" +
+      "Format (wrap the whole reply in one ``` … ``` fence):\n\n" +
       "GAP v1\n" +
       `Day: ${day || "<YYYY-MM-DD>"}\n` +
       "Option: 1 | All selected\n" +

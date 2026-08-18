@@ -428,6 +428,59 @@ async function run(label, days) {
         }
         ok(true, "voice plan confirm path exercised");
       }
+
+      // List into Fill remaining with AI: names only, never logs, lands on the prompt.
+      for (const id of ["sheet-multi-qty", "sheet-voice-confirm", "sheet-add-list", "sheet-add", "sheet-gap"]) {
+        const el = $(`#${id}`);
+        if (el && !el.hidden) {
+          const closer = el.querySelector(`[data-close='${id}']`);
+          if (closer) closer.click();
+        }
+      }
+      await new Promise((r) => setTimeout(r, 20));
+      const LedgerVoice = window.eval("Ledger");
+      const voiceDay = LedgerVoice.todayKey();
+      const logCountBeforeGapList = LedgerVoice.entriesFor(voiceDay).length;
+      $("#btn-close-gap").click();
+      await new Promise((r) => setTimeout(r, 20));
+      $("#btn-gap-recalc").click();
+      await new Promise((r) => setTimeout(r, 20));
+      if ($("#gap-step-intro") && !$("#gap-step-intro").hidden) {
+        $("#btn-gap-intro-ok").click();
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      ok(App.state.qtyIntent === "gap", "Fill remaining with AI opens the picker with gap intent");
+      ok(/Pick foods for AI/i.test(text("#add-title")), "gap picker title is Pick foods for AI");
+      $("#btn-open-add-list").click();
+      await new Promise((r) => setTimeout(r, 20));
+      ok(App.state.qtyIntent === "gap", "Type or dictate list keeps gap qtyIntent");
+      ok(/Names are enough/i.test(text("#add-list-hint")), "gap list hint says names are enough");
+      $("#voice-text").value = "apple, orange";
+      $("#btn-voice-find").click();
+      await new Promise((r) => setTimeout(r, 40));
+      ok(!$("#sheet-voice-confirm").hidden, "gap list opens voice confirm");
+      ok(!window.document.querySelector("#voice-confirm-list [data-action='voice-qty']"),
+        "gap confirm hides amount fields");
+      ok(/Continue to prompt/i.test(text("#btn-voice-confirm-continue")),
+        "gap confirm continue is Continue to prompt");
+      window.document.querySelectorAll("#voice-confirm-list .voice-seg").forEach((sec) => {
+        const on = sec.querySelector(".voice-hit.on");
+        const hit = sec.querySelector(".voice-hit");
+        if (!on && hit) hit.click();
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      const gapCont = $("#btn-voice-confirm-continue");
+      ok(gapCont && !gapCont.disabled, "gap confirm continue is enabled without amounts");
+      if (gapCont && !gapCont.disabled) {
+        gapCont.click();
+        await new Promise((r) => setTimeout(r, 40));
+        ok($("#sheet-multi-qty").hidden, "gap list does not open Log selected / Add to plan");
+        ok(!$("#gap-step-prompt").hidden, "gap list continue opens the AI prompt step");
+        ok(Object.keys(App.state.gapSelected || {}).length >= 2,
+          "gap list confirm stores prompt candidates");
+        ok(LedgerVoice.entriesFor(voiceDay).length === logCountBeforeGapList,
+          "gap list confirm does not write the daily food log");
+      }
       if ($("#sheet-gap") && !$("#sheet-gap").hidden) {
         const gapClose = $("#sheet-gap [data-close='sheet-gap']");
         if (gapClose) gapClose.click();
@@ -443,6 +496,8 @@ async function run(label, days) {
         await new Promise((r) => setTimeout(r, 40));
       }
       App.state.qtyIntent = "log";
+      App.state.gapSelected = {};
+      if (App.state.settings.gapDrafts) delete App.state.settings.gapDrafts[voiceDay];
     }
   }
 
@@ -1356,6 +1411,8 @@ END`;
       candidates: [],
     });
     ok(/Potassium 3400 mg/.test(gapText) && /salt substitutes/.test(gapText), "Planner AI fill includes potassium and safety guidance");
+    ok(/ONE fenced code block/i.test(gapText) && /```/.test(gapText),
+      "Planner AI fill asks for a fenced GAP v1 reply");
 
     // GAP paste is untrusted: truncated blocks fail, and dishonest safety/
     // projection claims cannot bypass local food math or manual review.
@@ -2039,6 +2096,13 @@ async function runEmpty() {
   const before = Phases.goalsForDay(todayKey, JSON.parse(window.localStorage.getItem("nd_settings_v1") || "{}"));
   $("#btn-day-goals").click();
   ok(!$("#sheet-day-goals").hidden, "unlogged today can open the energy adjustment editor");
+  ok($("#dg-intent-seg button[data-dg-intent='normal']").getAttribute("aria-pressed") === "true",
+    "day status opens on Normal when the day has no calorie plan");
+  ok(window.document.activeElement !== $("#dg-kcal"),
+    "day status does not autofocus Planned target");
+  $("#dg-intent-seg button[data-dg-intent='reduced']").click();
+  ok($("#dg-intent-seg button[data-dg-intent='reduced']").getAttribute("aria-pressed") === "true",
+    "Reduced is opt-in from Normal");
   ok(!!$("#dg-kcal") && !$("#dg-protein") && !$("#dg-sodium") && !$("#dg-potassium"),
     "energy adjustment editor is calories-only");
   // 700 is a real 5:2 / alternate-day plan now, so the boundary probe moves
@@ -2137,6 +2201,8 @@ async function runEmpty() {
   await new Promise((r) => setTimeout(r, 20));
   ok($("#sheet-day-goals").classList.contains("open"),
     "logged day still opens Day status for edits and Mark incomplete");
+  ok($("#dg-intent-seg button[data-dg-intent='reduced']").getAttribute("aria-pressed") === "true",
+    "a day with a reduced plan reopens on the Reduced tab");
   ok(!!$("#dg-incomplete"), "Day status sheet exposes Mark incomplete after food is logged");
   const revisedTarget = target - 50;
   $("#dg-kcal").value = String(revisedTarget);
