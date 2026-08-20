@@ -864,6 +864,8 @@ async function run(label, days) {
   if (big) {
     const v = Number(String(big.textContent).replace(/[^0-9.]/g, "").slice(0, 4));
     ok(v > 1200 && v < 5000, "TDEE estimate is physiologically plausible", `got ${v}`);
+    ok(/lb\/wk/.test(tdeeText) && !/kg\/wk/.test(tdeeText),
+      "energy card lose/gain rates follow the lb body-weight unit");
   } else {
     ok(/not enough data/.test(tdeeText), "energy card explains what is missing");
   }

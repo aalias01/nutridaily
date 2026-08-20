@@ -1901,6 +1901,15 @@ const Analytics = (() => {
     return unit === "kg" ? kg : kg / 0.45359237;
   }
 
+  /** "0.5 kg/wk" or "1.1 lb/wk" from a kg/week magnitude. */
+  function formatWeeklyRate(kgPerWeek, unit) {
+    const u = unit === "kg" ? "kg" : "lb";
+    const n = kgToDisplay(Math.abs(Number(kgPerWeek)), u);
+    if (n == null || !Number.isFinite(n) || n === 0) return null;
+    const shown = n.toFixed(2).replace(/\.?0+$/, "");
+    return shown + " " + u + "/wk";
+  }
+
   return {
     KCAL_PER_KG, MIN_AUTOMATED_KCAL, MAX_AUTOMATED_KCAL, MIN_RETARGET_FAT_G,
     MIN_TDEE_MARGIN_KCAL,
@@ -1916,7 +1925,7 @@ const Analytics = (() => {
     phaseKcalOf,
     partialDays, onceDays, dayPlanAudit, dayPlanProvenance,
     rangeSummary, compareSummaries, retargetForKcal,
-    fmtNum, fmtSigned, kgToDisplay,
+    fmtNum, fmtSigned, kgToDisplay, formatWeeklyRate,
   };
 })();
 

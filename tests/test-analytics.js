@@ -649,6 +649,12 @@ console.log("\n[16] Edge cases");
   ok(Analytics.fmtSigned(2.5, 1) === "+2.5", "signed formatting");
   ok(Analytics.kgToDisplay(null, "lb") === null, "null weight converts to null");
   approx(Analytics.kgToDisplay(100, "lb"), 220.46, 0.01, "kg → lb");
+  ok(Analytics.formatWeeklyRate(0.5, "kg") === "0.5 kg/wk" &&
+      Analytics.formatWeeklyRate(0.25, "kg") === "0.25 kg/wk",
+    "weekly rate labels keep the kg magnitudes");
+  ok(Analytics.formatWeeklyRate(0.5, "lb") === "1.1 lb/wk" &&
+      Analytics.formatWeeklyRate(0.25, "lb") === "0.55 lb/wk",
+    "weekly rate labels convert to lb when body weight is in pounds");
 }
 
 

@@ -2105,10 +2105,10 @@ const UI = (() => {
         you ate ${fmt(t.intakeAvg)} kcal/day while ${esc(dir)} ${Math.abs(perWeek).toFixed(2)} ${esc(ctx.weightUnit)}/week.</p>
       <div class="rate-table">
         <div class="rate-head muted small">To move at…</div>
-        ${rateRow("Lose 0.5 kg/wk", -0.5)}
-        ${rateRow("Lose 0.25 kg/wk", -0.25)}
+        ${rateRow("Lose " + Analytics.formatWeeklyRate(0.5, ctx.weightUnit), -0.5)}
+        ${rateRow("Lose " + Analytics.formatWeeklyRate(0.25, ctx.weightUnit), -0.25)}
         ${rateRow("Maintain", 0)}
-        ${rateRow("Gain 0.25 kg/wk", 0.25)}
+        ${rateRow("Gain " + Analytics.formatWeeklyRate(0.25, ctx.weightUnit), 0.25)}
       </div>
       ${!allowApply ? `<p class="muted small"><b>Target actions are paused:</b> ${eligibility.canApply === false
         ? esc(eligibility.message || "profile review is required before applying an automated target.")
@@ -2147,7 +2147,9 @@ const UI = (() => {
     if (calls.over) bits.push(`<p class="callout over">${esc(calls.over)}</p>`);
     if (bal) {
       const sign = bal.sum >= 0 ? "+" : "";
-      bits.push(`<p class="muted small">Cumulative vs phase calorie target: ${sign}${fmt(bal.sum)} kcal across ${bal.n} days (≈ ${sign}${(bal.sum / 7700).toFixed(2)} kg).</p>`);
+      const wu = ctx.weightUnit === "kg" ? "kg" : "lb";
+      const mass = Analytics.kgToDisplay(bal.sum / Analytics.KCAL_PER_KG, wu);
+      bits.push(`<p class="muted small">Cumulative vs phase calorie target: ${sign}${fmt(bal.sum)} kcal across ${bal.n} days (≈ ${sign}${mass.toFixed(2)} ${wu}).</p>`);
     }
     if (wDelta) {
       const sign = wDelta.delta >= 0 ? "+" : "";
