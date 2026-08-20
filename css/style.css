@@ -909,7 +909,7 @@ body.sheet-open .insight-dock { display: none; }
   max-height: calc(8 * 1.35em + 24px);
 }
 .sheet-card label { display: block; font-weight: 650; font-size: 13px; margin: 12px 0 5px; }
-.sheet-card input[type="text"], .sheet-card input[type="date"], .sheet-card select {
+.sheet-card input[type="text"], .sheet-card input[type="date"], .sheet-card input[type="number"], .sheet-card select {
   width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--bg); color: var(--ink); font-size: 16px;
 }
@@ -1044,7 +1044,31 @@ body.sheet-open .insight-dock { display: none; }
 .row.end { justify-content: flex-end; margin-top: 16px; }
 .row input { flex: 1; }
 .goals-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.goals-grid > * { min-width: 0; }
+.goals-grid input {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); font-size: 16px;
+}
 .goals-grid.energy-adjustment-grid { grid-template-columns: minmax(0, 1fr); max-width: 260px; }
+#sheet-new-phase .np-kcal-field label,
+#sheet-new-phase .np-macro-grid label {
+  margin: 0 0 4px;
+  font-weight: 500;
+  font-size: 12px;
+}
+#sheet-new-phase .np-macro-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+#np-energy {
+  margin: 8px 0 0;
+  line-height: 1.4;
+  white-space: pre-line;
+}
+#np-energy.is-warn { color: var(--warn); }
+#np-use-atwater { margin: 2px 0 0; padding-left: 0; }
+#np-use-atwater[hidden] { display: none !important; }
 .dg-presets { margin-top: 12px; }
 #dg-incomplete-row { margin-top: 14px; }
 .dg-presets-head {

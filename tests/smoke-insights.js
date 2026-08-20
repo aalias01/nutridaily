@@ -202,6 +202,10 @@ async function run(label, days) {
     ok(cardFills.length >= 2 &&
         cardFills.every((color) => contrastRatio("#23282d", color) >= 4.5 || contrastRatio("#e8e6e1", color) >= 4.5),
       "insight-dock card surfaces keep text-level contrast in every theme");
+    ok(/#sheet-new-phase\s+\.np-macro-grid[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s.test(cssText),
+      "Change targets nutrient grid is two columns so carbs and sodium stay on-screen");
+    ok(/\.sheet-card input\[type="number"\]/.test(cssText),
+      "Change targets number inputs share the full-width sheet-card input rule");
     ok(/\.insight-section\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
       "insight-section [hidden] uses display:none !important");
     ok(/\.insight-panel\[hidden\][^}]*display:\s*none\s*!important/s.test(cssText),
@@ -1349,7 +1353,29 @@ END`;
     const targetBeforeSave = baseline.kcal;
     ok(!!$("#btn-change-targets"), "Change targets is the Settings entry point");
     $("#btn-change-targets").click();
+    ok(!!$("#np-carbs") && !!$("#np-sodium") &&
+        !$("#np-carbs").hidden && !$("#np-sodium").hidden &&
+        !!$("#np-kind-seg") &&
+        [...$("#np-kind-seg").querySelectorAll("button")].map((b) => b.dataset.npKind).join(",") ===
+          "cut,maintain,bulk,recomp",
+      "Change targets keeps Cut/Maintain/Bulk/Recomp and shows carbs and sodium");
+    const atwaterFromSheet = 4 * Number($("#np-protein").value) +
+      4 * Number($("#np-carbs").value) + 9 * Number($("#np-fat").value);
+    ok(new RegExp("add up to " + Math.round(atwaterFromSheet) + " kcal", "i").test(text("#np-energy")) &&
+        /achievable/i.test(text("#np-energy")),
+      "Change targets estimates calories from protein, carbs, and fat");
+    $("#np-kcal").value = "1500";
+    $("#np-kcal").dispatchEvent(new window.Event("input", { bubbles: true }));
+    ok(/not within 20%/i.test(text("#np-energy")) && /raise calories/i.test(text("#np-energy")),
+      "Change targets warns when calories cannot cover the macros");
+    ok(!$("#np-use-atwater").hidden &&
+        text("#np-use-atwater").indexOf("Set calories to " + Math.round(atwaterFromSheet)) >= 0,
+      "Change targets offers to set calories from the macro total");
+    $("#np-use-atwater").click();
+    ok(Number($("#np-kcal").value) === Math.round(atwaterFromSheet) && /achievable/i.test(text("#np-energy")),
+      "Set calories from macros loads the Atwater total and clears the mismatch");
     $("#np-kcal").value = String(targetBeforeSave + 100);
+    $("#np-kcal").dispatchEvent(new window.Event("input", { bubbles: true }));
     $("#np-save").click();
     const deferredSettings = JSON.parse(window.localStorage.getItem("nd_settings_v1"));
     ok(PhaseMath.goalsForDay(loggedToday, deferredSettings).kcal === targetBeforeSave &&

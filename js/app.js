@@ -4810,6 +4810,41 @@ amounts are optional`;
     }
   }
 
+  function readChangeTargetGoals() {
+    const val = (sel) => parseAmount(UI.$(sel) && UI.$(sel).value);
+    return {
+      kcal: val("#np-kcal"),
+      protein: val("#np-protein"),
+      carbs: val("#np-carbs"),
+      fat: val("#np-fat"),
+      fiber: val("#np-fiber"),
+      sodium: val("#np-sodium"),
+      potassium: val("#np-potassium"),
+    };
+  }
+
+  function syncChangeTargetsEnergy() {
+    const hint = UI.$("#np-energy");
+    const btn = UI.$("#np-use-atwater");
+    if (!hint) return;
+    const fit = Phases.describeEnergyFit(readChangeTargetGoals());
+    hint.textContent = (fit.notes || []).join("\n");
+    hint.classList.toggle("is-warn", fit.ok === false);
+    hint.classList.toggle("is-ok", fit.ok === true);
+    hint.hidden = !(fit.notes && fit.notes.length);
+    const bounds = Phases.PERSISTENT_GOAL_BOUNDS.kcal;
+    const kcal = parseAmount(UI.$("#np-kcal") && UI.$("#np-kcal").value);
+    const usable = fit.ok !== true
+      && fit.suggestedKcal != null
+      && fit.suggestedKcal >= bounds[0]
+      && fit.suggestedKcal <= bounds[1]
+      && fit.suggestedKcal !== kcal;
+    if (btn) {
+      btn.hidden = !usable;
+      if (usable) btn.textContent = `Set calories to ${fit.suggestedKcal}`;
+    }
+  }
+
   function fillChangeTargetsSheet(goals, kind) {
     const today = Ledger.todayKey();
     const editorDay = phaseEditorDay(today);
@@ -4827,6 +4862,7 @@ amounts are optional`;
     if (UI.$("#np-goals")) UI.$("#np-goals").hidden = false;
     if (UI.$("#np-major")) UI.$("#np-major").checked = false;
     syncChangeTargetsChrome();
+    syncChangeTargetsEnergy();
   }
 
   /** @deprecated alias — older call sites */
@@ -6556,20 +6592,27 @@ amounts are optional`;
     UI.$("#np-cancel").addEventListener("click", () => {
       UI.closeSheet("sheet-new-phase");
     });
+    ["#np-kcal", "#np-protein", "#np-carbs", "#np-fat"].forEach((sel) => {
+      const el = UI.$(sel);
+      if (el) el.addEventListener("input", syncChangeTargetsEnergy);
+    });
+    if (UI.$("#np-use-atwater")) {
+      UI.$("#np-use-atwater").addEventListener("click", () => {
+        const fit = Phases.describeEnergyFit(readChangeTargetGoals());
+        const bounds = Phases.PERSISTENT_GOAL_BOUNDS.kcal;
+        if (fit.suggestedKcal == null ||
+            fit.suggestedKcal < bounds[0] ||
+            fit.suggestedKcal > bounds[1]) return;
+        UI.$("#np-kcal").value = String(fit.suggestedKcal);
+        syncChangeTargetsEnergy();
+      });
+    }
     UI.$("#np-save").addEventListener("click", () => {
       const today = Ledger.todayKey();
       const effectiveDay = phaseEditorDay(today);
       const nextSettings = cloneLocalData(state.settings);
       Phases.ensureMigrated(nextSettings, Phases.earliestDayFromEvents(Ledger.allEvents()), today);
-      const nextGoals = {
-        kcal: parseAmount(UI.$("#np-kcal").value),
-        protein: parseAmount(UI.$("#np-protein").value),
-        carbs: parseAmount(UI.$("#np-carbs").value),
-        fat: parseAmount(UI.$("#np-fat").value),
-        fiber: parseAmount(UI.$("#np-fiber").value),
-        sodium: parseAmount(UI.$("#np-sodium").value),
-        potassium: parseAmount(UI.$("#np-potassium").value),
-      };
+      const nextGoals = readChangeTargetGoals();
       if (Object.values(nextGoals).some((n) => !Number.isFinite(n))) {
         UI.toast("Enter a number for every target");
         return;

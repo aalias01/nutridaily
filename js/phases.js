@@ -282,6 +282,75 @@ const Phases = (() => {
     return { ok: errors.length === 0, errors, macroKcal, proteinShare, fatShare };
   }
 
+  /** Atwater energy from gram macros. Null when any input is missing or negative. */
+  function atwaterKcal(protein, carbs, fat) {
+    const p = Number(protein);
+    const c = Number(carbs);
+    const f = Number(fat);
+    if (![p, c, f].every((n) => Number.isFinite(n) && n >= 0)) return null;
+    return 4 * p + 4 * c + 9 * f;
+  }
+
+  /**
+   * Live Change-targets copy: can this calorie number actually be eaten
+   * given the protein / carb / fat grams? Uses the same Atwater and
+   * protein/fat-share policy as validatePersistentGoals.
+   */
+  function describeEnergyFit(values) {
+    const policy = PERSISTENT_ENERGY_POLICY;
+    const bounds = PERSISTENT_GOAL_BOUNDS.kcal;
+    const protein = Number(values && values.protein);
+    const carbs = Number(values && values.carbs);
+    const fat = Number(values && values.fat);
+    const kcal = Number(values && values.kcal);
+    const notes = [];
+    const macroKcal = atwaterKcal(protein, carbs, fat);
+    const suggestedKcal = macroKcal == null ? null : Math.round(macroKcal);
+    if (macroKcal == null) {
+      notes.push("Enter protein, carbs, and fat to see the calories those macros produce.");
+      return {
+        ok: null, macroKcal: null, suggestedKcal: null,
+        proteinShare: null, fatShare: null, notes,
+      };
+    }
+    notes.push("Protein, carbs, and fat add up to " + Math.round(macroKcal) +
+      " kcal (4×P + 4×C + 9×F).");
+    if (suggestedKcal < bounds[0]) {
+      notes.push("That is below the " + bounds[0] +
+        " calorie floor, so these macros cannot make a valid calorie target.");
+    } else if (suggestedKcal > bounds[1]) {
+      notes.push("That is above the " + bounds[1] + " calorie ceiling.");
+    }
+    let proteinShare = null;
+    let fatShare = null;
+    let ok = null;
+    if (Number.isFinite(kcal) && kcal > 0) {
+      proteinShare = 4 * protein / kcal;
+      fatShare = 9 * fat / kcal;
+      const within = Math.abs(macroKcal - kcal) / kcal <= policy.atwaterTolerance;
+      const proteinOk = proteinShare <= policy.maxProteinShare;
+      const fatOk = fatShare >= policy.minFatShare && fatShare <= policy.maxFatShare;
+      ok = within && proteinOk && fatOk;
+      if (ok) {
+        notes.push("Your " + Math.round(kcal) + " calorie target is achievable with these macros.");
+      } else {
+        if (!within) {
+          notes.push(macroKcal > kcal
+            ? "Your " + Math.round(kcal) + " calorie target is not within 20% of these macros. Raise calories, or lower protein, carbs, or fat."
+            : "Your " + Math.round(kcal) + " calorie target is not within 20% of these macros. Lower calories, or raise protein, carbs, or fat.");
+        }
+        if (!proteinOk) {
+          notes.push("Protein is " + Math.round(proteinShare * 100) +
+            "% of calories (max 40%). Raise calories or lower protein.");
+        }
+        if (!fatOk) {
+          notes.push("Fat is " + Math.round(fatShare * 100) + "% of calories (need 20–45%).");
+        }
+      }
+    }
+    return { ok, macroKcal, suggestedKcal, proteinShare, fatShare, notes };
+  }
+
   function goalsEqual(a, b) {
     const A = normalizeGoals(a), B = normalizeGoals(b);
     return GOAL_KEYS.every((k) => A[k] === B[k]);
@@ -1792,6 +1861,8 @@ const Phases = (() => {
     proteinScorableOnPlan,
     normalizeGoals,
     validatePersistentGoals,
+    atwaterKcal,
+    describeEnergyFit,
     sanitizePersistentTargets,
     goalsEqual,
     goalsForDay,

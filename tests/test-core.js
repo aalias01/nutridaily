@@ -600,6 +600,19 @@ console.log("\n[7] Phases / goalsForDay");
   ok(!macroPolicyResult.ok && /protein.*40%/i.test(macroPolicyResult.errors.join(" ")) &&
       /fat.*20.*45%/i.test(macroPolicyResult.errors.join(" ")),
     "persistent target policy rejects 2200 kcal with 400 g protein and zero fat");
+  ok(Phases.atwaterKcal(140, 250, 70) === 2190,
+    "Atwater helper is 4×protein + 4×carbs + 9×fat");
+  const fitOk = Phases.describeEnergyFit(policyValid);
+  ok(fitOk.ok === true && fitOk.suggestedKcal === 2190 &&
+      /achievable/.test(fitOk.notes.join(" ")),
+    "energy-fit copy confirms a policy-valid calorie target is achievable");
+  const fitLow = Phases.describeEnergyFit({ ...policyValid, kcal: 1500 });
+  ok(fitLow.ok === false && /raise calories/i.test(fitLow.notes.join(" ")) &&
+      fitLow.suggestedKcal === 2190,
+    "energy-fit copy explains when stated calories cannot cover the macros");
+  const fitBlankMacros = Phases.describeEnergyFit({ kcal: 2200 });
+  ok(fitBlankMacros.ok == null && /enter protein, carbs, and fat/i.test(fitBlankMacros.notes.join(" ")),
+    "energy-fit copy asks for macros before estimating calories");
 
   const quarantinedTimeline = {
     goals: policyMacroInvalid, goalsUpdatedAt: 30, dayGoals: {}, weights: {}, profile: {},

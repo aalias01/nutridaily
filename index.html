@@ -596,14 +596,21 @@ one food per line also works" autocomplete="off" aria-label="Foods with amounts"
         <button type="button" data-np-kind="bulk" class="on">Bulk</button>
         <button type="button" data-np-kind="recomp">Recomp</button>
       </div>
-      <div class="goals-grid" id="np-goals">
-        <div><label class="small muted" for="np-kcal">Calories</label><input id="np-kcal" type="number" min="1200" max="6000" step="50"></div>
-        <div><label class="small muted" for="np-protein">Protein g</label><input id="np-protein" type="number" min="0" step="5"></div>
-        <div><label class="small muted" for="np-carbs">Carbs g</label><input id="np-carbs" type="number" min="0" step="5"></div>
-        <div><label class="small muted" for="np-fat">Fat g</label><input id="np-fat" type="number" min="0" step="5"></div>
-        <div><label class="small muted" for="np-fiber">Fiber g</label><input id="np-fiber" type="number" min="0" step="1"></div>
-        <div><label class="small muted" for="np-sodium">Sodium mg</label><input id="np-sodium" type="number" min="0" step="50"></div>
-        <div><label class="small muted" for="np-potassium">Potassium mg</label><input id="np-potassium" type="number" min="0" step="100"></div>
+      <div id="np-goals">
+        <div class="np-kcal-field">
+          <label class="small muted" for="np-kcal">Calories</label>
+          <input id="np-kcal" type="number" min="1200" max="6000" step="50">
+        </div>
+        <p class="muted small np-energy" id="np-energy" role="status" aria-live="polite"></p>
+        <button id="np-use-atwater" class="linkbtn" type="button" hidden>Set calories from macros</button>
+        <div class="goals-grid np-macro-grid">
+          <div><label class="small muted" for="np-protein">Protein g</label><input id="np-protein" type="number" min="0" step="5"></div>
+          <div><label class="small muted" for="np-carbs">Carbs g</label><input id="np-carbs" type="number" min="0" step="5"></div>
+          <div><label class="small muted" for="np-fat">Fat g</label><input id="np-fat" type="number" min="0" step="5"></div>
+          <div><label class="small muted" for="np-fiber">Fiber g</label><input id="np-fiber" type="number" min="0" step="1"></div>
+          <div><label class="small muted" for="np-sodium">Sodium mg</label><input id="np-sodium" type="number" min="0" step="50"></div>
+          <div><label class="small muted" for="np-potassium">Potassium mg</label><input id="np-potassium" type="number" min="0" step="100"></div>
+        </div>
       </div>
       <label class="check-row" id="np-major-row"><input id="np-major" type="checkbox"> Force major version (vN.0)</label>
       <div class="row end">
